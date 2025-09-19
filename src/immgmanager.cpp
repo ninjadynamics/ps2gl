@@ -136,6 +136,8 @@ void CImmGeomManager::Color(cpu_vec_xyzw color)
     if (InsideBeginEnd) {
         *CurColorBuf += color;
         Geometry.AddColors();
+        //add color inside too
+        GLContext.GetMaterialManager().Color(color);
     } else {
         GLContext.GetMaterialManager().Color(color);
     }
@@ -158,9 +160,14 @@ void CImmGeomManager::EndGeom()
     // check colors
     Geometry.SetColorsAreValid(false);
     if (Geometry.GetNumNewColors() > 0) {
-        mErrorIf(Geometry.GetNumNewVertices() != Geometry.GetNumNewColors(),
+        //debug test for raylib
+        if(Geometry.GetNumNewVertices() != Geometry.GetNumNewColors())
+        {
+            //printf("vertices: %d , colors: %d Sorry, but inside glBegin/glEnd you need to specify either one color for each vertex given, or none.\n",Geometry.GetNumNewVertices(),Geometry.GetNumNewColors());
+        }
+        /*mErrorIf(Geometry.GetNumNewVertices() != Geometry.GetNumNewColors(),
             "Sorry, but inside glBegin/glEnd you need "
-            "to specify either one color for each vertex given, or none.");
+            "to specify either one color for each vertex given, or none.");*/
         Geometry.SetColorsAreValid(true);
 
         SyncColorMaterial(true);
