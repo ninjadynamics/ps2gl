@@ -134,6 +134,7 @@ void pglDisableCustom(pglU64_t flag);
 // "capabilities" (things that can be passed to pglEnable/pglDisable
 
 #define PGL_CLIPPING 2
+#define PGL_EDGE_AA 3
 
 // for pglFinishRendering
 

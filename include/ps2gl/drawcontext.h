@@ -44,6 +44,7 @@ public:
     virtual void SetCullFaceDir(int direction)             = 0;
     virtual void SetRescaleNormals(bool rescale)           = 0;
     virtual void SetBlendEnabled(bool enabled)             = 0;
+    virtual void SetEdgeAAEnabled(bool enabled)            = 0;
     virtual void SetDepthWriteEnabled(bool enabled)        = 0;
     virtual void SetFrameBufferDrawMask(unsigned int mask) = 0;
     virtual void SetAlphaTestEnabled(bool enabled)         = 0;
@@ -85,6 +86,7 @@ public:
     int CullFaceDir; // 1 or -1
     bool RescaleNormals;
     bool BlendIsEnabled;
+    bool EdgeAAIsEnabled;
     bool AlphaTestIsEnabled;
     bool DepthTestIsEnabled;
     bool DrawInterlaced;
@@ -142,6 +144,9 @@ public:
     inline bool GetBlendEnabled() const { return BlendIsEnabled; }
     void SetBlendEnabled(bool enabled);
 
+    inline bool GetEdgeAAEnabled() const { return EdgeAAIsEnabled; }
+    void SetEdgeAAEnabled(bool enabled);
+
     inline bool GetAlphaTestEnabled() const { return AlphaTestIsEnabled; }
     void SetAlphaTestEnabled(bool enabled);
 
@@ -185,6 +190,7 @@ public:
     void SetCullFaceDir(int direction);
     void SetRescaleNormals(bool rescale);
     void SetBlendEnabled(bool enabled);
+    void SetEdgeAAEnabled(bool enabled);
     void SetAlphaTestEnabled(bool enabled);
     void SetDepthTestEnabled(bool enabled);
     void SetInterlacingOffset(float yPixels);

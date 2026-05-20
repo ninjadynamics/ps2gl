@@ -79,6 +79,7 @@ include $(PS2SDK)/samples/Makefile.eeglobal
 %.vo: %_vcl.vsm
 	dvp-as -o $@ $<
 
+ifeq ($(REBUILD_VU1),1)
 %_vcl.vsm: %_pp4.vcl
 	vcl -o$@ $<
 
@@ -92,7 +93,13 @@ include $(PS2SDK)/samples/Makefile.eeglobal
 	cat $< | sed 's/\[\([0-9]\)\]/_\1/g ; s/\[\([w-zW-Z]\)\]/\1/g' - > $@
 
 %_pp2.vcl: %_pp1.vcl
-	gasp -c ';' -Ivu1 -o $@ $<
+	python3 vu1/gasp.py -c ';' -Ivu1 -o $@ $<
 
 %_pp1.vcl: %.vcl
 	cat $< | sed 's/#include[ 	]\+.\+// ; s/#define[ 	]\+.\+// ; s|\(\.include[ 	]\+\)"\([^/].\+\)"|\1"$(<D)/\2"|' - > $@
+else
+%_vcl.vsm:
+	@echo "$@ is missing; checked-in VU1 .vsm files are required for normal builds."
+	@echo "Install vcl and run with REBUILD_VU1=1 only if you intentionally want to regenerate them."
+	@false
+endif

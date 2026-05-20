@@ -605,6 +605,9 @@ void pglEnable(GLenum cap)
     case PGL_CLIPPING:
         pGLContext->GetDrawContext().SetDoClipping(true);
         break;
+    case PGL_EDGE_AA:
+        pGLContext->GetDrawContext().SetEdgeAAEnabled(true);
+        break;
     default:
         mError("Unknown option passed to pglEnable()");
     }
@@ -615,6 +618,9 @@ void pglDisable(GLenum cap)
     switch (cap) {
     case PGL_CLIPPING:
         pGLContext->GetDrawContext().SetDoClipping(false);
+        break;
+    case PGL_EDGE_AA:
+        pGLContext->GetDrawContext().SetEdgeAAEnabled(false);
         break;
     default:
         mError("Unknown option passed to pglDisable()");

@@ -33,6 +33,7 @@ static const int LightingEnabled  = 1 << 15;
 static const int AlphaBlending    = 1 << 16;
 static const int CullFaceDir      = 1 << 17;
 static const int ClippingEnabled  = 1 << 18;
+static const int EdgeAA           = 1 << 19;
 }
 
 namespace GsCtxtFlags {
@@ -297,6 +298,10 @@ public:
     inline void BlendEnabledChanged()
     {
         RendererContextChanged |= RendererCtxtFlags::AlphaBlending;
+    }
+    inline void EdgeAAChanged()
+    {
+        RendererContextChanged |= RendererCtxtFlags::EdgeAA;
     }
     inline void DrawEnvChanged()
     {

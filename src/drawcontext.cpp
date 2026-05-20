@@ -31,6 +31,7 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , CullFaceDir(1)
     , RescaleNormals(false)
     , BlendIsEnabled(false)
+    , EdgeAAIsEnabled(false)
     , AlphaTestIsEnabled(false)
     , DepthTestIsEnabled(false)
     , DrawInterlaced(true)
@@ -213,6 +214,14 @@ void CImmDrawContext::SetBlendEnabled(bool enabled)
     if (BlendIsEnabled != enabled) {
         BlendIsEnabled = enabled;
         GLContext.BlendEnabledChanged();
+    }
+}
+
+void CImmDrawContext::SetEdgeAAEnabled(bool enabled)
+{
+    if (EdgeAAIsEnabled != enabled) {
+        EdgeAAIsEnabled = enabled;
+        GLContext.EdgeAAChanged();
     }
 }
 
@@ -556,6 +565,29 @@ void CDListDrawContext::SetBlendEnabled(bool enabled)
 
     GLContext.GetDListManager().GetOpenDList() += CSetBlendEnabledCmd(enabled);
     GLContext.BlendEnabledChanged();
+}
+
+class CSetEdgeAAEnabledCmd : public CDListCmd {
+    bool Enabled;
+
+public:
+    CSetEdgeAAEnabledCmd(bool enabled)
+        : Enabled(enabled)
+    {
+    }
+    CDListCmd* Play()
+    {
+        pGLContext->GetImmDrawContext().SetEdgeAAEnabled(Enabled);
+        return CDListCmd::GetNextCmd(this);
+    }
+};
+
+void CDListDrawContext::SetEdgeAAEnabled(bool enabled)
+{
+    GLContext.GetDListGeomManager().Flush();
+
+    GLContext.GetDListManager().GetOpenDList() += CSetEdgeAAEnabledCmd(enabled);
+    GLContext.EdgeAAChanged();
 }
 
 class CSetAlphaTestEnabledCmd : public CDListCmd {
