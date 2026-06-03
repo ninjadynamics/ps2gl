@@ -135,6 +135,32 @@ public:
 
     void BindToSlot(GS::CMemSlot& slot);
     void Free(void);
+
+    // SuperSolar manual mipmaps (ps2gl/ps2stuff have none). Sets GS TEX1 so this
+    // texture samples a mip chain: mxl = highest level (0..6), manual MIPTBP
+    // (mtba=0, sent once separately), LOD from Q (lcm=0), and bilinear-mipmap
+    // filtering (mmin=4 LINEAR_MIPMAP_NEAREST; mmin=5 trilinear renders black on
+    // single-pass GS submission, same as GLdc). ps2gl re-emits gsrTex1 every draw
+    // of this texture, so MXL+filter persist for free.
+    void SetMipLevels(int mxl, int kbias) {
+        if (mxl < 0) mxl = 0;
+        if (mxl > 6) mxl = 6;
+        gsrTex1.mxl  = (uint64_t)mxl;
+        gsrTex1.mtba = 0;
+        gsrTex1.lcm  = 0;       // LOD computed from Q (per-pixel)
+        gsrTex1.l    = 0;       // LOD scale = 0: a nonzero default MULTIPLIES the
+                                // LOD and blurs the whole surface — must be 0
+        gsrTex1.k    = (uint64_t)(kbias & 0xFFF);  // LOD bias, S7.4 (-16 = -1.0
+                                // level); negative = sharper near, more far alias
+        gsrTex1.mmin = 4;       // LINEAR_MIPMAP_NEAREST (bilinear + mip)
+        gsrTex1.mmag = 1;       // LINEAR
+    }
+
+    // SuperSolar: pin this texture's GS slot so the memory manager can never
+    // evict it. Mip levels are never *drawn* (only sampled via the base's
+    // MIPTBP), so without this ps2gl reuses their VRAM for the next texture
+    // upload and the floor samples garbage in the mip band. Call after Load().
+    void LockGsSlot() { if (pImageMem && pImageMem->IsAllocated()) pImageMem->Lock(); }
 };
 
 #endif // ps2gl_texture_h

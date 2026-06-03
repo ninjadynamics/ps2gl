@@ -16,6 +16,7 @@
 #include "ps2gl/metrics.h"
 
 #include "kernel.h"
+#include <stdio.h>
 
 /********************************************
  * CTexManager
@@ -819,3 +820,98 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
 }
 
 /** @} */
+
+/* ===========================================================================
+ * SuperSolar: manual 16-bit (PSMCT16) MIPMAPPED texture upload.
+ *
+ * ps2gl/ps2stuff/GLdc ship no mipmap path (glTexImage2D rejects level>0). The GS
+ * does mipmaps via TEX1 (MXL + mip min-filter) + MIPTBP1/2 (explicit per-level
+ * base pointers). ps2stuff emits TEX1 every draw from the texture's gsrTex1 — so
+ * MXL+filter ride along for free once set (CMMTexture::SetMipLevels) — but it
+ * never emits MIPTBP, so we write MIPTBP once here. It persists because nothing
+ * else touches it, and other textures keep MXL=0 so they ignore it. Mip levels
+ * are uploaded as their own resident textures and don't need to be contiguous
+ * (MIPTBP holds an explicit address per level). See PS2/LESSONS once verified.
+ * =========================================================================== */
+
+/* MIPTBP1/2 register packers — local copies so we don't include <gs_gp.h>, which
+   redefines GS_DISABLE/GS_ENABLE against libgs.h (warnings). TBA = base/256 (14b),
+   TBW = width/64 (6b); fields per the GS manual / gs_gp.h GS_SET_MIPTBP1/2. */
+#define SS_MIPTBP1(TBA1, TBW1, TBA2, TBW2, TBA3, TBW3)            \
+    ((u64)((TBA1) & 0x3FFF) << 0  | (u64)((TBW1) & 0x3F) << 14 |  \
+     (u64)((TBA2) & 0x3FFF) << 20 | (u64)((TBW2) & 0x3F) << 34 |  \
+     (u64)((TBA3) & 0x3FFF) << 40 | (u64)((TBW3) & 0x3F) << 54)
+#define SS_MIPTBP2(TBA4, TBW4, TBA5, TBW5, TBA6, TBW6)            \
+    ((u64)((TBA4) & 0x3FFF) << 0  | (u64)((TBW4) & 0x3F) << 14 |  \
+     (u64)((TBA5) & 0x3FFF) << 20 | (u64)((TBW5) & 0x3F) << 34 |  \
+     (u64)((TBA6) & 0x3FFF) << 40 | (u64)((TBW6) & 0x3F) << 54)
+
+/* One-shot: write MIPTBP1_1 (0x34) + MIPTBP2_1 (0x36), context 1, via a raw GIF
+   PATH3 DMA A+D packet. Run at load time, when the GIF is idle. */
+static void pgl_send_miptbp(u64 miptbp1, u64 miptbp2)
+{
+    static u64 pkt[6] __attribute__((aligned(64)));
+    pkt[0] = 0x1000000000008002ULL;   /* GIFtag: NLOOP=2, EOP=1, PACKED, NREG=1 */
+    pkt[1] = 0x0EULL;                  /* REGS0 = A+D */
+    pkt[2] = miptbp1; pkt[3] = 0x34;   /* A+D: MIPTBP1_1 */
+    pkt[4] = miptbp2; pkt[5] = 0x36;   /* A+D: MIPTBP2_1 */
+
+    FlushCache(0);
+    u32 madr = (u32)((u64)pkt) & 0x1FFFFFFF;   /* physical addr for the DMAC */
+    *(volatile u32*)0x1000A010 = madr;          /* GIF ch2 D_MADR */
+    *(volatile u32*)0x1000A020 = 3;             /* D_QWC = 3 qwords */
+    *(volatile u32*)0x1000A000 = 0x101;         /* D_CHCR: STR | DIR(mem->GIF) */
+    while (*(volatile u32*)0x1000A000 & 0x100) ;    /* wait for STR to clear */
+}
+
+extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
+                                         const int* lh, int count, int kbias)
+{
+    if (!levels || count < 1) return 0;
+    CTexManager& tm = pGLContext->GetTexManager();
+
+    /* Base level (0) is a real GL texture name so the game's glBindTexture binds
+       it like any other texture. */
+    GLuint id = 0;
+    tm.GenTextures(1, &id);
+    tm.BindTexture(id);
+    CMMTexture& base = tm.GetNamedTexture(id);
+    base.SetImage((uint128_t*)levels[0], (uint32_t)lw[0], (uint32_t)lh[0], GS::kPsm16);
+    base.SetUseTexAlpha(true);
+    base.Load();                         /* allocate base slot + upload it */
+
+    int nmip = count - 1;
+    if (nmip > 6) nmip = 6;              /* GS TEX1.MXL caps at 6 */
+
+    /* Levels 1..nmip: own resident CMMTextures (intentionally never freed — they
+       back the floor for the whole run); harvest each GS address for MIPTBP.
+       GetImageGsAddr() returns tb_addr*64 (word addr); /64 gives the TBP value
+       (256-byte units), exactly what MIPTBP wants. TBW is width/64 (min 1). */
+    u32 tba[6] = {0}, tbw[6] = {0};
+    for (int i = 1; i <= nmip; i++) {
+        CMMTexture* m = new CMMTexture(GS::kContext1);
+        m->SetImage((uint128_t*)levels[i], (uint32_t)lw[i], (uint32_t)lh[i], GS::kPsm16);
+        m->Load();
+        m->LockGsSlot();   // pin it — never drawn, so the allocator would evict it
+        tba[i - 1] = m->GetImageGsAddr() / 64;
+        tbw[i - 1] = (u32)((lw[i] + 63) / 64);
+        if (tbw[i - 1] < 1) tbw[i - 1] = 1;
+    }
+
+    base.SetMipLevels(nmip, kbias);   /* TEX1 MXL/LOD + bilinear-mip, re-emitted per draw.
+                                         kbias = GS TEX1.K, S7.4 (-16 = -1.0 level);
+                                         passed from the game so it tunes without a
+                                         ps2gl rebuild. Negative = sharper. */
+
+    u64 miptbp1 = SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]);
+    u64 miptbp2 = SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]);
+
+    printf("[MIP] id=%u base_tbp=%u mxl=%d\n",
+           (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip);
+    for (int i = 0; i < nmip; i++)
+        printf("[MIP]   L%d %dx%d tbp=%u tbw=%u\n",
+               i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i]);
+
+    pgl_send_miptbp(miptbp1, miptbp2);
+    return (unsigned int)id;
+}
