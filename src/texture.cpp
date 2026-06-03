@@ -865,7 +865,8 @@ static void pgl_send_miptbp(u64 miptbp1, u64 miptbp2)
 }
 
 extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
-                                         const int* lh, int count, int kbias)
+                                         const int* lh, int count, int kbias,
+                                         int min_filter)
 {
     if (!levels || count < 1) return 0;
     CTexManager& tm = pGLContext->GetTexManager();
@@ -898,10 +899,12 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
         if (tbw[i - 1] < 1) tbw[i - 1] = 1;
     }
 
-    base.SetMipLevels(nmip, kbias);   /* TEX1 MXL/LOD + bilinear-mip, re-emitted per draw.
-                                         kbias = GS TEX1.K, S7.4 (-16 = -1.0 level);
-                                         passed from the game so it tunes without a
-                                         ps2gl rebuild. Negative = sharper. */
+    base.SetMipLevels(nmip, kbias, min_filter);  /* TEX1 MXL/LOD/min-filter, re-emitted
+                                         per draw. kbias = GS TEX1.K (S7.4, -16 = -1.0
+                                         level, negative = sharper); min_filter = GS
+                                         MMIN (5 trilinear / 4 bilinear-mip). Both
+                                         passed from the game so they tune with no
+                                         ps2gl rebuild. */
 
     u64 miptbp1 = SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]);
     u64 miptbp2 = SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]);

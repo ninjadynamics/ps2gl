@@ -138,11 +138,13 @@ public:
 
     // SuperSolar manual mipmaps (ps2gl/ps2stuff have none). Sets GS TEX1 so this
     // texture samples a mip chain: mxl = highest level (0..6), manual MIPTBP
-    // (mtba=0, sent once separately), LOD from Q (lcm=0), and bilinear-mipmap
-    // filtering (mmin=4 LINEAR_MIPMAP_NEAREST; mmin=5 trilinear renders black on
-    // single-pass GS submission, same as GLdc). ps2gl re-emits gsrTex1 every draw
-    // of this texture, so MXL+filter persist for free.
-    void SetMipLevels(int mxl, int kbias) {
+    // (mtba=0, sent once separately), LOD from Q (lcm=0), and a mipmap min-filter.
+    // mmin=5 = LINEAR_MIPMAP_LINEAR (trilinear): blends between levels, no visible
+    // mip seam. The GS does trilinear in ONE pass natively — the "trilinear renders
+    // black" rule is a GLdc/PVR (Dreamcast) thing, NOT the GS. mmin=4
+    // (LINEAR_MIPMAP_NEAREST) is the cheaper fallback (1 texel fetch, hard level
+    // jumps). ps2gl re-emits gsrTex1 every draw, so MXL+filter persist for free.
+    void SetMipLevels(int mxl, int kbias, int minFilter) {
         if (mxl < 0) mxl = 0;
         if (mxl > 6) mxl = 6;
         gsrTex1.mxl  = (uint64_t)mxl;
@@ -152,7 +154,9 @@ public:
                                 // LOD and blurs the whole surface — must be 0
         gsrTex1.k    = (uint64_t)(kbias & 0xFFF);  // LOD bias, S7.4 (-16 = -1.0
                                 // level); negative = sharper near, more far alias
-        gsrTex1.mmin = 4;       // LINEAR_MIPMAP_NEAREST (bilinear + mip)
+        gsrTex1.mmin = (uint64_t)(minFilter & 0x7); // GS MMIN: 5 = trilinear
+                                // (LINEAR_MIPMAP_LINEAR), 4 = bilinear-mip
+                                // (LINEAR_MIPMAP_NEAREST, cheaper). Passed in.
         gsrTex1.mmag = 1;       // LINEAR
     }
 
