@@ -55,6 +55,31 @@ void CDisplayContext::SetDisplayBuffers(bool interlaced,
     DisplayEnv->SendSettings();
 }
 
+void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screenY)
+{
+    if (!Frame0Mem)
+        return;
+
+    DisplayIsInterlaced = interlaced;
+
+    // overscanMode 0/1/2 maps 1:1 onto GS::DisplayModes ntsc/pal/dtv, which sets
+    // the per-mode DX/DY overscan base used below.
+    DisplayEnv->SetDisplayMode((GS::tDisplayMode)overscanMode);
+
+    int width  = Frame0Mem->GetWidth();
+    int height = Frame0Mem->GetHeight();
+    DisplayEnv->SetFB2(Frame0Mem->GetWordAddr(), width, 0, 0, Frame0Mem->GetPixFormat());
+
+    if (interlaced)
+        // Field-sized buffer fills the visible area via interlace (magV x1).
+        DisplayEnv->SetDisplay2(width, height * 2, 0, screenY, 4, 1);
+    else
+        // Progressive: line-double the field buffer (magV x2) to the same height.
+        DisplayEnv->SetDisplay2(width, height, 0, screenY, 4, 2);
+
+    DisplayEnv->SendSettings();
+}
+
 void CDisplayContext::SwapBuffers()
 {
     // flip frame buffer ptrs
@@ -91,6 +116,17 @@ void pglSetDisplayBuffers(int interlaced, pgl_area_handle_t frame0_mem, pgl_area
     pGLContext->GetDisplayContext().SetDisplayBuffers(interlaced,
         reinterpret_cast<GS::CMemArea*>(frame0_mem),
         reinterpret_cast<GS::CMemArea*>(frame1_mem));
+}
+
+/**
+ * Reconfigure the display for a runtime video-mode change (NTSC / PAL / 480p)
+ * without re-creating the frame buffers. Pair it with SetGsCrt() for the scan
+ * timing. interlaced: 1 for NTSC/PAL, 0 for 480p. overscan_mode: 0 NTSC, 1 PAL,
+ * 2 DTV. screen_y: vertical shift for centering.
+ */
+void pglSetVideoMode(int interlaced, int overscan_mode, int screen_y)
+{
+    pGLContext->GetDisplayContext().SetVideoMode(interlaced != 0, overscan_mode, screen_y);
 }
 
 /** @} */ // pgl_api

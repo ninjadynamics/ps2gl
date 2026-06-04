@@ -31,6 +31,11 @@ public:
 
     GS::CDisplayEnv& GetDisplayEnv() { return *DisplayEnv; }
     void SetDisplayBuffers(bool interlaced, GS::CMemArea* frame0Mem, GS::CMemArea* frame1Mem);
+    /* Reconfigure the display for a video mode WITHOUT re-creating the frame
+       areas: reuses Frame0Mem, switches the read circuit between interlaced and
+       progressive, and applies per-mode overscan. overscanMode: 0 NTSC, 1 PAL,
+       2 DTV(480p). screenY shifts the image down (for vertical centering). */
+    void SetVideoMode(bool interlaced, int overscanMode, int screenY);
     void SwapBuffers();
 };
 

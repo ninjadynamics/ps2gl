@@ -75,6 +75,11 @@ extern void pglSetDrawBuffers(int interlaced,
     pgl_area_handle_t frame0_mem, pgl_area_handle_t frame1_mem,
     pgl_area_handle_t depth_mem);
 
+/* Runtime video-mode reconfigure (reuses the current frame buffers). Pair with
+   SetGsCrt(). interlaced: 1 NTSC/PAL, 0 480p. overscan_mode: 0 NTSC,1 PAL,2 DTV.
+   screen_y: vertical shift for centering. */
+extern void pglSetVideoMode(int interlaced, int overscan_mode, int screen_y);
+
 // textures
 
 void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle);
