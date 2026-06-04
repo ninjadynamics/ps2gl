@@ -4,6 +4,7 @@
 	  General Public License Version 2.1. See the file "COPYING" in the
 	  main directory of this archive for more details.                             */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "dma.h"
@@ -484,6 +485,11 @@ CGLContext* pGLContext = NULL;
  */
 int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
 {
+    // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
+    // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
+    // target. pglInit() is the library entry point, so this prints once.
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.06.04 10:25]\n");
+
     ps2sInit();
     pGLContext = new CGLContext(immBufferVertexSize, immDrawBufferQwordSize);
 
