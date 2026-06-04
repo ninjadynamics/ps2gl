@@ -34,6 +34,7 @@ extern void pglSwapBuffers(void);
 // gs memory allocation
 
 extern void pglPrintGsMemAllocation(void);
+extern void pglGetGsMemInfo(int* total, int* used, int* largestFreeSlot);
 extern int pglHasGsMemBeenInitted(void);
 
 // gs mem slots

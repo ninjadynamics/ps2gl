@@ -1,7 +1,10 @@
 EE_LIB = libps2gl.a
 
 EE_LDFLAGS  += -L. -L$(PS2SDK)/ports/lib
-EE_INCS     += -I./include -I./vu1 -I$(PS2SDK)/ports/include
+# The sibling ps2stuff fork's headers must precede the toolchain-installed copy
+# so ps2gl compiles against the fork (e.g. CMemManager::GetMemInfo). Mirrors the
+# original Makefile.org's INCDIRS, which referenced ../ps2stuff/include.
+EE_INCS     += -I./include -I./vu1 -I../ps2stuff/include -I$(PS2SDK)/ports/include
 
 ifeq ($(DEBUG), 1)
     EE_CFLAGS   += -D_DEBUG

@@ -44,6 +44,26 @@ void pglPrintGsMemAllocation()
 }
 
 /**
+ * returns live gs memory usage, in 8KB pages, from the slot manager.
+ * @param total           pages carved into slots (may be NULL)
+ * @param used            pages in use -- bound or locked (may be NULL)
+ * @param largestFreeSlot largest single free slot; a texture must fit in one
+ *                        slot, so this answers "does an N-page texture still
+ *                        fit?" (may be NULL)
+ */
+void pglGetGsMemInfo(int* total, int* used, int* largestFreeSlot)
+{
+    int t = 0, u = 0, l = 0;
+    GS::CMemArea::GetMemManager().GetMemInfo(t, u, l);
+    if (total)
+        *total = t;
+    if (used)
+        *used = u;
+    if (largestFreeSlot)
+        *largestFreeSlot = l;
+}
+
+/**
  * returns whether gs memory has been initialized (by adding one or more slots).
  * @return 1 if true, 0 if false
  */
