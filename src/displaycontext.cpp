@@ -71,11 +71,15 @@ void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screen
     DisplayEnv->SetFB2(Frame0Mem->GetWordAddr(), width, 0, 0, Frame0Mem->GetPixFormat());
 
     if (interlaced)
-        // Field-sized buffer fills the visible area via interlace (magV x1).
+        // Interlaced: a half-height field buffer fills the visible area via
+        // interlace (display height = buffer height x2, magV x1).
         DisplayEnv->SetDisplay2(width, height * 2, 0, screenY, 4, 1);
     else
-        // Progressive: line-double the field buffer (magV x2) to the same height.
-        DisplayEnv->SetDisplay2(width, height, 0, screenY, 4, 2);
+        // Progressive: show the buffer 1:1 (magV x1). This now assumes a
+        // FULL-height buffer (real 480p). It used to be magV x2 to line-double a
+        // half-height field buffer (fake 480p); SuperSolar's 480p layout uses a
+        // full 640x480 buffer — see PS2/VRAM_480P_PLAN.md.
+        DisplayEnv->SetDisplay2(width, height, 0, screenY, 4, 1);
 
     DisplayEnv->SendSettings();
 }
