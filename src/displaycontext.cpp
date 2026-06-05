@@ -71,15 +71,17 @@ void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screen
     DisplayEnv->SetFB2(Frame0Mem->GetWordAddr(), width, 0, 0, Frame0Mem->GetPixFormat());
 
     if (interlaced)
-        // Interlaced: a half-height field buffer fills the visible area via
-        // interlace (display height = buffer height x2, magV x1).
+        // Interlaced (NTSC/PAL): a half-height field buffer fills the visible
+        // area via interlace (display height = buffer height x2, magV x1).
+        // magH x4 = the NTSC/PAL dot clock (DW = width*4).
         DisplayEnv->SetDisplay2(width, height * 2, 0, screenY, 4, 1);
     else
-        // Progressive: show the buffer 1:1 (magV x1). This now assumes a
-        // FULL-height buffer (real 480p). It used to be magV x2 to line-double a
-        // half-height field buffer (fake 480p); SuperSolar's 480p layout uses a
-        // full 640x480 buffer — see PS2/VRAM_480P_PLAN.md.
-        DisplayEnv->SetDisplay2(width, height, 0, screenY, 4, 1);
+        // Progressive (480p): show the FULL-height buffer 1:1 (magV x1, was x2 to
+        // line-double a field buffer for fake 480p). magH x2, NOT x4: the DTV
+        // 480p scan clock is ~2x NTSC, so magH x4 makes the image exactly TWICE
+        // too wide on real hardware (PCSX2 normalizes it, so it only shows on a
+        // GS). DW = width*2, MAGH = 1. See PS2/VRAM_480P_PLAN.md.
+        DisplayEnv->SetDisplay2(width, height, 0, screenY, 2, 1);
 
     DisplayEnv->SendSettings();
 }
