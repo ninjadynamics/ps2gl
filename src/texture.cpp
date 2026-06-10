@@ -929,6 +929,59 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
     return (unsigned int)id;
 }
 
+/* 8-bit (PSMT8) MIPMAPPED texture: the PSMT8 twin of pgl_create_mip16 above.
+   Base level goes through the standard paletted path (pgl_create_index8 below)
+   so the CLUT rides along per-texture (OwnClut); mip levels are raw kPsm8
+   resident textures whose GS addresses feed MIPTBP. All levels sample through
+   the base's CLUT — the GS has ONE CLUT per texture regardless of MXL. `levels`
+   are index planes (1 byte/texel, 16-byte aligned); `clut` as pgl_create_index8. */
+extern "C" unsigned int pgl_create_index8(const void* indices, int w, int h,
+                                          const void* clut);
+
+extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw,
+                                              const int* lh, int count,
+                                              const void* clut, int kbias,
+                                              int min_filter)
+{
+    if (!levels || !clut || count < 1) return 0;
+
+    GLuint id = pgl_create_index8(levels[0], lw[0], lh[0], clut);
+    if (id == 0) return 0;
+
+    CTexManager& tm = pGLContext->GetTexManager();
+    tm.BindTexture(id);
+    CMMTexture& base = tm.GetNamedTexture(id);
+
+    int nmip = count - 1;
+    if (nmip > 6) nmip = 6;              /* GS TEX1.MXL caps at 6 */
+
+    /* Levels 1..nmip: own resident kPsm8 CMMTextures, pinned (never drawn
+       directly, so the allocator would otherwise evict them). TBW must match
+       what the upload used: PSMT8 pages are 128 px wide, so buffer width rounds
+       up to 128 (SetDimensions does the same) -> TBW = ceil(w/128)*2, min 2. */
+    u32 tba[6] = {0}, tbw[6] = {0};
+    for (int i = 1; i <= nmip; i++) {
+        CMMTexture* m = new CMMTexture(GS::kContext1);
+        m->SetImage((uint128_t*)levels[i], (uint32_t)lw[i], (uint32_t)lh[i], GS::kPsm8);
+        m->Load();
+        m->LockGsSlot();
+        tba[i - 1] = m->GetImageGsAddr() / 64;
+        tbw[i - 1] = (u32)(((lw[i] + 127) / 128) * 2);
+        if (tbw[i - 1] < 2) tbw[i - 1] = 2;
+    }
+
+    base.SetMipLevels(nmip, kbias, min_filter);
+
+    u64 miptbp1 = SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]);
+    u64 miptbp2 = SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]);
+
+    printf("[MIP8] id=%u base_tbp=%u mxl=%d\n",
+           (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip);
+
+    pgl_send_miptbp(miptbp1, miptbp2);
+    return (unsigned int)id;
+}
+
 /* Create an 8-bit paletted (PSMT8) texture from index data + a 256-entry RGBA
    CLUT. The clean one-call uploader for the game (mirrors pgl_create_mip16's
    role): wraps the standard glTexImage2D(GL_COLOR_INDEX) + glColorTable path the
