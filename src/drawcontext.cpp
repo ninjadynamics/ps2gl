@@ -970,4 +970,22 @@ void pglSetInterlacingOffset(float yPixels)
     pGLContext->GetDrawContext().SetInterlacingOffset(yPixels);
 }
 
+/* SuperSolar: toggle the GS dither unit (DTHE). ps2stuff's CDrawEnv already
+   programs a standard Bayer DIMX matrix in its constructor but defaults to
+   DisableDither(). Dithering only affects writes to 16-bit framebuffers — it
+   hides the 5-bit-per-channel banding of a PSMCT16 draw buffer (the 448p
+   layout); the GS ignores it for 32-bit buffers. It must be set on the drawenv
+   OBJECT (not a raw register write): DTHE rides inside the drawenv packet that
+   ps2gl re-sends whenever the draw environment changes, so a raw write would
+   be clobbered by the next re-send. */
+extern "C" void pgl_enable_dither(int enable)
+{
+    CImmDrawContext& dc = pGLContext->GetImmDrawContext();
+    if (enable)
+        dc.GetDrawEnv().EnableDither();
+    else
+        dc.GetDrawEnv().DisableDither();
+    pGLContext->DrawEnvChanged();    /* re-send drawenv settings on next draw */
+}
+
 /** @} */ // pgl_api
