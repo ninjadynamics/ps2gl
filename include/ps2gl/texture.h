@@ -104,6 +104,11 @@ class CMMTexture : public GS::CTexture {
     GS::CMemArea* pImageMem;
     bool XferImage;
     bool IsResident;
+    // SuperSolar: per-texture CLUT. Stock ps2gl keeps a single manager-global
+    // CurClut, so two PSMT8 textures resident at once (e.g. the F22 and enemy
+    // models) both sample whichever palette was uploaded last. Letting each
+    // texture own its palette makes paletted textures self-contained.
+    CMMClut* OwnClut;
 
 public:
     CMMTexture(GS::tContext context);
@@ -116,6 +121,15 @@ public:
     {
         CTexEnv::SetClutGsAddr(clut.GetGsAddr());
     }
+
+    // SuperSolar: take ownership of this texture's palette (deletes any prior).
+    void SetOwnClut(CMMClut* clut)
+    {
+        if (OwnClut)
+            delete OwnClut;
+        OwnClut = clut;
+    }
+    CMMClut* GetOwnClut() const { return OwnClut; }
 
     void ChangePsm(GS::tPSM psm);
 

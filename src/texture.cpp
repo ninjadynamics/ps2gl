@@ -43,8 +43,8 @@ CTexManager::CTexManager(CGLContext& context)
 CTexManager::~CTexManager()
 {
     delete DefaultTex;
-    if (CurClut)
-        delete CurClut;
+    // CurClut is a non-owning ref now (each CMMTexture owns its palette and
+    // frees it in ~CMMTexture), so it must not be deleted here.
 
     for (int i = 0; i < NumTexNames; i++) {
         if (TexNames[i])
@@ -141,15 +141,19 @@ void CTexManager::UseCurTexture(CVifSCDmaPacket& renderPacket)
         GS::tPSM psm = CurTexture->GetPSM();
         // do we need to send the clut?
         if (psm == GS::kPsm8 || psm == GS::kPsm8h) {
-            mErrorIf(CurClut == NULL,
+            // SuperSolar: prefer the texture's own palette so simultaneous
+            // PSMT8 textures don't collide on the manager-global CurClut. Fall
+            // back to CurClut for the legacy single-paletted-texture path.
+            CMMClut* clut = CurTexture->GetOwnClut();
+            if (clut == NULL)
+                clut = CurClut;
+            mErrorIf(clut == NULL,
                 "Trying to use an indexed-color texture with no color table given!");
-            CurClut->Load(renderPacket);
+            clut->Load(renderPacket);
+            CurTexture->SetClut(*clut);
         }
         // use the texture
         CurTexture->SetTexMode(TexMode);
-        if (CurTexture->GetPSM() == GS::kPsm8
-            || CurTexture->GetPSM() == GS::kPsm8h)
-            CurTexture->SetClut(*CurClut);
         CurTexture->Use(renderPacket);
     }
 }
@@ -318,10 +322,14 @@ void CTexManager::SetCurClut(const void* clut, int numEntries)
     GLContext.TextureChanged();
 
     if (!InsideDListDef) {
-        CMMClut* temp = CurClut;
-        CurClut       = new CMMClut(clut);
-        if (temp)
-            delete temp;
+        // SuperSolar: hand the new palette to the bound texture (it owns/frees
+        // it); CurClut stays a non-owning "last set" ref used only as a legacy
+        // fallback. Previously the manager owned the single CurClut, so a second
+        // paletted texture's glColorTable replaced the first's palette outright.
+        CMMClut* newClut = new CMMClut(clut, numEntries);
+        if (CurTexture)
+            CurTexture->SetOwnClut(newClut);
+        CurClut = newClut;
     } else {
         CDList& dlist = GLContext.GetDListManager().GetOpenDList();
         dlist += CSetCurClutCmd(clut, numEntries);
@@ -364,6 +372,7 @@ CMMTexture::CMMTexture(GS::tContext context)
     , pImageMem(NULL)
     , XferImage(false)
     , IsResident(false)
+    , OwnClut(NULL)
 {
     // always load the clut
     // FIXME:  this is obviously not the best way to do
@@ -375,6 +384,7 @@ CMMTexture::CMMTexture(GS::tContext context)
 CMMTexture::~CMMTexture()
 {
     delete pImageMem;
+    delete OwnClut;   // SuperSolar: free this texture's palette (NULL-safe)
 }
 
 /**
@@ -916,5 +926,40 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
                i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i]);
 
     pgl_send_miptbp(miptbp1, miptbp2);
+    return (unsigned int)id;
+}
+
+/* Create an 8-bit paletted (PSMT8) texture from index data + a 256-entry RGBA
+   CLUT. The clean one-call uploader for the game (mirrors pgl_create_mip16's
+   role): wraps the standard glTexImage2D(GL_COLOR_INDEX) + glColorTable path the
+   ps2gl logo example proves. Returns a GL texture name bindable like any other.
+   `clut` is 256 * 4 bytes (R8G8B8A8), MUST be 16-byte aligned (ps2gl requires it)
+   and **already in GS CSM1 storage order** — the build step (tex8.py) does that
+   reorder, so this stays read-only (the blob is embedded in .rodata; reordering
+   here would write read-only data). Defaults REPEAT/LINEAR/MODULATE — re-set wrap
+   or filter afterward if needed. 8-bit halves a 16-bit texture's VRAM (PSMT8 page
+   = 128x64); the 32-bit CLUT gives full alpha (vs PSMCT16's 1 bit). */
+extern "C" unsigned int pgl_create_index8(const void* indices, int w, int h,
+                                          const void* clut)
+{
+    if (!indices || !clut) return 0;
+
+    GLuint id = 0;
+    glGenTextures(1, &id);
+    glBindTexture(GL_TEXTURE_2D, id);
+
+    /* internalformat 3 + GL_COLOR_INDEX -> PSMT8 (texture.cpp glTexImage2D). */
+    glTexImage2D(GL_TEXTURE_2D, 0, 3, w, h, 0,
+                 GL_COLOR_INDEX, GL_UNSIGNED_BYTE, indices);
+    glColorTable(GL_COLOR_TABLE, GL_RGBA, 256, GL_RGBA,
+                 GL_UNSIGNED_INT_8_8_8_8, clut);
+
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
     return (unsigned int)id;
 }
