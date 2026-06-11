@@ -179,6 +179,13 @@ public:
     // MIPTBP), so without this ps2gl reuses their VRAM for the next texture
     // upload and the floor samples garbage in the mip band. Call after Load().
     void LockGsSlot() { if (pImageMem && pImageMem->IsAllocated()) pImageMem->Lock(); }
+    // SuperSolar: release the pin (stage switches delete + re-create the mip
+    // pyramid). Unlock() puts the slot back on its type list; the subsequent
+    // delete unbinds it (LRU), making the VRAM reusable.
+    void UnlockGsSlot() {
+        if (pImageMem && pImageMem->IsAllocated() && pImageMem->IsLocked())
+            pImageMem->Unlock();
+    }
 };
 
 #endif // ps2gl_texture_h

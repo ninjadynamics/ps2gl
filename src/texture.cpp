@@ -842,6 +842,12 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
  * else touches it, and other textures keep MXL=0 so they ignore it. Mip levels
  * are uploaded as their own resident textures and don't need to be contiguous
  * (MIPTBP holds an explicit address per level). See PS2/LESSONS once verified.
+ *
+ * INVARIANT (load-bearing): exactly ONE mip texture may exist at a time —
+ * MIPTBP is global, so a second create stomps the first texture's mip
+ * pointers (symptom: wrong-scale far mips on the other floor). The game
+ * enforces it by releasing the old pyramid (pgl_delete_mips) before creating
+ * the next floor on a stage switch.
  * =========================================================================== */
 
 /* MIPTBP1/2 register packers — local copies so we don't include <gs_gp.h>, which
@@ -855,6 +861,58 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
     ((u64)((TBA4) & 0x3FFF) << 0  | (u64)((TBW4) & 0x3F) << 14 |  \
      (u64)((TBA5) & 0x3FFF) << 20 | (u64)((TBW5) & 0x3F) << 34 |  \
      (u64)((TBA6) & 0x3FFF) << 40 | (u64)((TBW6) & 0x3F) << 54)
+
+/* SuperSolar: registry of the manually-created mip-level CMMTextures, keyed by
+   the base texture's GL name, so the game can RELEASE a whole mip pyramid when
+   a stage switch swaps the floor. Without this the locked slots + CMMTextures
+   leak (~14 pages per swap), and the only escape was a full GS layout reinit.
+   Releasing the old pyramid BEFORE creating the new one also keeps the global
+   MIPTBP write below correct — exactly one mip texture exists at a time. */
+#define PGL_MIP_REGISTRY_MAX 4
+/* NOTE: the identifier "mips" is unusable here — the MIPS GCC target
+   predefines it as a macro (`#define mips 1`), like `unix`/`linux`. */
+struct SMipRegistryEntry {
+    unsigned int baseId;
+    CMMTexture* levels[6];
+    int count;
+};
+static SMipRegistryEntry MipRegistry[PGL_MIP_REGISTRY_MAX];
+
+static void pgl_mips_register(unsigned int baseId, CMMTexture** levels, int count)
+{
+    for (int i = 0; i < PGL_MIP_REGISTRY_MAX; i++) {
+        if (MipRegistry[i].baseId == 0) {
+            MipRegistry[i].baseId = baseId;
+            for (int j = 0; j < count; j++)
+                MipRegistry[i].levels[j] = levels[j];
+            MipRegistry[i].count = count;
+            return;
+        }
+    }
+    printf("pgl_mips_register: table full — mip levels for %u will leak\n", baseId);
+}
+
+/* Release the mip pyramid registered for `baseId` (no-op if none): unlock each
+   level's GS slot (back onto its type list) and delete the CMMTexture (~CMemArea
+   unbinds the slot -> LRU-reusable). Call BEFORE glDeleteTextures(baseId). */
+extern "C" void pgl_delete_mips(unsigned int baseId)
+{
+    for (int i = 0; i < PGL_MIP_REGISTRY_MAX; i++) {
+        if (MipRegistry[i].baseId != baseId)
+            continue;
+        for (int j = 0; j < MipRegistry[i].count; j++) {
+            CMMTexture* m = MipRegistry[i].levels[j];
+            if (!m)
+                continue;
+            m->UnlockGsSlot();
+            delete m;
+            MipRegistry[i].levels[j] = NULL;
+        }
+        MipRegistry[i].baseId = 0;
+        MipRegistry[i].count  = 0;
+        return;
+    }
+}
 
 /* One-shot: write MIPTBP1_1 (0x34) + MIPTBP2_1 (0x36), context 1, via a raw GIF
    PATH3 DMA A+D packet. Run at load time, when the GIF is idle. */
@@ -899,15 +957,18 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
        GetImageGsAddr() returns tb_addr*64 (word addr); /64 gives the TBP value
        (256-byte units), exactly what MIPTBP wants. TBW is width/64 (min 1). */
     u32 tba[6] = {0}, tbw[6] = {0};
+    CMMTexture* mlist[6] = {0};
     for (int i = 1; i <= nmip; i++) {
         CMMTexture* m = new CMMTexture(GS::kContext1);
         m->SetImage((uint128_t*)levels[i], (uint32_t)lw[i], (uint32_t)lh[i], GS::kPsm16);
         m->Load();
         m->LockGsSlot();   // pin it — never drawn, so the allocator would evict it
+        mlist[i - 1] = m;
         tba[i - 1] = m->GetImageGsAddr() / 64;
         tbw[i - 1] = (u32)((lw[i] + 63) / 64);
         if (tbw[i - 1] < 1) tbw[i - 1] = 1;
     }
+    pgl_mips_register(id, mlist, nmip);   /* releasable via pgl_delete_mips */
 
     base.SetMipLevels(nmip, kbias, min_filter);  /* TEX1 MXL/LOD/min-filter, re-emitted
                                          per draw. kbias = GS TEX1.K (S7.4, -16 = -1.0
@@ -960,15 +1021,18 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
        what the upload used: PSMT8 pages are 128 px wide, so buffer width rounds
        up to 128 (SetDimensions does the same) -> TBW = ceil(w/128)*2, min 2. */
     u32 tba[6] = {0}, tbw[6] = {0};
+    CMMTexture* mlist[6] = {0};
     for (int i = 1; i <= nmip; i++) {
         CMMTexture* m = new CMMTexture(GS::kContext1);
         m->SetImage((uint128_t*)levels[i], (uint32_t)lw[i], (uint32_t)lh[i], GS::kPsm8);
         m->Load();
         m->LockGsSlot();
+        mlist[i - 1] = m;
         tba[i - 1] = m->GetImageGsAddr() / 64;
         tbw[i - 1] = (u32)(((lw[i] + 127) / 128) * 2);
         if (tbw[i - 1] < 2) tbw[i - 1] = 2;
     }
+    pgl_mips_register(id, mlist, nmip);   /* releasable via pgl_delete_mips */
 
     base.SetMipLevels(nmip, kbias, min_filter);
 
