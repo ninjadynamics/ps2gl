@@ -100,9 +100,19 @@ public:
 
     int Width, Height;
 
+    // Centered viewport squish (glViewport): 1.0 = full frame. Persisted across
+    // SetDrawBuffers so a layout switch keeps the active "screen fit".
+    float VpScaleX, VpScaleY;
+
 public:
     CImmDrawContext(CGLContext& context);
     virtual ~CImmDrawContext();
+
+    // Centered viewport squish by a fraction (1.0 = full frame), with a matching
+    // GS scissor so the squished border stays unwritten (shows the clear color).
+    // Scales by the context's own Width/Height -- unit-safe in interlaced field
+    // buffers (unlike glViewport, which gets the logical full-screen size).
+    void SetViewportScale(float sx, float sy);
 
     GS::CDrawEnv& GetDrawEnv() { return *DrawEnv; }
     void SwapBuffers(bool fieldIsEven);

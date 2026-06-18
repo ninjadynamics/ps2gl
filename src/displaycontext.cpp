@@ -55,7 +55,7 @@ void CDisplayContext::SetDisplayBuffers(bool interlaced,
     DisplayEnv->SendSettings();
 }
 
-void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screenY)
+void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screenX, int screenY)
 {
     if (!Frame0Mem)
         return;
@@ -74,16 +74,35 @@ void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screen
         // Interlaced (NTSC/PAL): a half-height field buffer fills the visible
         // area via interlace (display height = buffer height x2, magV x1).
         // magH x4 = the NTSC/PAL dot clock (DW = width*4).
-        DisplayEnv->SetDisplay2(width, height * 2, 0, screenY, 4, 1);
+        DisplayEnv->SetDisplay2(width, height * 2, screenX, screenY, 4, 1);
     else
         // Progressive (480p): show the FULL-height buffer 1:1 (magV x1, was x2 to
         // line-double a field buffer for fake 480p). magH x2, NOT x4: the DTV
         // 480p scan clock is ~2x NTSC, so magH x4 makes the image exactly TWICE
         // too wide on real hardware (PCSX2 normalizes it, so it only shows on a
         // GS). DW = width*2, MAGH = 1. See PS2/VRAM_480P_PLAN.md.
-        DisplayEnv->SetDisplay2(width, height, 0, screenY, 2, 1);
+        DisplayEnv->SetDisplay2(width, height, screenX, screenY, 2, 1);
 
     DisplayEnv->SendSettings();
+}
+
+void CDisplayContext::SetDisplayOffset(int screenX, int screenY)
+{
+    if (!Frame0Mem)
+        return;
+
+    // Recompute the DISPLAY register for the CURRENT mode (interlace + the
+    // overscan/magnification SetVideoMode already programmed) with the new
+    // raster offset, then push ONLY that register -- no PMODE/DISPFB/BGCOLOR
+    // rewrite, so the overscan border doesn't flash while re-centering.
+    int width  = Frame0Mem->GetWidth();
+    int height = Frame0Mem->GetHeight();
+    if (DisplayIsInterlaced)
+        DisplayEnv->SetDisplay2(width, height * 2, screenX, screenY, 4, 1);
+    else
+        DisplayEnv->SetDisplay2(width, height, screenX, screenY, 2, 1);
+
+    DisplayEnv->SendDisplayPos();
 }
 
 void CDisplayContext::SwapBuffers()
@@ -130,9 +149,14 @@ void pglSetDisplayBuffers(int interlaced, pgl_area_handle_t frame0_mem, pgl_area
  * timing. interlaced: 1 for NTSC/PAL, 0 for 480p. overscan_mode: 0 NTSC, 1 PAL,
  * 2 DTV. screen_y: vertical shift for centering.
  */
-void pglSetVideoMode(int interlaced, int overscan_mode, int screen_y)
+void pglSetVideoMode(int interlaced, int overscan_mode, int screen_x, int screen_y)
 {
-    pGLContext->GetDisplayContext().SetVideoMode(interlaced != 0, overscan_mode, screen_y);
+    pGLContext->GetDisplayContext().SetVideoMode(interlaced != 0, overscan_mode, screen_x, screen_y);
+}
+
+void pglSetDisplayOffset(int screen_x, int screen_y)
+{
+    pGLContext->GetDisplayContext().SetDisplayOffset(screen_x, screen_y);
 }
 
 /** @} */ // pgl_api
@@ -161,5 +185,10 @@ void glViewport(GLint x, GLint y,
 {
     GL_FUNC_DEBUG("%s(%d,%d,%d,%d)\n", __FUNCTION__, x, y, width, height);
 
+    // Intentionally a no-op: raylib4ps2 calls this with the LOGICAL framebuffer
+    // size (e.g. 640x448), but in interlaced modes the GS draw buffer is a
+    // half-height field buffer -- honoring it here would double the vertical
+    // scale and shred all geometry. Screen Fit goes through pglSetViewportScale
+    // instead, which scales by the draw context's own Width/Height.
     mNotImplemented();
 }

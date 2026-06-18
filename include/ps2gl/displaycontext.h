@@ -34,8 +34,13 @@ public:
     /* Reconfigure the display for a video mode WITHOUT re-creating the frame
        areas: reuses Frame0Mem, switches the read circuit between interlaced and
        progressive, and applies per-mode overscan. overscanMode: 0 NTSC, 1 PAL,
-       2 DTV(480p). screenY shifts the image down (for vertical centering). */
-    void SetVideoMode(bool interlaced, int overscanMode, int screenY);
+       2 DTV(480p). screenX/screenY shift the image (horizontal/vertical
+       centering; may be negative). */
+    void SetVideoMode(bool interlaced, int overscanMode, int screenX, int screenY);
+    /* Live raster re-center: recompute + push ONLY the DISPLAY register (keeps
+       the current mode's interlace/overscan). No frame-buffer/background
+       reprogram, so it doesn't flash the overscan border. */
+    void SetDisplayOffset(int screenX, int screenY);
     void SwapBuffers();
 };
 

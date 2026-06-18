@@ -77,8 +77,19 @@ extern void pglSetDrawBuffers(int interlaced,
 
 /* Runtime video-mode reconfigure (reuses the current frame buffers). Pair with
    SetGsCrt(). interlaced: 1 NTSC/PAL, 0 480p. overscan_mode: 0 NTSC,1 PAL,2 DTV.
-   screen_y: vertical shift for centering. */
-extern void pglSetVideoMode(int interlaced, int overscan_mode, int screen_y);
+   screen_x / screen_y: horizontal / vertical raster shift for centering (display
+   pixels; may be negative -- the GS DX/DY field truncation handles the wrap). */
+extern void pglSetVideoMode(int interlaced, int overscan_mode, int screen_x, int screen_y);
+
+/* Live raster re-center (Screen Pos): push ONLY the DISPLAY register for the
+   current mode, leaving frame buffer / background alone (no overscan-border
+   flash). Use pglSetVideoMode for a full mode change. */
+extern void pglSetDisplayOffset(int screen_x, int screen_y);
+
+/* Centered viewport squish for overscan "screen fit". sx/sy are fractions
+   (0 < s <= 1, 1.0 = full frame); scales by the draw buffer's own dims so it is
+   correct in interlaced (half-height) modes. Persists across pglSetVideoMode. */
+extern void pglSetViewportScale(float sx, float sy);
 
 // textures
 

@@ -39,6 +39,8 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , IsVertexXformValid(false)
     , Width(0)
     , Height(0)
+    , VpScaleX(1.0f)
+    , VpScaleY(1.0f)
 {
     GSScale.set_identity();
 
@@ -103,8 +105,9 @@ void CImmDrawContext::SetDrawBuffers(bool interlaced,
 
     // projection xform
 
-    // -1 here flips mapping to: far_clip -> -1, near_clip -> 1
-    GSScale.set_scale(cpu_vec_xyz(width / 2.0f, -1 * height / 2.0f, -1 * (float)maxDepthValue / 2.0f));
+    // -1 here flips mapping to: far_clip -> -1, near_clip -> 1. VpScale folds in
+    // the centered "screen fit" squish so it survives a video-mode/layout switch.
+    GSScale.set_scale(cpu_vec_xyz(width * VpScaleX / 2.0f, -1 * height * VpScaleY / 2.0f, -1 * (float)maxDepthValue / 2.0f));
     SetVertexXformValid(false);
 
     // clear environment
@@ -124,7 +127,14 @@ void CImmDrawContext::SetDrawBuffers(bool interlaced,
     DrawEnv->CalculateClippedFBXYOffsets(GS::kDontAddHalfPixel);
     DrawEnv->SetFrameBufferPSM(frame0Mem->GetPixFormat());
 
-    // DrawEnv->SetScissorArea( 0, height * 0.25f, width, height * 0.25f );
+    // Centered "screen fit" scissor (full frame when VpScale == 1), so the fit
+    // survives a layout switch. Must be after SetFrameBufferDim. VpScale is <= 1
+    // (squish only), so the origin never goes negative.
+    {
+        int vpw = (int)(width * VpScaleX + 0.5f);
+        int vph = (int)(height * VpScaleY + 0.5f);
+        DrawEnv->SetScissorArea((width - vpw) / 2, (height - vph) / 2, vpw, vph);
+    }
 
     if (ZBufMem) {
         DrawEnv->EnableDepthTest();
@@ -160,6 +170,33 @@ void CImmDrawContext::SwapBuffers(bool fieldIsEven)
 
         GLContext.DrawEnvChanged();
     }
+}
+
+void CImmDrawContext::SetViewportScale(float sx, float sy)
+{
+    // Squish only (<= 1.0). >1.0 cannot zoom cleanly here: the scene is clipped
+    // to the screen on the CPU before GSScale, so zooming reveals the clip edge
+    // inside the frame. Caller (Screen Fit) bounds it to 0.70..1.0.
+    if (sx <= 0.0f || sx > 1.0f) sx = 1.0f;
+    if (sy <= 0.0f || sy > 1.0f) sy = 1.0f;
+    VpScaleX = sx;
+    VpScaleY = sy;
+    if (Width <= 0 || Height <= 0)
+        return; // SetDrawBuffers hasn't run yet; it will pick VpScale up.
+
+    // Squish NDC -> a (Width*sx) x (Height*sy) box centered on the framebuffer
+    // center (the XYOFFSET puts NDC origin there). Width/Height are the draw
+    // buffer's real dims (a 224-line field buffer in interlaced modes), so this
+    // is unit-correct where glViewport's logical 448 would not be.
+    int vpw = (int)(Width  * sx + 0.5f);
+    int vph = (int)(Height * sy + 0.5f);
+    int maxDepthValue = (1 << DepthBits) - 1;
+    GSScale.set_scale(cpu_vec_xyz(vpw / 2.0f, -1 * vph / 2.0f, -1 * (float)maxDepthValue / 2.0f));
+    SetVertexXformValid(false);
+
+    // Clip to the centered sub-rect; the border stays the clear color.
+    DrawEnv->SetScissorArea((Width - vpw) / 2, (Height - vph) / 2, vpw, vph);
+    GLContext.DrawEnvChanged();
 }
 
 const cpu_mat_44&
@@ -946,6 +983,17 @@ void glGetPolygonStipple(GLubyte* mask)
  * @addtogroup pgl_api
  * @{
  */
+
+/**
+ * Centered viewport squish for overscan "screen fit". sx/sy are fractions
+ * (0 < s <= 1; 1.0 = full frame). Scales by the draw buffer's own dimensions,
+ * so it is correct in interlaced (half-height) modes. Persists across
+ * pglSetDrawBuffers (video-mode switches).
+ */
+void pglSetViewportScale(float sx, float sy)
+{
+    pGLContext->GetImmDrawContext().SetViewportScale(sx, sy);
+}
 
 /**
  * Set the area(s) in gs mem to draw.  If two frame buffers are given they will
