@@ -141,7 +141,7 @@ void CTexManager::UseCurTexture(CVifSCDmaPacket& renderPacket)
         GS::tPSM psm = CurTexture->GetPSM();
         // do we need to send the clut?
         if (psm == GS::kPsm8 || psm == GS::kPsm8h) {
-            // SuperSolar: prefer the texture's own palette so simultaneous
+            // HyperSolar: prefer the texture's own palette so simultaneous
             // PSMT8 textures don't collide on the manager-global CurClut. Fall
             // back to CurClut for the legacy single-paletted-texture path.
             CMMClut* clut = CurTexture->GetOwnClut();
@@ -322,7 +322,7 @@ void CTexManager::SetCurClut(const void* clut, int numEntries)
     GLContext.TextureChanged();
 
     if (!InsideDListDef) {
-        // SuperSolar: hand the new palette to the bound texture (it owns/frees
+        // HyperSolar: hand the new palette to the bound texture (it owns/frees
         // it); CurClut stays a non-owning "last set" ref used only as a legacy
         // fallback. Previously the manager owned the single CurClut, so a second
         // paletted texture's glColorTable replaced the first's palette outright.
@@ -384,7 +384,7 @@ CMMTexture::CMMTexture(GS::tContext context)
 CMMTexture::~CMMTexture()
 {
     delete pImageMem;
-    delete OwnClut;   // SuperSolar: free this texture's palette (NULL-safe)
+    delete OwnClut;   // HyperSolar: free this texture's palette (NULL-safe)
 }
 
 /**
@@ -832,7 +832,7 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
 /** @} */
 
 /* ===========================================================================
- * SuperSolar: manual 16-bit (PSMCT16) MIPMAPPED texture upload.
+ * HyperSolar: manual 16-bit (PSMCT16) MIPMAPPED texture upload.
  *
  * ps2gl/ps2stuff/GLdc ship no mipmap path (glTexImage2D rejects level>0). The GS
  * does mipmaps via TEX1 (MXL + mip min-filter) + MIPTBP1/2 (explicit per-level
@@ -862,7 +862,7 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
      (u64)((TBA5) & 0x3FFF) << 20 | (u64)((TBW5) & 0x3F) << 34 |  \
      (u64)((TBA6) & 0x3FFF) << 40 | (u64)((TBW6) & 0x3F) << 54)
 
-/* SuperSolar: registry of the manually-created mip-level CMMTextures, keyed by
+/* HyperSolar: registry of the manually-created mip-level CMMTextures, keyed by
    the base texture's GL name, so the game can RELEASE a whole mip pyramid when
    a stage switch swaps the floor. Without this the locked slots + CMMTextures
    leak (~14 pages per swap), and the only escape was a full GS layout reinit.

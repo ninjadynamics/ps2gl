@@ -104,7 +104,7 @@ class CMMTexture : public GS::CTexture {
     GS::CMemArea* pImageMem;
     bool XferImage;
     bool IsResident;
-    // SuperSolar: per-texture CLUT. Stock ps2gl keeps a single manager-global
+    // HyperSolar: per-texture CLUT. Stock ps2gl keeps a single manager-global
     // CurClut, so two PSMT8 textures resident at once (e.g. the F22 and enemy
     // models) both sample whichever palette was uploaded last. Letting each
     // texture own its palette makes paletted textures self-contained.
@@ -122,7 +122,7 @@ public:
         CTexEnv::SetClutGsAddr(clut.GetGsAddr());
     }
 
-    // SuperSolar: take ownership of this texture's palette (deletes any prior).
+    // HyperSolar: take ownership of this texture's palette (deletes any prior).
     void SetOwnClut(CMMClut* clut)
     {
         if (OwnClut)
@@ -150,7 +150,7 @@ public:
     void BindToSlot(GS::CMemSlot& slot);
     void Free(void);
 
-    // SuperSolar manual mipmaps (ps2gl/ps2stuff have none). Sets GS TEX1 so this
+    // HyperSolar manual mipmaps (ps2gl/ps2stuff have none). Sets GS TEX1 so this
     // texture samples a mip chain: mxl = highest level (0..6), manual MIPTBP
     // (mtba=0, sent once separately), LOD from Q (lcm=0), and a mipmap min-filter.
     // mmin=5 = LINEAR_MIPMAP_LINEAR (trilinear): blends between levels, no visible
@@ -174,12 +174,12 @@ public:
         gsrTex1.mmag = 1;       // LINEAR
     }
 
-    // SuperSolar: pin this texture's GS slot so the memory manager can never
+    // HyperSolar: pin this texture's GS slot so the memory manager can never
     // evict it. Mip levels are never *drawn* (only sampled via the base's
     // MIPTBP), so without this ps2gl reuses their VRAM for the next texture
     // upload and the floor samples garbage in the mip band. Call after Load().
     void LockGsSlot() { if (pImageMem && pImageMem->IsAllocated()) pImageMem->Lock(); }
-    // SuperSolar: release the pin (stage switches delete + re-create the mip
+    // HyperSolar: release the pin (stage switches delete + re-create the mip
     // pyramid). Unlock() puts the slot back on its type list; the subsequent
     // delete unbinds it (LRU), making the VRAM reusable.
     void UnlockGsSlot() {
