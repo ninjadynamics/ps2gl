@@ -344,37 +344,52 @@ void CGLContext::RenderGeometry()
 
 int CGLContext::GsIntHandler(int cause)
 {
-    uint32_t csr = *(volatile uint32_t*)GS::ControlRegs::csr;
-    // is this a signal interrupt?
-    if (csr & 1) {
-        // is it one of ours?
-        uint64_t sigLblId = *(volatile uint64_t*)GS::ControlRegs::siglblid;
-        if ((uint16_t)(sigLblId >> 16) == GetPs2glSignalId()) {
-            switch (sigLblId & 0xffff) {
-            case 1:
-                iSignalSema(RenderingFinishedSemaId);
-                if (RenderingFinishedCallback != NULL)
-                    RenderingFinishedCallback();
-                break;
-            case 2:
-                iSignalSema(ImmediateRenderingFinishedSemaId);
-                break;
-            default:
-                mError("Unknown signal");
-            }
+    // Drain EVERY unmasked event (SIGNAL bit 0 | VSYNC bit 3, per the IMR set
+    // in the ctor) before returning. The GS holds its INTC line asserted while
+    // ANY unmasked CSR event bit is set, and the EE INTC latches EDGES only —
+    // returning with one still pending means the line never drops, no edge is
+    // ever latched again, GS interrupts die, and the next WaitSema on this
+    // path sleeps forever (the intermittent EE hard freeze on chain-heavy
+    // frames, whose end-of-chain SIGNAL drifts across vblank). Servicing only
+    // the bits seen in ONE read at entry is not enough: an event that sets
+    // DURING the handler (after the read) also keeps the line high — so loop
+    // until CSR reads clean, which proves the line is low and the next event
+    // makes a fresh edge.
+    uint32_t csr;
+    while ((csr = *(volatile uint32_t*)GS::ControlRegs::csr) & 9) {
+        // signal interrupt?
+        if (csr & 1) {
+            // is it one of ours?
+            uint64_t sigLblId = *(volatile uint64_t*)GS::ControlRegs::siglblid;
+            if ((uint16_t)(sigLblId >> 16) == GetPs2glSignalId()) {
+                switch (sigLblId & 0xffff) {
+                case 1:
+                    iSignalSema(RenderingFinishedSemaId);
+                    if (RenderingFinishedCallback != NULL)
+                        RenderingFinishedCallback();
+                    break;
+                case 2:
+                    iSignalSema(ImmediateRenderingFinishedSemaId);
+                    break;
+                default:
+                    mError("Unknown signal");
+                }
 
-            // clear our signal id
-            sigLblId &= ~0xffffffff;
-            *(volatile uint64_t*)GS::ControlRegs::siglblid = sigLblId;
-            // clear the exception and wait for the next
+                // clear our signal id
+                sigLblId &= ~0xffffffff;
+                *(volatile uint64_t*)GS::ControlRegs::siglblid = sigLblId;
+            }
+            // clear the exception unconditionally — a SIGNAL event left
+            // pending holds the interrupt line high and kills all future
+            // GS interrupts
             *(volatile unsigned int*)GS::ControlRegs::csr = 1;
         }
-    }
-    // is this a vsync interrupt?
-    else if (csr & 8) {
-        iSignalSema(VsyncSemaId);
-        // clear the exception and wait for the next
-        *(volatile unsigned int*)GS::ControlRegs::csr = 8;
+        // vsync interrupt? (NOT else — both may be pending together)
+        if (csr & 8) {
+            iSignalSema(VsyncSemaId);
+            // clear the exception and wait for the next
+            *(volatile unsigned int*)GS::ControlRegs::csr = 8;
+        }
     }
 
     ExitHandler();
@@ -488,7 +503,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.07.01 14:00]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.07.02 01:10]\n");
 
     ps2sInit();
     pGLContext = new CGLContext(immBufferVertexSize, immDrawBufferQwordSize);
