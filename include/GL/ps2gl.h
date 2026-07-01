@@ -86,6 +86,12 @@ extern void pglSetVideoMode(int interlaced, int overscan_mode, int screen_x, int
    flash). Use pglSetVideoMode for a full mode change. */
 extern void pglSetDisplayOffset(int screen_x, int screen_y);
 
+/* Flicker filter (interlace softening): blend display read circuit 1 (offset one
+   scanline) over RC2 with a constant alpha -- a 2-tap vertical low-pass that
+   stabilizes 448i output. enable: 0/1. alpha: RC1 (neighbor-line) weight 0..255.
+   Only stores state; re-issue pglSetVideoMode to apply. Interlaced modes only. */
+extern void pglSetFlickerFilter(int enable, int alpha);
+
 /* Centered viewport squish for overscan "screen fit". sx/sy are fractions
    (0 < s <= 1, 1.0 = full frame); scales by the draw buffer's own dims so it is
    correct in interlaced (half-height) modes. Persists across pglSetVideoMode. */

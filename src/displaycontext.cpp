@@ -20,8 +20,40 @@ CDisplayContext::CDisplayContext(CGLContext& context)
     , DisplayEnv(NULL)
     , DisplayIsDblBuffered(true)
     , DisplayIsInterlaced(true)
+    , FlickerEnabled(false)
+    , FlickerAlpha(0)
 {
     DisplayEnv = new GS::CDisplayEnv;
+}
+
+// Flicker filter: point read circuit 1 at the same frame buffer as RC2 but one
+// line lower (DBY=1), matching DISPLAY1 geometry to DISPLAY2, and const-alpha
+// blend the two -- a 2-tap vertical low-pass on scanout. FlickerAlpha is RC1's
+// (neighbor-line) weight. When disabled, RC1 is turned off and the blend is
+// restored to the constructor default (RC1 alpha, RC1 off => no effect). RC1's
+// frame-buffer ADDRESS is repointed per swap in SwapBuffers; here we set the
+// initial address (Frame0Mem, matching the SetFB2 calls) plus DBY/geometry/PMODE.
+void CDisplayContext::ApplyFlicker(bool interlaced, int width, int height, int screenX, int screenY)
+{
+    if (FlickerEnabled) {
+        DisplayEnv->SetFB1(Frame0Mem->GetWordAddr(), width, 0, 1, Frame0Mem->GetPixFormat());
+        if (interlaced)
+            DisplayEnv->SetDisplay1(width, height * 2, screenX, screenY, 4, 1);
+        else
+            DisplayEnv->SetDisplay1(width, height, screenX, screenY, 2, 1);
+        DisplayEnv->SetUseReadCircuit1(true);
+        DisplayEnv->BlendRC1WithRC2();
+        DisplayEnv->BlendUsingConstAlpha(FlickerAlpha);
+    } else {
+        DisplayEnv->SetUseReadCircuit1(false);
+        DisplayEnv->BlendUsingRC1Alpha();
+    }
+}
+
+void CDisplayContext::SetFlickerFilter(bool enable, int alpha)
+{
+    FlickerEnabled = enable;
+    FlickerAlpha   = (unsigned char)alpha;
 }
 
 CDisplayContext::~CDisplayContext()
@@ -52,6 +84,7 @@ void CDisplayContext::SetDisplayBuffers(bool interlaced,
 
     DisplayEnv->SetFB2(frame0Mem->GetWordAddr(), width, 0, 0, frame0Mem->GetPixFormat());
     DisplayEnv->SetDisplay2(width, displayHeight);
+    ApplyFlicker(DisplayIsInterlaced, width, height, 0, 0);
     DisplayEnv->SendSettings();
 }
 
@@ -83,6 +116,7 @@ void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screen
         // GS). DW = width*2, MAGH = 1. See PS2/VRAM_480P_PLAN.md.
         DisplayEnv->SetDisplay2(width, height, screenX, screenY, 2, 1);
 
+    ApplyFlicker(interlaced, width, height, screenX, screenY);
     DisplayEnv->SendSettings();
 }
 
@@ -102,6 +136,17 @@ void CDisplayContext::SetDisplayOffset(int screenX, int screenY)
     else
         DisplayEnv->SetDisplay2(width, height, screenX, screenY, 2, 1);
 
+    // With the flicker filter on, RC1 must re-center alongside RC2 or the two
+    // circuits pan apart into a misaligned double image. Mirror DISPLAY1 and
+    // push it too (still no PMODE/DISPFB rewrite, so no border flash).
+    if (FlickerEnabled) {
+        if (DisplayIsInterlaced)
+            DisplayEnv->SetDisplay1(width, height * 2, screenX, screenY, 4, 1);
+        else
+            DisplayEnv->SetDisplay1(width, height, screenX, screenY, 2, 1);
+        DisplayEnv->SendDisplayPos1();
+    }
+
     DisplayEnv->SendDisplayPos();
 }
 
@@ -117,6 +162,11 @@ void CDisplayContext::SwapBuffers()
         // drawing immediately but building up a packet)
         // remember this is immediately sent, not delayed through a packet
         DisplayEnv->SetFB2Addr(CurFrameMem->GetWordAddr());
+        // Flicker filter: RC1 shares RC2's buffer, so it must follow the flip
+        // too (else the two circuits blend two DIFFERENT frames -> ghosting).
+        // The one-line DBY offset lives in DISPFB1 and survives SetFB1Addr.
+        if (FlickerEnabled)
+            DisplayEnv->SetFB1Addr(CurFrameMem->GetWordAddr());
         DisplayEnv->SendSettings();
     }
 }
@@ -157,6 +207,16 @@ void pglSetVideoMode(int interlaced, int overscan_mode, int screen_x, int screen
 void pglSetDisplayOffset(int screen_x, int screen_y)
 {
     pGLContext->GetDisplayContext().SetDisplayOffset(screen_x, screen_y);
+}
+
+/**
+ * Flicker filter (interlace softening): blend read circuit 1 (offset one line)
+ * over RC2 with a constant alpha. Only stores the state -- re-issue
+ * pglSetVideoMode to apply it. alpha is RC1's neighbor-line weight (0..255).
+ */
+void pglSetFlickerFilter(int enable, int alpha)
+{
+    pGLContext->GetDisplayContext().SetFlickerFilter(enable != 0, alpha);
 }
 
 /** @} */ // pgl_api
