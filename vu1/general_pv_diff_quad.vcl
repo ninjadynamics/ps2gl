@@ -214,7 +214,7 @@ pt_light_vert_loop_lid:
 done_lid:
 
      ; clamp and convert to fixed-point
-     finish_colors
+     finish_colors_pv
 
      ; ---------------- kick packet to GS -----------------------
 

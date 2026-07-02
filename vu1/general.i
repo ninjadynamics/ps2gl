@@ -128,3 +128,29 @@
      next_o
      loop_o         final_loop_lid
      .endm
+
+     ; HyperSolar: finish_colors for the PER-VERTEX-color renderers (pv_diff family).
+     ; Stock ps2gl writes every vert's alpha from the CONSTANT material diffuse (above),
+     ; which silently discards per-vertex alpha — the city fade system animates vertex
+     ; alpha (0..1) per frame, so here each vert's own alpha rides to the GS instead
+     ; (x128 = the GS 0..0x80 alpha scale; input <= 1.0, so no clamp needed).
+     .macro         finish_colors_pv
+     init_io_loop
+
+     final_pv_loop_lid:
+     --LoopCS  1,3
+     --LoopExtra 2
+
+     load_pvalpha   pv_alpha\@
+     load_rgb       vert_color\@
+     loi            128.0
+     muli.w         pv_alpha\@, pv_alpha\@, i
+     loi            255.0
+     minii.xyz      vert_color\@, vert_color\@, i
+     move.w         vert_color\@, pv_alpha\@
+     ftoi0.xyzw     vert_color\@, vert_color\@
+     store_rgba     vert_color\@
+
+     next_io
+     loop_io        final_pv_loop_lid
+     .endm

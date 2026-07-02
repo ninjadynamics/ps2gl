@@ -102,6 +102,12 @@
      .macro         load_pvcolor   color
      lq.xyz         \color, 3(next_input)
      .endm
+     ; per-vertex ALPHA (w field only — load_pvcolor is xyz). HyperSolar: the city
+     ; fade system animates it; finish_colors_pv carries it to the GS instead of the
+     ; constant material diffuse alpha.
+     .macro         load_pvalpha   color
+     lq.w           \color, 3(next_input)
+     .endm
 
      ; material colors
 
