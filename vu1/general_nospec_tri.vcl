@@ -28,6 +28,7 @@ kOutputQPerV        .equ           3
      ; ------------------------ initialization ---------------------------------
 
      load_vert_xfrm vert_xform
+     load_fog_params fog_params
 
      --cont
 
@@ -50,15 +51,20 @@ main_loop_lid:
 
 xform_loop_lid:          --LoopCS 1,3
 
-     ; the first two are never drawn (always have adc bit set)
+     ; the first two are never drawn (always have adc bit set), but their
+     ; XYZF2 F fields still feed the fog interpolation of the kicked triangle
      do_bfc_vert    0, 0, xformed_vert_1, gs_vert_1
      clip_vert      xformed_vert_1
-     mfir.w         gs_vert_1, adc_bit
+     fog_coef       fog_i1, xformed_vert_1, fog_params
+     ior            fog_adc1, adc_bit, fog_i1
+     mfir.w         gs_vert_1, fog_adc1
      store_xyzf     gs_vert_1, 0
 
      do_bfc_vert    kInputQPerV, kOutputQPerV, xformed_vert_2, gs_vert_2
      clip_vert      xformed_vert_2
-     mfir.w         gs_vert_2, adc_bit
+     fog_coef       fog_i2, xformed_vert_2, fog_params
+     ior            fog_adc2, adc_bit, fog_i2
+     mfir.w         gs_vert_2, fog_adc2
      store_xyzf     gs_vert_2, kOutputQPerV
 
      do_bfc_vert    kInputQPerV+kInputQPerV, kOutputQPerV+kOutputQPerV, xformed_vert_3, gs_vert_3
@@ -72,9 +78,13 @@ xform_loop_lid:          --LoopCS 1,3
      fcand          vi01, 0x03ffff
      iand           vi01, vi01, do_clipping
 
-     ; draw this tri?
+     ; draw this tri? (adc_bit = 0x8000 doubles as the ADC-bit mask: the
+     ; +0x7fff carry filler would otherwise bleed into the F field)
      ior            new_adc_bit, vi01, z_sign
      iaddiu         new_adc_bit, new_adc_bit, 0x7fff
+     iand           new_adc_bit, new_adc_bit, adc_bit
+     fog_coef       fog_i3, xformed_vert_3, fog_params
+     ior            new_adc_bit, new_adc_bit, fog_i3
 
      mfir.w         gs_vert_3, new_adc_bit
      store_xyzf     gs_vert_3, kOutputQPerV+kOutputQPerV

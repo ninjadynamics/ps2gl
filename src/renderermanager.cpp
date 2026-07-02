@@ -4,6 +4,8 @@
 	  General Public License Version 2.1. See the file "COPYING" in the
 	  main directory of this archive for more details.                             */
 
+#include <stdio.h>
+
 #include "ps2s/packet.h"
 
 #include "ps2gl/glcontext.h"
@@ -32,6 +34,16 @@ CRendererManager::CRendererManager(CGLContext& context)
     , CurrentRenderer(NULL)
     , NewRenderer(NULL)
 {
+    // Zero the WHOLE bitfield first: the field-by-field init below never
+    // touched `unused:12`, which therefore carried whatever heap garbage the
+    // object was constructed over. Any nonzero garbage bit makes EVERY
+    // renderer-match comparison fail (caps never set unused bits), which used
+    // to select one-past-the-end of the registry -> EE crash, and with the
+    // no-match guard -> "NO RENDERER for reqs=0x42a44a02"-style reqs with
+    // garbage in bits 20..31 + a wedged wrong-renderer draw. Latent since
+    // 2001; whether it fired depended on heap layout luck per build.
+    RendererRequirements = (uint64_t)0;
+
     RendererRequirements.PrimType         = 0;
     RendererRequirements.Lighting         = 0;
     RendererRequirements.NumDirLights     = 0;
@@ -595,6 +607,26 @@ bool CRendererManager::UpdateNewRenderer()
                 (uint32_t)((uint64_t)rreqs),
                 (uint32_t)((uint64_t)CurUserPrimReqMask >> 32),
                 (uint32_t)((uint64_t)CurUserPrimReqMask));
+
+            // Release-mode survival for what the mErrorIf above only catches in
+            // debug: a no-match request used to fall through and select
+            // DefaultRenderers[NumDefaultRenderers] — one PAST the registry —
+            // and the next LoadRenderer virtual-called heap garbage (the
+            // deterministic title-boot EE crash, 2026-07-02). Keep the current
+            // renderer (draw may look wrong but the machine survives) and say
+            // exactly which request had no match so the registry can be fixed.
+            if (i == NumDefaultRenderers) {
+                static int warned = 0;
+                if (warned < 8) {
+                    warned++;
+                    printf("ps2gl: NO RENDERER for reqs=0x%08lx%08lx mask=0x%08lx%08lx -- keeping current\n",
+                        (unsigned long)((uint64_t)rreqs >> 32),
+                        (unsigned long)((uint64_t)rreqs & 0xffffffff),
+                        (unsigned long)((uint64_t)CurUserPrimReqMask >> 32),
+                        (unsigned long)((uint64_t)CurUserPrimReqMask & 0xffffffff));
+                }
+                return false;
+            }
 
             NewRenderer = &DefaultRenderers[i];
 

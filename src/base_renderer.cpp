@@ -370,6 +370,23 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         packet += depthClip;
         // enable/disable clipping
         packet += (drawContext.GetDoClipping()) ? 1 : 0;
+
+        // GS hardware fog params (kFogParams, see vu1/geometry.i fog_coef):
+        // x unused, y = F clamp max, z = 255/(far - near), w = eye far Z
+        float fogStart = drawContext.GetFogStart();
+        float fogEnd   = drawContext.GetFogEnd();
+        float fogScale = (fogEnd > fogStart) ? 255.0f / (fogEnd - fogStart) : 0.0f;
+        packet += 0.0f;
+        packet += 254.0f;
+        packet += fogScale;
+        packet += fogEnd;
+
+        // kFogPad guard qword (see vu1_context.h): sacrificial slot between the
+        // fog params and the double-buffer base; content never read.
+        packet += 0.0f;
+        packet += 0.0f;
+        packet += 0.0f;
+        packet += 0.0f;
     }
     packet.CloseUnpack();
 }
@@ -389,7 +406,12 @@ CBaseRenderer::BuildGiftag(GLenum primType)
 
     // GS edge anti-aliasing smooths polygon/line edges.  It does not filter
     // textures; texture shimmer still has to be diagnosed in the STQ path.
-    GS::tPrim prim = { prim_type : primType, iip : smoothShading, tme : useTexture, fge : 0, abe : alpha, aa1 : edgeAA, fst : 0, ctxt : 0, fix : 0 };
+    // fge (verified live on HW, red-FOGCOL probe 2026-07-02): renderers whose
+    // microcode computes a real per-vertex F (fog_coef) honor it; the others
+    // still carry the strip-ADC filler in the F bits, so only enable GL_FOG
+    // around draws that route to fog-aware renderers.
+    bool fog = drawContext.GetFogEnabled();
+    GS::tPrim prim = { prim_type : primType, iip : smoothShading, tme : useTexture, fge : fog, abe : alpha, aa1 : edgeAA, fst : 0, ctxt : 0, fix : 0 };
     tGifTag giftag = { NLOOP : 0, EOP : 1, pad0 : 0, id : 0, PRE : 1, PRIM : *(uint64_t*)&prim, FLG : 0, NREG : nreg, REGS0 : 2, REGS1 : 1, REGS2 : 4 };
     return giftag;
 }

@@ -92,6 +92,10 @@ public:
     bool DrawInterlaced;
     GLenum PolyMode;
     int DepthBits;
+    // GS hardware fog (glEnable(GL_FOG) + glFogf START/END): PRIM.FGE in the
+    // output giftag + the kFogParams qword in the VU1 renderer context.
+    bool FogIsEnabled;
+    float FogStart, FogEnd; // eye-space Z range (near = no fog, far = full FOGCOL)
 
     // current vertex xform
     cpu_mat_44 VertexXform;
@@ -162,6 +166,12 @@ public:
 
     inline bool GetDepthTestEnabled() const { return DepthTestIsEnabled; }
     void SetDepthTestEnabled(bool enabled);
+
+    inline bool GetFogEnabled() const { return FogIsEnabled; }
+    void SetFogEnabled(bool enabled);
+    inline float GetFogStart() const { return FogStart; }
+    inline float GetFogEnd() const { return FogEnd; }
+    void SetFogRange(float start, float end);
 
     void SetInterlacingOffset(float yPixels);
 

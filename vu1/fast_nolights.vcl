@@ -27,6 +27,11 @@ kOutputQPerV        .equ           3
      ; ------------------------ initialization ---------------------------------
 
      load_vert_xfrm vert_xform
+     load_fog_params fog_params
+
+     ; ADC-bit mask (0x8000; iaddiu immediates are 15-bit, so build by doubling)
+     iaddiu         adc_mask, vi00, 0x4000
+     iadd           adc_mask, adc_mask, adc_mask
 
      load_mat_emm   constant_color
 
@@ -79,8 +84,10 @@ xform_loop_lid:
      xform_vert     xformed_vert, new_xform, vert
      ftoi4.xyz      gs_vert, xformed_vert
 
+     fog_coef       fog_i, xformed_vert, fog_params
+
      load_strip_adc strip_adc
-     set_adc_s      gs_vert, strip_adc
+     set_adc_s_fog  gs_vert, strip_adc, fog_i, adc_mask
 
      store_xyzf     gs_vert
 

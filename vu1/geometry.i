@@ -130,3 +130,35 @@
      ; normalize  stq
      mulq.xyz       \output, \tex_stq, \q
      .endm
+
+     ; ---------------------------------------------------
+     ; GS hardware fog (city distance fog).
+     ;
+     ; load_fog_params: loads the fog constants qword (kFogParams):
+     ;   w = eye-space far Z, z = 255/(far - near), y = 254.0 (clamp), x unused.
+     ;
+     ; fog_coef: computes the XYZF2 fog coefficient F for one vertex from the
+     ; PRE-divide clip-space w that xform_vert leaves in the transformed vertex
+     ; (= eye depth, the same metric as gl_Position.w / the DC PVR fog table):
+     ;   F = clamp((far - w) * 255/(far - near), 0, 254)
+     ; ftoi4 packs it <<4, which is exactly where F sits in the XYZF2 W word
+     ; (bits 11:4; ADC is bit 15) -- OR the result into the ADC integer before
+     ; its mfir.w. F = 254 -> no fog (near), F = 0 -> full FOGCOL (far). Only
+     ; drawn with PRIM.FGE on (BuildGiftag <- glEnable(GL_FOG)).
+
+     .macro         load_fog_params fog_params
+     ; (Bisect 2026-07-02: hardcoded constants here made fog render correctly,
+     ; proving the vertex-depth math and packing; the live kFogParams slot was
+     ; the failure — it sat flush against kDoubleBufBase, where generated code's
+     ; negative-offset stores can land. kFogPad now separates them.)
+     lq             \fog_params, kFogParams(vi00)
+     .endm
+
+     .macro         fog_coef       fog_i, xformed_vert, fog_params
+     sub.w          fog_t\@, \fog_params, \xformed_vert
+     mulz.w         fog_t\@, fog_t\@, \fog_params
+     maxx.w         fog_t\@, fog_t\@, vf00
+     miniy.w        fog_t\@, fog_t\@, \fog_params
+     ftoi4.w        fog_t\@, fog_t\@
+     mtir           \fog_i, fog_t\@[w]
+     .endm

@@ -64,4 +64,17 @@ typedef struct {
 
 #define kClipInfo (kGifTag + 1)
 
-#define kContextLength (kClipInfo - kContextStart + 1)
+// GS hardware fog (city distance fog): w = eye-space far Z, z = 255/(far - near),
+// y = 254.0 (F clamp max), x = unused. Consumed by fog_coef (geometry.i); written
+// by CBaseRenderer::AddVu1RendererContext.
+#define kFogParams (kClipInfo + 1)
+
+// Guard qword: keeps kFogParams OFF the double-buffer boundary. kDoubleBufBase
+// starts right after the context, and the VCL-generated renderers store through
+// negative offsets from XTOP-derived pointers — a 1-qword underflow lands on the
+// LAST context slot. Historically that was kClipInfo (subtle, tolerated for two
+// decades); with fog appended it corrupted kFogParams every frame (2026-07-02,
+// proven by a hardcoded-constants bisect). This pad absorbs the stomp instead.
+#define kFogPad (kFogParams + 1)
+
+#define kContextLength (kFogPad - kContextStart + 1)

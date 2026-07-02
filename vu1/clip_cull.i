@@ -240,3 +240,21 @@
      iaddiu         new_adc\@, \strip_adc, 0x7fff
      mfir.w         \vert, new_adc\@
      .endm
+
+     ; ---------------------------------------------------
+     ; fog variant of set_adc_s: same +0x7fff carry trick to derive the ADC
+     ; bit (bit 15), but the low 15 bits of filler -- which land on the XYZF2
+     ; F field (bits 11:4) -- are masked off and the fog coefficient computed
+     ; by "fog_coef" (already <<4) is ORed in.
+     ;
+     ; params:      vert           - the vertex in question
+     ;              strip_adc      - set by "set_strip_adcs" / "load_strip_adc"
+     ;              fog_i          - fog coefficient from "fog_coef"
+     ;              adc_mask       - integer register holding 0x8000
+
+     .macro         set_adc_s_fog  vert, strip_adc, fog_i, adc_mask
+     iaddiu         new_adc\@, \strip_adc, 0x7fff
+     iand           new_adc\@, new_adc\@, \adc_mask
+     ior            new_adc\@, new_adc\@, \fog_i
+     mfir.w         \vert, new_adc\@
+     .endm

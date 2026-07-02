@@ -49,12 +49,23 @@ class GaspExpander:
             line = lines[i]
             stripped = line.strip()
 
+            # .END = end of input (GNU gasp semantics) — swallow it and stop;
+            # vcl has no such directive and errors if it leaks through
+            if re.match(r'\s*\.END\b', stripped):
+                break
+
             # .include "file"
             m = re.match(r'\s*\.include\s+"([^"]+)"', stripped)
             if m:
                 inc_name = m.group(1)
                 inc_path = self.find_file(inc_name)
-                if inc_path and inc_path not in self.included:
+                if inc_path is None:
+                    # a dropped include silently loses every macro it defines,
+                    # and vcl then dies on the first unexpanded call — fail loud
+                    sys.stderr.write("gasp.py: ERROR: include not found: %s (dirs: %s)\n"
+                                     % (inc_name, self.include_dirs))
+                    sys.exit(1)
+                if inc_path not in self.included:
                     self.included.add(inc_path)
                     with open(inc_path, 'r') as f:
                         inc_lines = f.readlines()
@@ -274,8 +285,11 @@ def main():
     parser.add_argument('-s', action='store_true', help='Compatibility flag (ignored)')
     args = parser.parse_args()
 
+    # CWD first: the Makefile's pp1 sed rewrites includes to "vu1/<file>.i",
+    # which (like real GNU gasp) resolves relative to the make CWD, not the
+    # input file's directory.
     base_dir = os.path.dirname(os.path.abspath(args.input))
-    include_dirs = [base_dir] + [os.path.abspath(d) for d in args.includes]
+    include_dirs = [os.getcwd(), base_dir] + [os.path.abspath(d) for d in args.includes]
 
     with open(args.input, 'r') as f:
         lines = f.readlines()

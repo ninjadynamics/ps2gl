@@ -4,8 +4,11 @@
 	  General Public License Version 2.1. See the file "COPYING" in the
 	  main directory of this archive for more details.                             */
 
+#include "ps2s/drawenv.h"
+
 #include "ps2gl/lighting.h"
 #include "ps2gl/dlist.h"
+#include "ps2gl/drawcontext.h"
 #include "ps2gl/glcontext.h"
 #include "ps2gl/material.h"
 #include "ps2gl/matrix.h"
@@ -461,21 +464,52 @@ void glFogi(GLenum pname, GLfloat param)
 {
     GL_FUNC_DEBUG("%s\n", __FUNCTION__);
 
-    mNotImplemented();
+    glFogf(pname, param);
 }
 
+/* GS hardware fog (linear): GL_FOG_START/GL_FOG_END set the eye-space range
+   the VU1 renderers map to the per-vertex XYZF2 F coefficient (kFogParams);
+   GL_FOG_COLOR sets the GS FOGCOL register through the draw environment.
+   GL_FOG_MODE is not supported (the GS fog unit is inherently linear in the
+   per-vertex F; any easing must be applied where F is computed). */
 void glFogf(GLenum pname, GLfloat param)
 {
     GL_FUNC_DEBUG("%s\n", __FUNCTION__);
 
-    mNotImplemented();
+    CImmDrawContext& drawContext = pGLContext->GetImmDrawContext();
+    switch (pname) {
+    case GL_FOG_START:
+        drawContext.SetFogRange(param, drawContext.GetFogEnd());
+        break;
+    case GL_FOG_END:
+        drawContext.SetFogRange(drawContext.GetFogStart(), param);
+        break;
+    default:
+        mNotImplemented();
+    }
 }
 
 void glFogfv(GLenum pname, const GLfloat* params)
 {
     GL_FUNC_DEBUG("%s\n", __FUNCTION__);
 
-    mNotImplemented();
+    switch (pname) {
+    case GL_FOG_COLOR: {
+        CImmDrawContext& drawContext = pGLContext->GetImmDrawContext();
+        drawContext.GetDrawEnv().SetFogColor(
+            (unsigned char)(params[0] * 255.0f),
+            (unsigned char)(params[1] * 255.0f),
+            (unsigned char)(params[2] * 255.0f));
+        pGLContext->DrawEnvChanged();
+        break;
+    }
+    case GL_FOG_START:
+    case GL_FOG_END:
+        glFogf(pname, params[0]);
+        break;
+    default:
+        mNotImplemented();
+    }
 }
 
 void glFogiv(GLenum pname, const GLint* params)

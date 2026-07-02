@@ -503,7 +503,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.07.02 01:10]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.07.02 13:19]\n");
 
     ps2sInit();
     pGLContext = new CGLContext(immBufferVertexSize, immDrawBufferQwordSize);
@@ -708,6 +708,11 @@ void glEnable(GLenum cap)
         pGLContext->GetDrawContext().SetDepthTestEnabled(true);
         break;
 
+    case GL_FOG:
+        // immediate context only (no dlist recording of fog state)
+        pGLContext->GetImmDrawContext().SetFogEnabled(true);
+        break;
+
     default:
         mNotImplemented();
         break;
@@ -762,6 +767,10 @@ void glDisable(GLenum cap)
 
     case GL_DEPTH_TEST:
         pGLContext->GetDrawContext().SetDepthTestEnabled(false);
+        break;
+
+    case GL_FOG:
+        pGLContext->GetImmDrawContext().SetFogEnabled(false);
         break;
 
     default:

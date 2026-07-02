@@ -1046,6 +1046,21 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
     return (unsigned int)id;
 }
 
+/* GS TEXA override for the named texture: how 16-bit (5551) texel alpha
+   expands when sampled — A=0 texels read ta0, A=1 read ta1 (0x80 = 1.0). The
+   CTexEnv constructor default (ta0=0x80, "identity") makes 1-bit-TRANSPARENT
+   texels read as OPAQUE to the GS alpha test, so punch-through tiles rendered
+   as solid quads (the city windows drew as full walls). ta0=0 fixes that.
+   TEXA rides the texture's own settings packet, so the override is applied on
+   every bind of THIS texture only — other 16-bit textures (e.g. full-screen
+   splashes whose alpha bits are all 0) keep the opaque default. */
+extern "C" void pgl_texture_texalpha(unsigned int name, unsigned int ta0,
+                                     unsigned int ta1)
+{
+    CTexManager& tm = pGLContext->GetTexManager();
+    tm.GetNamedTexture((GLuint)name).SetTexAlpha((uint8_t)ta0, (uint8_t)ta1);
+}
+
 /* Create an 8-bit paletted (PSMT8) texture from index data + a 256-entry RGBA
    CLUT. The clean one-call uploader for the game (mirrors pgl_create_mip16's
    role): wraps the standard glTexImage2D(GL_COLOR_INDEX) + glColorTable path the

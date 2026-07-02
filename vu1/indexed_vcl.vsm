@@ -71,7 +71,7 @@ dir_light_loop_lid:
          NOP                                                        iaddiu        VI04,VI04,0x00000003                
          mul.xyz       VF18,VF13,VF18                               lq.xyz        VF10,0(VI03)                        
          NOP                                                        ibeq          VI04,VI05,EXPL_vu1_indexed_pp4_vcl_dir_light_vert_loop_lid__EPI2
-         addax.w       ACC,VF09,VF09x                               iaddiu        VI06,VI06,0x000000ac                
+         addax.w       ACC,VF09,VF09x                               iaddiu        VI06,VI06,0x000000ab                
 ; _LNOPT_w=[ ] 13 [17 0] 17   [EXPL_vu1_indexed_pp4_vcl_dir_light_vert_loop_lid__PRO1]
          maddy.w       VF07,VF00,VF09y                              lq.xyz        VF17,1(VI04)                        
          adday.z       ACC,VF18,VF18y                               NOP                                               
@@ -246,7 +246,7 @@ pt_light_loop_lid:
          mulq.xyz      VF17,VF17,Q                                  iaddiu        VI04,VI04,0x00000003                
          NOP                                                        NOP                                               
          mul.xyz       VF12,VF12,VF07                               ibeq          VI04,VI05,EXPL_vu1_indexed_pp4_vcl_pt_light_vert_loop_lid__EPI2
-         mul.xyz       VF16,VF16,VF13                               iaddiu        VI06,VI06,0x000000ac                
+         mul.xyz       VF16,VF16,VF13                               iaddiu        VI06,VI06,0x000000ab                
 ; _LNOPT_w=[ ] 21 [38 0] 39   [EXPL_vu1_indexed_pp4_vcl_pt_light_vert_loop_lid__PRO1]
          add.xyz       VF18,VF08,VF17                               lq.xyz        VF19,0(VI04)                        
          sub.xyz       VF19,VF14,VF19                               esadd         P,VF18                                     ;	STALL_LATENCY ?3
@@ -532,14 +532,14 @@ done_lighting_lid:
          NOP                                                        mtir          VI02,VF05x                                 ;	STALL_LATENCY ?1
          NOP                                                        ior           VI03,VI02,VI03                      
          NOP                                                        mfir.x        VF05,VI03                           
-         NOP                                                        iaddiu        VI03,VI00,0x0000004e                
+         NOP                                                        iaddiu        VI03,VI00,0x00000050                
          NOP                                                        mfir.w        VF05,VI03                           
          maxi.z        VF09,VF00,I                                  loi           0x437d0000                          
          NOP                                                        iadd          VI08,VI06,VI08                      
          NOP                                                        ilw.w         VI09,0(VI06)                        
-         NOP                                                        sq            VF05,77(VI00)                       
+         NOP                                                        sq            VF05,79(VI00)                       
          NOP                                                        lqi.w         VF05,(VI06++)                       
-         NOP                                                        iaddiu        VI05,VI04,0x000000ac                
+         NOP                                                        iaddiu        VI05,VI04,0x000000ab                
          NOP                                                        iaddiu        VI04,VI04,0x00000005                
          NOP                                                        iaddiu        VI07,VI00,0x000000ff                
          NOP                                                        iand          VI09,VI09,VI07                      
@@ -703,7 +703,7 @@ EXPL_vu1_indexed_pp4_vcl_xform_loop_lid__EPI1:
          NOP                                                        sq            VF12,5(VI04)                        
 EXPL_vu1_indexed_pp4_vcl_xform_loop_lid__EXIT_POINT:
 ; _LNOPT_w=[ ] 4 [2 0] 4   [EXPL_vu1_indexed_pp4_vcl_xform_loop_lid__EXIT_POINT]
-         NOP                                                        iaddiu        VI01,VI00,0x0000004d                
+         NOP                                                        iaddiu        VI01,VI00,0x0000004f                
          NOP                                                        xgkick        VI01                                
          NOP[E]                                                     NOP                                               
          NOP                                                        NOP                                               

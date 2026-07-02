@@ -36,6 +36,9 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , DepthTestIsEnabled(false)
     , DrawInterlaced(true)
     , PolyMode(GL_FILL)
+    , FogIsEnabled(false)
+    , FogStart(0.0f)
+    , FogEnd(1.0f)
     , IsVertexXformValid(false)
     , Width(0)
     , Height(0)
@@ -235,6 +238,25 @@ void CImmDrawContext::SetDoCullFace(bool cull)
         DoCullFace = cull;
         GLContext.CullFaceEnabledChanged();
         GLContext.GetImmGeomManager().GetRendererManager().CullFaceEnabledChanged(cull);
+    }
+}
+
+void CImmDrawContext::SetFogEnabled(bool enabled)
+{
+    if (FogIsEnabled != enabled) {
+        FogIsEnabled = enabled;
+        // any renderer-context bit forces InitContext to resend the context
+        // packet, which carries both the giftag (PRIM.FGE) and kFogParams
+        GLContext.ShadingChanged();
+    }
+}
+
+void CImmDrawContext::SetFogRange(float start, float end)
+{
+    if (FogStart != start || FogEnd != end) {
+        FogStart = start;
+        FogEnd   = end;
+        GLContext.ShadingChanged();
     }
 }
 

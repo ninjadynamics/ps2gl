@@ -167,7 +167,10 @@ void CDisplayContext::SwapBuffers()
         // The one-line DBY offset lives in DISPFB1 and survives SetFB1Addr.
         if (FlickerEnabled)
             DisplayEnv->SetFB1Addr(CurFrameMem->GetWordAddr());
-        DisplayEnv->SendSettings();
+        // DISPFB only: the full SendSettings rewrote PMODE/DISPLAY/BGCOLOR
+        // every flip — its BGCOLOR write is what painted the raster margins
+        // with per-frame stomp bands whenever frames ran long.
+        DisplayEnv->SendFBFlip();
     }
 }
 

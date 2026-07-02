@@ -61,6 +61,18 @@ VSM_SOURCES = $(addsuffix _vcl.vsm, $(addprefix vu1/, $(RENDERERS)))
 
 all: $(VSM_SOURCES) $(EE_LIB)
 
+# Regenerate all VU1 microcode IN PARALLEL. vcl (Sony, 2001) is a
+# single-threaded exhaustive scheduler that takes minutes per renderer; the 13
+# renderers are independent, so -j collapses the wall time from the sum of all
+# files (~20+ min) to the slowest single file (~2-3 min). Use this instead of
+# a serial `make REBUILD_VU1=1` whenever a .vcl or a shared .i/.h changes.
+# NOTE: make's dependency chain starts at the .vcl only — after editing a
+# shared include (geometry.i, clip_cull.i, vu1_context.h, vu1_mem_*.h), delete
+# the affected .vsm (or all of them) first so they regenerate.
+NPROC ?= $(shell nproc 2>/dev/null || echo 8)
+vsm:
+	$(MAKE) -j$(NPROC) REBUILD_VU1=1 $(VSM_SOURCES)
+
 install: all
 	mkdir -p $(PS2SDK)/ports/include
 	mkdir -p $(PS2SDK)/ports/lib
