@@ -836,18 +836,14 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
  *
  * ps2gl/ps2stuff/GLdc ship no mipmap path (glTexImage2D rejects level>0). The GS
  * does mipmaps via TEX1 (MXL + mip min-filter) + MIPTBP1/2 (explicit per-level
- * base pointers). ps2stuff emits TEX1 every draw from the texture's gsrTex1 — so
- * MXL+filter ride along for free once set (CMMTexture::SetMipLevels) — but it
- * never emits MIPTBP, so we write MIPTBP once here. It persists because nothing
- * else touches it, and other textures keep MXL=0 so they ignore it. Mip levels
- * are uploaded as their own resident textures and don't need to be contiguous
- * (MIPTBP holds an explicit address per level). See PS2/LESSONS once verified.
- *
- * INVARIANT (load-bearing): exactly ONE mip texture may exist at a time —
- * MIPTBP is global, so a second create stomps the first texture's mip
- * pointers (symptom: wrong-scale far mips on the other floor). The game
- * enforces it by releasing the old pyramid (pgl_delete_mips) before creating
- * the next floor on a stage switch.
+ * base pointers). ps2stuff emits the texture's settings packet every bind, so
+ * MXL/filter (CMMTexture::SetMipLevels) AND the per-level pointers (CTexEnv::
+ * SetMiptbp — MIPTBP1/2 ride the same packet, like TEXA) are all per-texture:
+ * any number of mipmapped textures can coexist (the old one-shot global MIPTBP
+ * write limited us to ONE — the floor). Textures with MXL=0 ignore the zero
+ * MIPTBP their packet carries. Mip levels are uploaded as their own resident
+ * textures and don't need to be contiguous (MIPTBP holds an explicit address
+ * per level).
  * =========================================================================== */
 
 /* MIPTBP1/2 register packers — local copies so we don't include <gs_gp.h>, which
@@ -864,11 +860,11 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
 
 /* HyperSolar: registry of the manually-created mip-level CMMTextures, keyed by
    the base texture's GL name, so the game can RELEASE a whole mip pyramid when
-   a stage switch swaps the floor. Without this the locked slots + CMMTextures
-   leak (~14 pages per swap), and the only escape was a full GS layout reinit.
-   Releasing the old pyramid BEFORE creating the new one also keeps the global
-   MIPTBP write below correct — exactly one mip texture exists at a time. */
-#define PGL_MIP_REGISTRY_MAX 4
+   a stage/scene switch swaps textures. Without this the locked slots +
+   CMMTextures leak (~14 pages per swap), and the only escape was a full GS
+   layout reinit. Sized for the worst co-resident set: 2 floors + the 8 city
+   wall/window tiles, with headroom. */
+#define PGL_MIP_REGISTRY_MAX 16
 /* NOTE: the identifier "mips" is unusable here — the MIPS GCC target
    predefines it as a macro (`#define mips 1`), like `unix`/`linux`. */
 struct SMipRegistryEntry {
@@ -912,24 +908,6 @@ extern "C" void pgl_delete_mips(unsigned int baseId)
         MipRegistry[i].count  = 0;
         return;
     }
-}
-
-/* One-shot: write MIPTBP1_1 (0x34) + MIPTBP2_1 (0x36), context 1, via a raw GIF
-   PATH3 DMA A+D packet. Run at load time, when the GIF is idle. */
-static void pgl_send_miptbp(u64 miptbp1, u64 miptbp2)
-{
-    static u64 pkt[6] __attribute__((aligned(64)));
-    pkt[0] = 0x1000000000008002ULL;   /* GIFtag: NLOOP=2, EOP=1, PACKED, NREG=1 */
-    pkt[1] = 0x0EULL;                  /* REGS0 = A+D */
-    pkt[2] = miptbp1; pkt[3] = 0x34;   /* A+D: MIPTBP1_1 */
-    pkt[4] = miptbp2; pkt[5] = 0x36;   /* A+D: MIPTBP2_1 */
-
-    FlushCache(0);
-    u32 madr = (u32)((u64)pkt) & 0x1FFFFFFF;   /* physical addr for the DMAC */
-    *(volatile u32*)0x1000A010 = madr;          /* GIF ch2 D_MADR */
-    *(volatile u32*)0x1000A020 = 3;             /* D_QWC = 3 qwords */
-    *(volatile u32*)0x1000A000 = 0x101;         /* D_CHCR: STR | DIR(mem->GIF) */
-    while (*(volatile u32*)0x1000A000 & 0x100) ;    /* wait for STR to clear */
 }
 
 extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
@@ -977,8 +955,11 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
                                          passed from the game so they tune with no
                                          ps2gl rebuild. */
 
-    u64 miptbp1 = SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]);
-    u64 miptbp2 = SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]);
+    /* Per-texture MIPTBP: rides the settings packet with TEX0/TEX1/TEXA, so
+       every bind of THIS texture re-points the GS at its own mip pyramid. */
+    base.SetMiptbp(
+        SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]),
+        SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]));
 
     printf("[MIP] id=%u base_tbp=%u mxl=%d\n",
            (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip);
@@ -986,7 +967,6 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
         printf("[MIP]   L%d %dx%d tbp=%u tbw=%u\n",
                i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i]);
 
-    pgl_send_miptbp(miptbp1, miptbp2);
     return (unsigned int)id;
 }
 
@@ -1035,14 +1015,13 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
     pgl_mips_register(id, mlist, nmip);   /* releasable via pgl_delete_mips */
 
     base.SetMipLevels(nmip, kbias, min_filter);
-
-    u64 miptbp1 = SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]);
-    u64 miptbp2 = SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]);
+    base.SetMiptbp(
+        SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]),
+        SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]));
 
     printf("[MIP8] id=%u base_tbp=%u mxl=%d\n",
            (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip);
 
-    pgl_send_miptbp(miptbp1, miptbp2);
     return (unsigned int)id;
 }
 
