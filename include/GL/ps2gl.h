@@ -37,6 +37,12 @@ extern void pglPrintGsMemAllocation(void);
 extern void pglGetGsMemInfo(int* total, int* used, int* largestFreeSlot);
 extern int pglHasGsMemBeenInitted(void);
 
+// HyperSolar: hand the CURRENT texture's image buffer (the pointer last passed to
+// glTexImage2D) to ps2gl to free() on glDeleteTextures. glTexImage2D stores the
+// caller's pointer without owning it, so a caller that allocs-and-forgets leaks it
+// (raylib4ps2 rlLoadTexturePS2). Call right after glTexImage2D, before unbinding.
+extern void pglTexImageTakeOwnership(void);
+
 // gs mem slots
 
 typedef unsigned int pgl_slot_handle_t;

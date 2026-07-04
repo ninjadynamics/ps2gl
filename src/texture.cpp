@@ -593,6 +593,13 @@ void glDeleteTextures(GLsizei numToDelete, const GLuint* texNames)
     texManager.DeleteTextures(numToDelete, texNames);
 }
 
+// HyperSolar: see GL/ps2gl.h. Give the current texture's image buffer to ps2gl so
+// ~CTexture free()s it on delete — fixes the rlLoadTexturePS2 pglutAllocDmaMem leak.
+extern "C" void pglTexImageTakeOwnership(void)
+{
+    pGLContext->GetTexManager().GetCurTexture().SetFreeImageOnExit(true);
+}
+
 void glTexImage2D(GLenum target,
     GLint level,
     GLint internalFormat,
@@ -886,6 +893,7 @@ static void pgl_mips_register(unsigned int baseId, CMMTexture** levels, int coun
         }
     }
     printf("pgl_mips_register: table full — mip levels for %u will leak\n", baseId);
+    mError("PGL_MIP_REGISTRY_MAX exceeded — bump it before adding more mipped assets");
 }
 
 /* Release the mip pyramid registered for `baseId` (no-op if none): unlock each
