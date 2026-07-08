@@ -39,6 +39,7 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , FogIsEnabled(false)
     , FogStart(0.0f)
     , FogEnd(1.0f)
+    , ClipNear(1.0f)
     , IsVertexXformValid(false)
     , Width(0)
     , Height(0)
@@ -257,6 +258,14 @@ void CImmDrawContext::SetFogRange(float start, float end)
         FogStart = start;
         FogEnd   = end;
         GLContext.ShadingChanged();
+    }
+}
+
+void CImmDrawContext::SetClipNear(float near_z)
+{
+    if (ClipNear != near_z) {
+        ClipNear = near_z;
+        GLContext.ShadingChanged(); // resend the context packet (kFogParams.x)
     }
 }
 

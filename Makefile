@@ -21,6 +21,7 @@ EE_CXXFLAGS += $(WARNING_FLAGS) -DNO_VU0_VECTORS -DNO_ASM
 EE_OBJS = \
 	src/base_renderer.o \
 	src/clear.o \
+	src/clip_renderer.o \
 	src/displaycontext.o \
 	src/dlgmanager.o \
 	src/dlist.o \
@@ -43,6 +44,7 @@ EE_OBJS = \
 RENDERERS = \
 	fast_nolights \
 	fast \
+	general_clip_tri \
 	general_nospec_quad \
 	general_nospec_tri \
 	general_nospec \

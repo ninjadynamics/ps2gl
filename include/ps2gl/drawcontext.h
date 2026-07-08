@@ -96,6 +96,7 @@ public:
     // output giftag + the kFogParams qword in the VU1 renderer context.
     bool FogIsEnabled;
     float FogStart, FogEnd; // eye-space Z range (near = no fog, far = full FOGCOL)
+    float ClipNear;         // eye-space near plane for the VU1 clip renderer (kFogParams.x)
 
     // current vertex xform
     cpu_mat_44 VertexXform;
@@ -172,6 +173,9 @@ public:
     inline float GetFogStart() const { return FogStart; }
     inline float GetFogEnd() const { return FogEnd; }
     void SetFogRange(float start, float end);
+
+    inline float GetClipNear() const { return ClipNear; }
+    void SetClipNear(float near_z);
 
     void SetInterlacingOffset(float yPixels);
 

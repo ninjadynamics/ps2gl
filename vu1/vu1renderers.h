@@ -23,6 +23,8 @@ VU_FUNCTIONS(GeneralNoSpec);
 VU_FUNCTIONS(GeneralNoSpecTri);
 VU_FUNCTIONS(GeneralNoSpecQuad);
 
+VU_FUNCTIONS(GeneralClipTri);
+
 VU_FUNCTIONS(GeneralPVDiff);
 VU_FUNCTIONS(GeneralPVDiffTri);
 VU_FUNCTIONS(GeneralPVDiffQuad);

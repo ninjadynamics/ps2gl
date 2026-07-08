@@ -151,6 +151,18 @@ void pglRegisterCustomPrimType(GLenum primType,
     pglU64_t rendererReqMask,
     int mergeContiguous);
 
+/* HyperSolar VU1 near-plane clip renderer (tri lists). Register once after
+   pglInit(), then draw tri lists with glDrawArrays(PGL_CLIP_TRIANGLES, ...).
+   UNLIT constant-color path (glColor with lighting off); tris with any vert
+   at eye depth < the clip near plane are dropped on VU1 regardless of
+   PGL_CLIPPING (behind-camera verts corrupt the GS if drawn raw); the side
+   planes stay stock guard-band ADC-cull. Set the near plane to match the
+   projection with pglSetClipNear (default 1.0, eye units). */
+#define PGL_CLIP_TRIANGLES ((GLenum)0x80000000 | 0)
+#define PGL_CLIP_TRI_PROP ((pglU64_t)1 << 32)
+void pglRegisterClipTriRenderer(void);
+void pglSetClipNear(float near_z);
+
 // custom state
 
 void pglEnableCustom(pglU64_t flag);

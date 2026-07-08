@@ -376,7 +376,9 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         float fogStart = drawContext.GetFogStart();
         float fogEnd   = drawContext.GetFogEnd();
         float fogScale = (fogEnd > fogStart) ? 255.0f / (fogEnd - fogStart) : 0.0f;
-        packet += 0.0f;
+        // x rides the eye-space near plane for the VU1 clip renderer
+        // (pglSetClipNear); the stock renderers never read it
+        packet += drawContext.GetClipNear();
         packet += 254.0f;
         packet += fogScale;
         packet += fogEnd;
