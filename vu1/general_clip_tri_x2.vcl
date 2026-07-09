@@ -39,38 +39,48 @@
      ;   178      window color const (floats: rgb 0..255, a 0..128 GS range;
      ;            x < 0 = WINDOW KICK DISABLED, wall-only mode)
      ;   179      pad
-     ;   180..198 PREFIX STAGING (EE unpack, one 21q block starting at 178):
-     ;            180..188 wall prefix — the BASE texture's FULL settings
-     ;                     block (A+D giftag patched to NLOOP=8, EOP=0 +
+     ;   180..200 PREFIX STAGING (EE unpack, one 23q block starting at 178):
+     ;            180..189 wall prefix - the BASE texture's FULL settings
+     ;                     block (A+D giftag patched to NLOOP=9, EOP=0 +
      ;                     TEXFLUSH/CLAMP/TEX1/TEX0/TEXA/MIPTBP1/2, copied
      ;                     wholesale from the CTexEnv object so punch-through
      ;                     TEXA + custom mip MIPTBPs ride verbatim) + a
-     ;                     NORMAL-blend ALPHA_1: the previous buffer's window
+     ;                     NORMAL-blend ALPHA_1 (the previous buffer's window
      ;                     kick leaves ADDITIVE alpha behind, and the FADE
-     ;                     overlay draws its walls with ABE=1 (inert for the
-     ;                     opaque main city, ABE=0)
-     ;            189..197 window prefix — the WINDOW texture's settings
-     ;                     block (giftag patched to NLOOP=8, EOP=0) +
-     ;                     additive ALPHA_1
-     ;            198      window prim giftag TEMPLATE (ABE=1)
+     ;                     overlay draws its walls with ABE=1; inert for the
+     ;                     opaque main city, ABE=0) + TEST_1 with the alpha
+     ;                     test OFF
+     ;            190..199 window prefix - the WINDOW texture's settings
+     ;                     block (giftag patched to NLOOP=9, EOP=0) +
+     ;                     additive ALPHA_1 + TEST_1 with the alpha test ON
+     ;                     (ATE=1, ATST=GREATER, AREF=0, AFAIL=KEEP): the
+     ;                     window tile's gap texels sample alpha 0 (TEXA
+     ;                     ta0=0), and additive blending of As=0 is
+     ;                     Cs*0+Cd = Cd - a framebuffer read-modify-write
+     ;                     that provably cannot change a bit. Discarding
+     ;                     them is bit-identical and skips the RMW; the
+     ;                     window kick's fill measured 2.26 ms of GS time.
+     ;                     Both TEST values START from ps2gl's live drawenv
+     ;                     TEST (it also carries ZTE/ZTST + dest-alpha).
+     ;            200      window prim giftag TEMPLATE (ABE=1)
      ;            STAGED, NOT KICKED IN PLACE (hardware-learned): VIF runs a
-     ;            buffer ahead and has NO interlock against GIF path 1 — a
+     ;            buffer ahead and has NO interlock against GIF path 1 - a
      ;            VIF-written qword the GIF reads gets overwritten while the
      ;            PREVIOUS buffer's kick is still draining (per-building
      ;            texture/blend flicker in the city). The program copies the
      ;            staging block to the kick sites below; VU writes ARE
      ;            serialized against the previous kicks by the xgkick
      ;            interlock, so the copy is race-free by construction.
-     ;   199..207 wall kick prefix (VU-copied from 180..188)
-     ;   208      wall prim giftag (VU writes: kGifTag template + count)
-     ;   209..334 wall output verts (42 x 3q: STQ, RGBA, XYZF2)
-     ;   335..343 window kick prefix (VU-copied from 189..197)
-     ;   344      window prim giftag (VU-copied template; NLOOP patched)
-     ;   345..470 window output verts (42 x 3q)
-     ;   471      spare
+     ;   201..210 wall kick prefix (VU-copied from 180..189)
+     ;   211      wall prim giftag (VU writes: kGifTag template + count)
+     ;   212..334 wall output verts (41 x 3q: STQ, RGBA, XYZF2)
+     ;   335..344 window kick prefix (VU-copied from 190..199)
+     ;   345      window prim giftag (VU-copied template; NLOOP patched)
+     ;   346..468 window output verts (41 x 3q)
+     ;   469..471 spare
      ; EE coupling: CClipTriX2Renderer's ctor passes inGeomBufSize=120
      ; (30 verts x 4q), its DrawLinearArrays caps batches at multiples of 6,
-     ; and its DrawBlock unpacks ONE 21q block at 178 per buffer. Changing
+     ; and its DrawBlock unpacks ONE 23q block at 178 per buffer. Changing
      ; any of these numbers means re-checking this layout end to end.
 
      #include       "vu1_mem_linear.h"
@@ -91,14 +101,14 @@ kCPolyA             .equ           130
 kCPolyB             .equ           154
 kCWinClr            .equ           178
 kCStgWall           .equ           180
-kCStgWin            .equ           189
-kCWallPfx           .equ           199
-kCWallTag           .equ           208
-kCOutData           .equ           209
+kCStgWin            .equ           190
+kCWallPfx           .equ           201
+kCWallTag           .equ           211
+kCOutData           .equ           212
 kCWinPfx            .equ           335
-kCWinTag            .equ           344
-kCWinOfs            .equ           136
-kCCapVerts          .equ           40
+kCWinTag            .equ           345
+kCWinOfs            .equ           134
+kCCapVerts          .equ           39
 
      .init_vf_all
      .init_vi_all
@@ -345,7 +355,7 @@ main_loop_lid:
      ; then window 10q (prefix 9q + prim giftag template, contiguous).
      iaddiu         cpy_s, buffer_top, kCStgWall
      iaddiu         cpy_d, buffer_top, kCWallPfx
-     iaddiu         cpy_n, vi00, 9
+     iaddiu         cpy_n, vi00, 10
 x2_cpyw_lid:
      lq             cpy_t, 0(cpy_s)
      sq             cpy_t, 0(cpy_d)
@@ -355,7 +365,7 @@ x2_cpyw_lid:
      ibgtz          cpy_n, x2_cpyw_lid
      iaddiu         cpy_s, buffer_top, kCStgWin
      iaddiu         cpy_d, buffer_top, kCWinPfx
-     iaddiu         cpy_n, vi00, 10
+     iaddiu         cpy_n, vi00, 11
 x2_cpyn_lid:
      lq             cpy_t, 0(cpy_s)
      sq             cpy_t, 0(cpy_d)

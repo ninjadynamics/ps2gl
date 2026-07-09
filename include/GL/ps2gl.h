@@ -169,14 +169,18 @@ void pglSetClipNear(float near_z);
    and the additive window overlay (constant color, the window texture,
    ABE=1) on positionally identical verts. Call order per draw:
      pglClipX2SetWindowTexture(winTex, r,g,b,a);   // 0..1 floats
-     glBindTexture(GL_TEXTURE_2D, baseTex);        // AFTER — see below
+     glBindTexture(GL_TEXTURE_2D, baseTex);        // AFTER: see below
      glDrawArrays(PGL_CLIP_TRIANGLES_X2, ...);
-   pglClipX2SetWindowTexture binds winTex internally to resolve it, so the
-   base texture must be (re)bound afterwards. winTex = 0 disables the
-   window kick (wall-only mode, for bisects). The window color scales the
-   additive add (a rides GS As). PSMT8 window textures are supported when
-   they carry their OWN clut (the HyperSolar per-texture-palette path);
-   sampling is whatever mode the texture last drew with (kModulate).
+   The texture pair is captured per GEOMETRY BLOCK (at block start),
+   so ps2gl's normal deferred flush is correct: NO glFlush() is
+   needed after each draw. pglClipX2SetWindowTexture BINDS winTex to
+   resolve it (the bind is what keeps it resident against the GS LRU),
+   so the base texture must be bound afterwards. winTex = 0 disables
+   the window kick (wall-only mode, for bisects). The window color
+   scales the additive add (a rides GS As). PSMT8 window textures are
+   supported when they carry their OWN clut (the HyperSolar
+   per-texture-palette path); sampling is whatever mode the texture
+   last drew with (kModulate).
    Near plane shared with pglSetClipNear. */
 #define PGL_CLIP_TRIANGLES_X2 ((GLenum)0x80000000 | 1)
 #define PGL_CLIP_TRI_X2_PROP ((pglU64_t)1 << 33)

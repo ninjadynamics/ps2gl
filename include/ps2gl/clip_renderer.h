@@ -31,17 +31,26 @@ class CMMTexture;
    window texture) from the same transformed verts. Selected through
    PGL_CLIP_TRIANGLES_X2. See PS2/plans/todo/VU1_X2_PLAN.md. */
 class CClipTriX2Renderer : public CLinearRenderer {
+    // The pair for the block being drawn is read LIVE in BuildPrefixes.
+    // That is only correct because SetWindowTexture submits any pending block
+    // BEFORE the pair changes (see its comment) — so a block is always built
+    // against the GL/GS state it was submitted with.
     CMMTexture* WinTex;
     float WinColor[4]; // 0..1 floats as passed to pglClipX2SetWindowTexture
 
     // per-draw prefix block, unpacked ONCE per buffer into the STAGING zone
-    // (vu 178..198) — the microcode copies it to the kick sites (VIF-written
+    // (vu 178..200) — the microcode copies it to the kick sites (VIF-written
     // qwords must never be GIF-read: VIF races the GIF, the city flicker):
-    // [win color][pad]
-    // [wall texture settings NLOOP=8 + normal-blend ALPHA_1, 9q]
-    // [win texture settings NLOOP=8 + additive ALPHA_1, 9q]
-    // [window prim giftag template, ABE=1]
-    uint128_t Pfx[21] __attribute__((aligned(16)));
+    //   Pfx[0..1]   [win color][pad]
+    //   Pfx[2..11]  wall texture settings giftag + 9 A+D regs, normal-blend ALPHA_1
+    //   Pfx[12..21] win  texture settings giftag + 9 A+D regs, additive ALPHA_1
+    //   Pfx[22]     window prim giftag template, ABE=1
+    // MUST be 23: kX2PfxOff's unpack sends 23q and the wall-only branch memsets
+    // Pfx[12..22]. At 21 that memset wrote 32 bytes of zeros past the end of this
+    // heap-allocated object, onto the next malloc chunk's header — a corrupt free
+    // list that only surfaced later, inside mallinfo(). Keep in sync with the 23q
+    // block in vu1/general_clip_tri_x2.vcl and packet.Add(Pfx, 23).
+    uint128_t Pfx[23] __attribute__((aligned(16)));
 
     void BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block);
     void XferPrefixes(CVifSCDmaPacket& packet);
