@@ -45,6 +45,7 @@ RENDERERS = \
 	fast_nolights \
 	fast \
 	general_clip_tri \
+	general_clip_tri_x2 \
 	general_nospec_quad \
 	general_nospec_tri \
 	general_nospec \

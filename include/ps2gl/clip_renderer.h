@@ -23,4 +23,39 @@ public:
     virtual void DrawLinearArrays(CGeometryBlock& block);
 };
 
+class CMMTexture;
+
+/* The DOUBLE-KICK city renderer (vu1/general_clip_tri_x2.vcl): per-vertex
+   color through the 5-plane S-H clip, then two XGKICKs per buffer — opaque
+   wall (pv color, base texture) + additive window overlay (constant color,
+   window texture) from the same transformed verts. Selected through
+   PGL_CLIP_TRIANGLES_X2. See PS2/plans/todo/VU1_X2_PLAN.md. */
+class CClipTriX2Renderer : public CLinearRenderer {
+    CMMTexture* WinTex;
+    float WinColor[4]; // 0..1 floats as passed to pglClipX2SetWindowTexture
+
+    // per-draw prefix block, unpacked ONCE per buffer into the STAGING zone
+    // (vu 178..198) — the microcode copies it to the kick sites (VIF-written
+    // qwords must never be GIF-read: VIF races the GIF, the city flicker):
+    // [win color][pad]
+    // [wall texture settings NLOOP=8 + normal-blend ALPHA_1, 9q]
+    // [win texture settings NLOOP=8 + additive ALPHA_1, 9q]
+    // [window prim giftag template, ABE=1]
+    uint128_t Pfx[21] __attribute__((aligned(16)));
+
+    void BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block);
+    void XferPrefixes(CVifSCDmaPacket& packet);
+    void DrawBlockX2(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
+
+public:
+    CClipTriX2Renderer();
+
+    static void Register();
+
+    void SetWindowTexture(unsigned int texId, float r, float g, float b, float a);
+
+    virtual void InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged);
+    virtual void DrawLinearArrays(CGeometryBlock& block);
+};
+
 #endif // clip_renderer_h

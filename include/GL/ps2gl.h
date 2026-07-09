@@ -163,6 +163,26 @@ void pglRegisterCustomPrimType(GLenum primType,
 void pglRegisterClipTriRenderer(void);
 void pglSetClipNear(float near_z);
 
+/* HyperSolar VU1 DOUBLE-KICK city renderer (tri lists): transforms + clips
+   each vertex once, then kicks TWO prims per buffer — the opaque wall
+   (PER-VERTEX color from the color array, current bound texture, ABE=0)
+   and the additive window overlay (constant color, the window texture,
+   ABE=1) on positionally identical verts. Call order per draw:
+     pglClipX2SetWindowTexture(winTex, r,g,b,a);   // 0..1 floats
+     glBindTexture(GL_TEXTURE_2D, baseTex);        // AFTER — see below
+     glDrawArrays(PGL_CLIP_TRIANGLES_X2, ...);
+   pglClipX2SetWindowTexture binds winTex internally to resolve it, so the
+   base texture must be (re)bound afterwards. winTex = 0 disables the
+   window kick (wall-only mode, for bisects). The window color scales the
+   additive add (a rides GS As). PSMT8 window textures are supported when
+   they carry their OWN clut (the HyperSolar per-texture-palette path);
+   sampling is whatever mode the texture last drew with (kModulate).
+   Near plane shared with pglSetClipNear. */
+#define PGL_CLIP_TRIANGLES_X2 ((GLenum)0x80000000 | 1)
+#define PGL_CLIP_TRI_X2_PROP ((pglU64_t)1 << 33)
+void pglRegisterClipTriX2Renderer(void);
+void pglClipX2SetWindowTexture(GLuint texId, float r, float g, float b, float a);
+
 // custom state
 
 void pglEnableCustom(pglU64_t flag);
