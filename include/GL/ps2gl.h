@@ -43,6 +43,14 @@ extern int pglHasGsMemBeenInitted(void);
 // (raylib4ps2 rlLoadTexturePS2). Call right after glTexImage2D, before unbinding.
 extern void pglTexImageTakeOwnership(void);
 
+/* HyperSolar: cached-dlist render-packet sizing (qwords). The packet holds DMA
+   tags + VIF codes only (vertex data rides REF tags), so the estimate is
+   size = verts*qwPerVert + strips*qwPerStrip + qwFlat. Library defaults
+   (2 / 48 / 512, ~3x measured need) apply if never called; call BEFORE the
+   first display list is played to supersede them. The stock code reserved
+   14.3 qw/vert ("a pitiful hack") — 1.4 MB for one game's model dlists. */
+extern void pglSetDListPacketSizing(int qwPerVert, int qwPerStrip, int qwFlat);
+
 // gs mem slots
 
 typedef unsigned int pgl_slot_handle_t;

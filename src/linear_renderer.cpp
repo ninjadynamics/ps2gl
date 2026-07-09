@@ -69,10 +69,40 @@ void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool user
     CacheRendererState();
 }
 
+// Coefficients for the cached-dlist packet estimate below. Library defaults,
+// overridable BEFORE the first dlist compiles via pglSetDListPacketSizing()
+// (the GLdc convention: every library reservation ships a default the app can
+// supersede — no second init path).
+static int sDListQwPerVert  = 2;
+static int sDListQwPerStrip = 48;
+static int sDListQwFlat     = 512;
+
+extern "C" void pglSetDListPacketSizing(int qwPerVert, int qwPerStrip, int qwFlat)
+{
+    sDListQwPerVert  = qwPerVert;
+    sDListQwPerStrip = qwPerStrip;
+    sDListQwFlat     = qwFlat;
+}
+
 int CLinearRenderer::GetPacketQwordSize(const CGeometryBlock& geometry)
 {
-    // FIXME:  this is a pitiful hack for allocating enough memory
-    return Math::Max(geometry.GetTotalVertices() / 70, 1) * 1000;
+    // Sizes the CACHED dlist render packet (dlgmanager). The packet holds only
+    // DMA tags, VIF codes and misaligned head/tail fixups — the vertex data
+    // stays in the dlist's own arrays, reached by REF tags (XferVectors). True
+    // cost is O(buffers + strips): ~40 qwords per ~72-vert buffer (4 arrays x
+    // ~7 qw of tag/mask/prepend/REF/append, + header/mscnt), i.e. ~0.6
+    // qwords/vert for tri-list models.
+    //
+    // The stock estimate here was max(verts/70,1)*1000 = 14.3 qwords/VERT
+    // ("a pitiful hack", its own words) — a ~25x over-allocation that cost
+    // 1.4 MB of EE RAM for the game's model dlists alone, allocated on first
+    // playback. The defaults are still ~3x the measured need (the margin IS
+    // the overflow guard — a CDmaPacket overrun is silent in release), scale
+    // with the strip count for strip-heavy recordings, and the flat term
+    // covers the renderer-context block.
+    return geometry.GetTotalVertices() * sDListQwPerVert
+        + geometry.GetNumStrips() * sDListQwPerStrip
+        + sDListQwFlat;
 }
 
 CRendererProps

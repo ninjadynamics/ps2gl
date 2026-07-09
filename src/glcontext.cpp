@@ -503,7 +503,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.07.09 20:16]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.07.09 22:14]\n");
 
     ps2sInit();
     pGLContext = new CGLContext(immBufferVertexSize, immDrawBufferQwordSize);
