@@ -219,13 +219,13 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
     mErrorIf(!tm.GetTexEnabled(), "the x2 renderer needs texturing enabled (city walls)");
     CMMTexture& wall = tm.GetCurTexture();
 
-    // GS TEST for the two kicks, both derived from ps2gl's LIVE drawenv value —
+    // GS TEST for the two kicks, both derived from ps2gl's LIVE drawenv value ï¿½
     // TEST also carries ZTE/ZTST and the dest-alpha test, so building it from
     // scratch would silently disable depth testing.
     //   wall kick:   alpha test OFF (ATE=0), everything else as ps2gl set it.
     //   window kick: ATE=1, ATST=GREATER, AREF=0, AFAIL=KEEP. Window gap texels
     //     sample alpha exactly 0 (16-bit 5551 + TEXA ta0=0), and an additive
-    //     blend of As=0 is Cs*0 + Cd = Cd — a framebuffer read-modify-write that
+    //     blend of As=0 is Cs*0 + Cd = Cd ï¿½ a framebuffer read-modify-write that
     //     cannot change a bit. Discarding them is bit-identical and skips the
     //     RMW (the GS is fill-bound: the window kick's second rasterization
     //     measured 2.26 ms of `other`). Lit texels give A = At*Ag>>7 = Ag
@@ -266,6 +266,16 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
         tGifTag* bg = (tGifTag*)&Pfx[2];
         bg->EOP   = 0;
         bg->NLOOP = 9;
+        // TEXFLUSH is reg 0 of the copied block. In the REAL bind path it
+        // follows a texture/CLUT upload; replayed in every micro-buffer's
+        // prefix it is a stall-then-invalidate barrier ~206x/frame at dense
+        // load (GS manual pp. 43/51/63/131: needed only when NEW texture data
+        // is first used â€” a TEX0 retarget to resident data needs none). NOP
+        // it in the COPY only; the live upload path keeps its flush.
+        uint64_t* fl = (uint64_t*)&Pfx[3];
+        mErrorIf(fl[1] != (uint64_t)GS::RegAddrs::texflush,
+            "CTexEnv settings-block layout changed?");
+        fl[1] = GS::RegAddrs::nop;
         // ALPHA_1 = Cv = (Cs - Cd) * As + Cd  (glBlendFunc(SRC_ALPHA,
         // ONE_MINUS_SRC_ALPHA), the fade overlay's blend):
         // a=Cs(0) b=Cd(1) c=As(0) d=Cd(1) -> 0x44
@@ -311,6 +321,12 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
         tGifTag* wg = (tGifTag*)&Pfx[12];
         wg->EOP   = 0;
         wg->NLOOP = 9;
+        // Same TEXFLUSH strip as the wall block above: Use(packet) just sent
+        // the real settings (flush included) if anything was uploaded.
+        uint64_t* wfl = (uint64_t*)&Pfx[13];
+        mErrorIf(wfl[1] != (uint64_t)GS::RegAddrs::texflush,
+            "CTexEnv settings-block layout changed?");
+        wfl[1] = GS::RegAddrs::nop;
 
         // ALPHA_1 = Cv = (Cs - 0) * As + Cd  (glBlendFunc(SRC_ALPHA, ONE)):
         // a=Cs(0) b=0(2) c=As(0) d=Cd(1) -> 0x48
