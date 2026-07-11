@@ -147,6 +147,23 @@ public:
     void Use(CSCDmaPacket& packet);
     void Use(CVifSCDmaPacket& packet);
 
+    // HyperSolar: the upload half of Use() WITHOUT its context-1 settings send.
+    // The x2 dual-context renderer programs the window texture on CONTEXT 2 via
+    // its own address-rewritten settings block; Use()'s ctx1 TEX0 write would
+    // stomp the wall's live binding (there is no per-buffer wall prefix left to
+    // repair it). XferImage guards game-managed textures (no pImageMem).
+    void LoadIfDirty(CVifSCDmaPacket& packet)
+    {
+        if (XferImage)
+            Load(packet);
+    }
+
+    // HyperSolar P2 mip packing: place this level's image at an explicit GS
+    // word address inside a shared pack page and upload it NOW (see the
+    // packed-pyramid section in texture.cpp). Replaces the own-slot Load()
+    // path for packed mip levels.
+    void UploadPacked(uint32_t gsWordAddr);
+
     void BindToSlot(GS::CMemSlot& slot);
     void Free(void);
 

@@ -4,23 +4,30 @@
        General Public License Version 2.1. See the file "COPYING" in the
        main directory of this archive for more details.                             */
 
-     ; HyperSolar VU1 DOUBLE-KICK city renderer — the x2 companion of
+     ; HyperSolar VU1 DUAL-CONTEXT city renderer — the x2 companion of
      ; general_clip_tri.vcl (which stays byte-identical; see VU1_X2_PLAN.md).
      ; Selected via the PGL_CLIP_TRIANGLES_X2 custom prim.
      ;
      ; The city submits identical wall geometry twice (opaque base pass +
      ; additive window overlay). This renderer transforms + 5-plane-S-H-clips
-     ; each shared vertex ONCE, then XGKICKs TWO packets from the same
-     ; transformed data:
-     ;   kick 1 (wall):   A+D prefix (base TEX0/TEX1/MIPTBP) + prim ABE=0,
-     ;                    PER-VERTEX tint color (input color stream).
-     ;   kick 2 (window): A+D prefix (window TEX0/TEX1/MIPTBP + additive
-     ;                    ALPHA) + prim template ABE=1 (EE-built — VU cannot
-     ;                    flip giftag bit 53, no integer shifts), CONSTANT
-     ;                    color (g_win_bright is globally flat).
-     ; Window verts are positionally IDENTICAL to wall verts (same arrays,
-     ; same count — push_win writes both streams at one index), so depth
-     ; needs no ZMSK switch: the window kick rewrites the identical Z.
+     ; each shared vertex ONCE, then XGKICKs ONE compound packet per buffer:
+     ;   section 1 (wall):   prim giftag EOP=0 (CTXT=0: GS context 1 = ps2gl's
+     ;                       live texture/blend/test state) + PER-VERTEX tint
+     ;                       color verts (input color stream).
+     ;   section 2 (window): prim giftag template ABE=1 CTXT=1 EOP=1
+     ;                       (EE-built — VU cannot flip giftag bit 53, no
+     ;                       integer shifts) + the SAME verts with CONSTANT
+     ;                       rgb (g_win_bright is globally flat; alpha kept
+     ;                       per-vert = the fade animation), written right
+     ;                       after the last wall vert so the GIF walks
+     ;                       straight through. GS context 2 carries the
+     ;                       window texture + additive ALPHA_2 + alpha-test
+     ;                       TEST_2, programmed once per pass by the EE
+     ;                       (BuildPrefixes) — no per-buffer state, no
+     ;                       per-buffer TEXFLUSH, one kick instead of two.
+     ; Window verts are positionally IDENTICAL to wall verts, so depth needs
+     ; no ZMSK for correctness (ZBUF_2 still sets ZMSK=1 to skip the
+     ; redundant z re-write).
      ;
      ; Inherits EVERY hardened pattern from the parent renderer — scheduling
      ; fences at all store->load seams (vcl does not model VU-mem aliasing
@@ -36,51 +43,34 @@
      ;   125..129 the 5 plane qwords (built per buffer)
      ;   130..153 polygon scratch A (8 verts x 3q: pos, stq, col)
      ;   154..177 polygon scratch B
-     ;   178      window color const (floats: rgb 0..255, a 0..128 GS range;
-     ;            x < 0 = WINDOW KICK DISABLED, wall-only mode)
-     ;   179      pad
-     ;   180..200 PREFIX STAGING (EE unpack, one 23q block starting at 178):
-     ;            180..189 wall prefix - the BASE texture's FULL settings
-     ;                     block (A+D giftag patched to NLOOP=9, EOP=0 +
-     ;                     TEXFLUSH/CLAMP/TEX1/TEX0/TEXA/MIPTBP1/2, copied
-     ;                     wholesale from the CTexEnv object so punch-through
-     ;                     TEXA + custom mip MIPTBPs ride verbatim) + a
-     ;                     NORMAL-blend ALPHA_1 (the previous buffer's window
-     ;                     kick leaves ADDITIVE alpha behind, and the FADE
-     ;                     overlay draws its walls with ABE=1; inert for the
-     ;                     opaque main city, ABE=0) + TEST_1 with the alpha
-     ;                     test OFF
-     ;            190..199 window prefix - the WINDOW texture's settings
-     ;                     block (giftag patched to NLOOP=9, EOP=0) +
-     ;                     additive ALPHA_1 + TEST_1 with the alpha test ON
-     ;                     (ATE=1, ATST=GREATER, AREF=0, AFAIL=KEEP): the
-     ;                     window tile's gap texels sample alpha 0 (TEXA
-     ;                     ta0=0), and additive blending of As=0 is
-     ;                     Cs*0+Cd = Cd - a framebuffer read-modify-write
-     ;                     that provably cannot change a bit. Discarding
-     ;                     them is bit-identical and skips the RMW; the
-     ;                     window kick's fill measured 2.26 ms of GS time.
-     ;                     Both TEST values START from ps2gl's live drawenv
-     ;                     TEST (it also carries ZTE/ZTST + dest-alpha).
-     ;            200      window prim giftag TEMPLATE (ABE=1)
-     ;            STAGED, NOT KICKED IN PLACE (hardware-learned): VIF runs a
-     ;            buffer ahead and has NO interlock against GIF path 1 - a
-     ;            VIF-written qword the GIF reads gets overwritten while the
-     ;            PREVIOUS buffer's kick is still draining (per-building
-     ;            texture/blend flicker in the city). The program copies the
-     ;            staging block to the kick sites below; VU writes ARE
-     ;            serialized against the previous kicks by the xgkick
-     ;            interlock, so the copy is race-free by construction.
-     ;   201..210 wall kick prefix (VU-copied from 180..189)
-     ;   211      wall prim giftag (VU writes: kGifTag template + count)
-     ;   212..334 wall output verts (41 x 3q: STQ, RGBA, XYZF2)
-     ;   335..344 window kick prefix (VU-copied from 190..199)
-     ;   345      window prim giftag (VU-copied template; NLOOP patched)
-     ;   346..468 window output verts (41 x 3q)
-     ;   469..471 spare
+     ;   178..179 STAGING (EE unpack, one 2q block; VU-READ ONLY, never
+     ;            kicked in place — hardware-learned: VIF runs a buffer
+     ;            ahead and has NO interlock against GIF path 1, so a
+     ;            VIF-written qword the GIF reads gets overwritten while
+     ;            the PREVIOUS buffer's kick is still draining. Everything
+     ;            the GIF reads below is VU-written; VU writes ARE
+     ;            serialized against previous kicks by the xgkick
+     ;            interlock):
+     ;            178 window color const (floats: rgb 0..128 GS modulate
+     ;                range; x < 0 = WINDOW SECTION DISABLED, wall-only)
+     ;            179 window prim giftag TEMPLATE (ABE=1, CTXT=1 -> GS
+     ;                context 2, EOP=1)
+     ;   180      wall prim giftag (VU writes: kGifTag template + count;
+     ;            EOP cleared when the window section follows in-kick)
+     ;   181..303 wall output verts (41 x 3q: STQ, RGBA, XYZF2), context 1
+     ;   181+3n   window prim giftag (VU-patched template, EOP=1) written
+     ;            right after the last wall vert (n = emitted count), then
+     ;            the n window verts (wall verts with constant-rgb color
+     ;            splice) — the whole thing is ONE GIF packet, kicked once
+     ;            from 180. Worst case n=41: tag at 304, verts 305..427.
+     ;   428..471 spare
+     ; All per-buffer GS STATE is gone from this layout: walls draw with
+     ; ps2gl's live context 1, windows with context 2 (window texture +
+     ; additive ALPHA_2 + alpha-test TEST_2 + ZMSK'd ZBUF_2), programmed
+     ; once per pass by BuildPrefixes on the EE.
      ; EE coupling: CClipTriX2Renderer's ctor passes inGeomBufSize=120
      ; (30 verts x 4q), its DrawLinearArrays caps batches at multiples of 6,
-     ; and its DrawBlock unpacks ONE 23q block at 178 per buffer. Changing
+     ; and its DrawBlock unpacks ONE 2q block at 178 per buffer. Changing
      ; any of these numbers means re-checking this layout end to end.
 
      #include       "vu1_mem_linear.h"
@@ -100,14 +90,9 @@ kCPlanes            .equ           125
 kCPolyA             .equ           130
 kCPolyB             .equ           154
 kCWinClr            .equ           178
-kCStgWall           .equ           180
-kCStgWin            .equ           190
-kCWallPfx           .equ           201
-kCWallTag           .equ           211
-kCOutData           .equ           212
-kCWinPfx            .equ           335
-kCWinTag            .equ           345
-kCWinOfs            .equ           134
+kCWinTag            .equ           179
+kCWallTag           .equ           180
+kCOutData           .equ           181
 kCCapVerts          .equ           39
 
      .init_vf_all
@@ -256,9 +241,10 @@ cp_wrap_lid\@:
 
      ; ---------------------------------------------------
      ; emit one polygon vert (pre-divide pos \p + raw stq \s + raw color
-     ; \c) at WALL output slot \k and WINDOW slot \k+kCWinOfs: divide, gs
-     ; convert, stq perspective (stored to both), pv color (wall) + const
-     ; color (window), shared fog/adc; \adcreg = adc_bit or vi00.
+     ; \c) at WALL output slot \k: divide, gs convert, stq perspective,
+     ; pv color, fog/adc; \adcreg = adc_bit or vi00. The window section is
+     ; built AFTER the loop by copying the wall verts (constant-rgb color
+     ; splice) — emission writes one stream only.
      ; 1/w is landed in a REGISTER (addq) instead of being consumed twice
      ; from the pipeline Q: vcl re-rolls the schedule every regen, and a
      ; second mulq far from its div can read a NEIGHBOR vert's Q. One
@@ -272,17 +258,12 @@ cp_wrap_lid\@:
      ftoi4.xyz      emp\@, emp\@
      mulx.xyz       ems\@, \s, emq\@
      sq.xyz         ems\@, 0+\k(next_output)
-     sq.xyz         ems\@, 0+\k+kCWinOfs(next_output)
      fmt_color      emc\@, \c
      store_rgba     emc\@, \k
-     move.xyzw      emw\@, win_color
-     move.w         emw\@, emc\@
-     store_rgba     emw\@, \k+kCWinOfs
      fog_coef       emf\@, \p, fog_params
      ior            emadc\@, \adcreg, emf\@
      mfir.w         emp\@, emadc\@
      store_xyzf     emp\@, \k
-     store_xyzf     emp\@, \k+kCWinOfs
      .endm
 
      ; ---------------------------------------------------
@@ -343,41 +324,17 @@ main_loop_lid:
      ; each window vert takes its ALPHA from the wall vert's pv alpha, so the
      ; fade overlay's animated per-building alpha scales the additive add
      ; exactly like the classic window pass (main-city verts carry alpha 1.0
-     ; -> 128, identical to a constant). (.x < 0 disables the window kick —
-     ; checked post-loop, no register held here.)
+     ; -> 128, identical to a constant). (.x < 0 disables the window section
+     ; — checked post-loop, no extra register held here.) Held across the
+     ; loop for the post-loop window-vert color splice.
      lq             win_color, kCWinClr(buffer_top)
      loi            255.0
      minii.xyz      win_color, win_color, i
      ftoi0          win_color, win_color
 
-     ; stage -> kick-site prefix copy (see the layout header: kicked qwords
-     ; must be VU-written, never VIF-written — VIF races the GIF). Wall 8q,
-     ; then window 10q (prefix 9q + prim giftag template, contiguous).
-     iaddiu         cpy_s, buffer_top, kCStgWall
-     iaddiu         cpy_d, buffer_top, kCWallPfx
-     iaddiu         cpy_n, vi00, 10
-x2_cpyw_lid:
-     lq             cpy_t, 0(cpy_s)
-     sq             cpy_t, 0(cpy_d)
-     iaddiu         cpy_s, cpy_s, 1
-     iaddiu         cpy_d, cpy_d, 1
-     isubiu         cpy_n, cpy_n, 1
-     ibgtz          cpy_n, x2_cpyw_lid
-     iaddiu         cpy_s, buffer_top, kCStgWin
-     iaddiu         cpy_d, buffer_top, kCWinPfx
-     iaddiu         cpy_n, vi00, 11
-x2_cpyn_lid:
-     lq             cpy_t, 0(cpy_s)
-     sq             cpy_t, 0(cpy_d)
-     iaddiu         cpy_s, cpy_s, 1
-     iaddiu         cpy_d, cpy_d, 1
-     isubiu         cpy_n, cpy_n, 1
-     ibgtz          cpy_n, x2_cpyn_lid
-     ; SCHEDULING FENCE: the giftag patch post-loop reads kCWinTag through
-     ; buffer_top — a different pointer than cpy_d wrote it through (the
-     ; vcl memory-aliasing bug, again). Block boundary before continuing.
-     b              x2_cpyf_lid
-x2_cpyf_lid:
+     ; (no stage -> kick-site prefix copies anymore: per-buffer GS state is
+     ; gone — walls use live context 1, windows use context 2 programmed
+     ; once per pass by the EE. The 2q staging at 178 is VU-read only.)
 
      ; build the 5 plane qwords (A,B,C,D), d = A*X + B*Y + C*w + D:
      ;   slot 0 near: (0, 0, 1, -near)
@@ -417,10 +374,11 @@ xform_loop_lid:
      ; BUFFER-FULL GUARD, loop top (hardware-learned): the fan guard alone
      ; leaves a hole — fans can fill the output to the cap and later
      ; fast-path tris still optimistically STORE + commit 3 verts unchecked.
-     ; The wall overrun smashes the WINDOW KICK PREFIX (wild TEX0/ALPHA =
-     ; corrupt textures + wrong tint) and the window overrun smashes the
-     ; NEXT BUFFER HALF's header (GIF wedge). Drop the remaining tris when
-     ; another 3 verts would not fit — the EE scratch-full-drop policy.
+     ; The cap keeps the compound packet inside the buffer half: at the max
+     ; 41 wall verts the post-loop window section ends at 427 (of 471).
+     ; An overrun would push the window tag/verts into the NEXT BUFFER
+     ; HALF's header (GIF wedge). Drop the remaining tris when another
+     ; 3 verts would not fit — the EE scratch-full-drop policy.
      isubiu         cap_chk, out_count, kCCapVerts-1
      ibgtz          cap_chk, tri_next_lid
 
@@ -432,13 +390,9 @@ xform_loop_lid:
      lq             pv_col, 3(next_input)
      fmt_color      pv_fmt, pv_col
      store_rgba     pv_fmt, 0
-     move.xyzw      win_v, win_color
-     move.w         win_v, pv_fmt
-     store_rgba     win_v, 0+kCWinOfs
      load_stq       tex_stq, 0
      xform_tex_stq  tex_stq, tex_stq, q
      store_stq      tex_stq, 0
-     store_stq      tex_stq, 0+kCWinOfs
 
      ; near classify, flag-free (see pd_sign): sign of (eye w - near)
      sub.w          near_d1, xformed_vert_1, near_plane
@@ -455,7 +409,6 @@ xform_loop_lid:
      ior            fog_adc1, adc_bit, fog_i1
      mfir.w         gs_vert_1, fog_adc1
      store_xyzf     gs_vert_1, 0
-     store_xyzf     gs_vert_1, 0+kCWinOfs
 
      ; ---- vertex 2
 
@@ -465,13 +418,9 @@ xform_loop_lid:
      lq             pv_col, kInputQPerV+3(next_input)
      fmt_color      pv_fmt, pv_col
      store_rgba     pv_fmt, kOutputQPerV
-     move.xyzw      win_v, win_color
-     move.w         win_v, pv_fmt
-     store_rgba     win_v, kOutputQPerV+kCWinOfs
      load_stq       tex_stq, kInputQPerV
      xform_tex_stq  tex_stq, tex_stq, q
      store_stq      tex_stq, kOutputQPerV
-     store_stq      tex_stq, kOutputQPerV+kCWinOfs
 
      sub.w          near_d2, xformed_vert_2, near_plane
      loi            2047.0
@@ -488,7 +437,6 @@ xform_loop_lid:
      ior            fog_adc2, adc_bit, fog_i2
      mfir.w         gs_vert_2, fog_adc2
      store_xyzf     gs_vert_2, kOutputQPerV
-     store_xyzf     gs_vert_2, kOutputQPerV+kCWinOfs
 
      ; ---- vertex 3
 
@@ -498,13 +446,9 @@ xform_loop_lid:
      lq             pv_col, kInputQPerV+kInputQPerV+3(next_input)
      fmt_color      pv_fmt, pv_col
      store_rgba     pv_fmt, kOutputQPerV+kOutputQPerV
-     move.xyzw      win_v, win_color
-     move.w         win_v, pv_fmt
-     store_rgba     win_v, kOutputQPerV+kOutputQPerV+kCWinOfs
      load_stq       tex_stq, kInputQPerV+kInputQPerV
      xform_tex_stq  tex_stq, tex_stq, q
      store_stq      tex_stq, kOutputQPerV+kOutputQPerV
-     store_stq      tex_stq, kOutputQPerV+kOutputQPerV+kCWinOfs
 
      sub.w          near_d3, xformed_vert_3, near_plane
      loi            2047.0
@@ -537,7 +481,6 @@ xform_loop_lid:
 
      mfir.w         gs_vert_3, new_adc_bit
      store_xyzf     gs_vert_3, kOutputQPerV+kOutputQPerV
-     store_xyzf     gs_vert_3, kOutputQPerV+kOutputQPerV+kCWinOfs
 
      ; ---- dispatch: commit the stored tri only if fully inside all 5
      ; planes; anything touching any plane goes to the S-H handler
@@ -623,44 +566,76 @@ tri_next_lid:
      isubiu         loop_left, loop_left, 11
      ibgtz          loop_left, xform_loop_lid
 
-     ; ---------------- patch NLOOPs + kick both packets to GS ----------------
+     ; ----------- build the compound wall+window packet, kick ONCE -----------
 
-     ; wall giftag: kGifTag template + the emitted vert count
-     lq             gif_tag_p, kGifTag(vi00)
-     mtir           eop_p, gif_tag_px
-     ior            eop_p, eop_p, out_count
-     mfir.x         gif_tag_p, eop_p
-     iaddiu         packet_start_p, buffer_top, kCWallTag
-     sq             gif_tag_p, 0(packet_start_p)
-
-     ; kick 1: wall packet (A+D base-texture prefix + prim + verts)
-     iaddiu         packet_start_p, buffer_top, kCWallPfx
-     xgkick         packet_start_p
-
-     ; window kick disabled? (win color .x < 0 = wall-only mode)
+     ; window section on? (win color .x < 0 = wall-only mode)
      lq.x           win_chk, kCWinClr(buffer_top)
      pd_sign        win_skip, win_chk
      iand           win_skip, win_skip, adc_bit
-     ibne           win_skip, vi00, no_win_kick_lid
 
-     ; window giftag: the EE-built ABE=1 TEMPLATE at kCWinTag + the count
+     ; wall giftag: kGifTag template + the emitted vert count. The template
+     ; has EOP=1 (BuildGiftag); when the window section follows in-kick,
+     ; clear EOP (bit 15 of word 0 = adc_bit — guaranteed set, so a
+     ; subtract clears it) and the GIF walks straight from the last wall
+     ; vert into the window giftag.
+     lq             gif_tag_p, kGifTag(vi00)
+     mtir           eop_p, gif_tag_px
+     ior            eop_p, eop_p, out_count
+     ibne           win_skip, vi00, x2_wtag_lid
+     isub           eop_p, eop_p, adc_bit
+x2_wtag_lid:
+     mfir.x         gif_tag_p, eop_p
+     sq             gif_tag_p, kCWallTag(buffer_top)
+
+     ibne           win_skip, vi00, x2_kick_lid
+
+     ; window giftag: the EE-built TEMPLATE (ABE=1, CTXT=1 -> GS context 2,
+     ; EOP=1 closes the packet) + the count, written right after the LAST
+     ; wall vert (next_output points there after the loop).
      lq             gif_tag_p, kCWinTag(buffer_top)
      mtir           eop_p, gif_tag_px
      ior            eop_p, eop_p, out_count
      mfir.x         gif_tag_p, eop_p
-     sq             gif_tag_p, kCWinTag(buffer_top)
+     sq             gif_tag_p, 0(next_output)
 
-     ; SCHEDULING FENCE: the patched template store above must land before
-     ; the GIF reads it — and before any future reordering pulls the kick
-     ; earlier. Same aliasing-bug class; keep the boundary.
-     b              wk_fence_lid
-wk_fence_lid:
+     ; window verts: the wall verts with the color spliced to the constant
+     ; window rgb (alpha kept from the wall vert = the pv fade alpha); stq
+     ; and xyzf ride verbatim (identical positions — the z-TEST occludes,
+     ; ZBUF_2's ZMSK=1 skips the redundant z re-write). Zero emitted verts
+     ; skips the loop (both NLOOP=0 tags still kick fine — the NLOOP=0
+     ; torture case).
+     iadd           wc_n, out_count, vi00
+     ibeq           wc_n, vi00, x2_kick_lid
+     iaddiu         wc_src, buffer_top, kCOutData
+     iaddiu         wc_dst, next_output, 1
+     ; SCHEDULING FENCE: the copy reads wall verts stored through
+     ; next_output-relative pointers (the vcl memory-aliasing bug — it does
+     ; not model VU-mem aliasing between pointer regs). Block boundary
+     ; before the first load.
+     b              x2_wcopy_lid
+x2_wcopy_lid:
+     lq             wc_s, 0(wc_src)
+     sq             wc_s, 0(wc_dst)
+     lq             wc_c, 1(wc_src)
+     move.xyzw      wc_t, win_color
+     move.w         wc_t, wc_c
+     sq             wc_t, 1(wc_dst)
+     lq             wc_p, 2(wc_src)
+     sq             wc_p, 2(wc_dst)
+     iaddiu         wc_src, wc_src, 3
+     iaddiu         wc_dst, wc_dst, 3
+     isubiu         wc_n, wc_n, 1
+     ibgtz          wc_n, x2_wcopy_lid
 
-     ; kick 2: window packet (A+D window-texture+ALPHA prefix + prim + verts)
-     iaddiu         packet_start_p, buffer_top, kCWinPfx
+x2_kick_lid:
+     ; SCHEDULING FENCE: every kicked qword above is stored through
+     ; wc_dst / next_output / buffer_top — the kick must not be hoisted
+     ; above those stores. Same aliasing-bug class; keep the boundary.
+     b              x2_kick2_lid
+x2_kick2_lid:
+     iaddiu         packet_start_p, buffer_top, kCWallTag
      xgkick         packet_start_p
 
-no_win_kick_lid:
      --cont
 
      b    main_loop_lid

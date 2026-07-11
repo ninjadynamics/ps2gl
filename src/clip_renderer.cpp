@@ -115,24 +115,26 @@ void CClipTriRenderer::DrawLinearArrays(CGeometryBlock& block)
 }
 
 /********************************************
- * CClipTriX2Renderer — the double-kick city renderer
+ * CClipTriX2Renderer — the dual-context city renderer
  */
 
 // VU-mem unpack target: the STAGING zone of general_clip_tri_x2.vcl's
-// layout (the microcode copies it to the kick sites — VIF-written qwords
-// must never be GIF-read). Changing either side means re-checking the
-// whole layout.
-#define kX2PfxOff 178 // [win color][pad][wall 10q][win 10q][win giftag] = 23q
+// layout (VU-READ only — the microcode builds the kicked qwords itself;
+// VIF-written qwords must never be GIF-read). Changing either side means
+// re-checking the whole layout.
+#define kX2PfxOff 178 // [win color][win prim giftag template] = 2q
 
 CClipTriX2Renderer::CClipTriX2Renderer()
     : CLinearRenderer(mVsmAddr(GeneralClipTriX2), mVsmSize(GeneralClipTriX2), 4, 3,
           kInputStart, 120,
           "clip x2, city walls+windows")
     , WinTex(NULL)
+    , Ctx2Armed(false)
 {
     // 120 quads = 30 verts of 4q input (pos, [normal unused], stq, color);
     // the microcode owns the rest of its buffer layout (planes + 3q-vert
-    // polygon scratch + TWO prefixed output packets — see the .vcl header).
+    // polygon scratch + ONE compound wall+window output packet — see the
+    // .vcl header).
     WinColor[0] = WinColor[1] = WinColor[2] = WinColor[3] = 1.0f;
 
     CRendererProps caps = {
@@ -190,6 +192,11 @@ void CClipTriX2Renderer::SetWindowTexture(unsigned int texId, float r, float g, 
     WinColor[1] = g;
     WinColor[2] = b;
     WinColor[3] = a;
+    // Re-program GS context 2 on the next x2 draw: the pair changed, and
+    // glClear (which draws through a kContext2 CDrawEnv) may have stomped
+    // ctx2 since the last pass. Called once per pass, this is also the
+    // once-per-frame re-arm.
+    Ctx2Armed = false;
     if (texId == 0) {
         WinTex = NULL;
         return;
@@ -217,96 +224,46 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
     // and a pending block reads the next drawer's texture (see SetWindowTexture).
     CTexManager& tm = pGLContext->GetTexManager();
     mErrorIf(!tm.GetTexEnabled(), "the x2 renderer needs texturing enabled (city walls)");
-    CMMTexture& wall = tm.GetCurTexture();
 
-    // GS TEST for the two kicks, both derived from ps2gl's LIVE drawenv value �
-    // TEST also carries ZTE/ZTST and the dest-alpha test, so building it from
-    // scratch would silently disable depth testing.
-    //   wall kick:   alpha test OFF (ATE=0), everything else as ps2gl set it.
-    //   window kick: ATE=1, ATST=GREATER, AREF=0, AFAIL=KEEP. Window gap texels
-    //     sample alpha exactly 0 (16-bit 5551 + TEXA ta0=0), and an additive
-    //     blend of As=0 is Cs*0 + Cd = Cd � a framebuffer read-modify-write that
-    //     cannot change a bit. Discarding them is bit-identical and skips the
-    //     RMW (the GS is fill-bound: the window kick's second rasterization
-    //     measured 2.26 ms of `other`). Lit texels give A = At*Ag>>7 = Ag
-    //     (ta1=0x80 identity), so a fading building keeps every lit texel while
-    //     Ag >= 1; at Ag == 0 the add is zero anyway. Mip levels key alpha at
-    //     ANY coverage (ps2_mip16_cache_build), so distant dimmed windows pass.
-    // ATE:1 | ATST:3 | AREF:8 | AFAIL:2 = the low 14 bits.
-    const uint64_t testBase = pGLContext->GetImmDrawContext().GetDrawEnv().GetTestReg();
-    const uint64_t wallTest = testBase & ~(uint64_t)1;         // ATE = 0
-    const uint64_t winTest  = (testBase & ~(uint64_t)0x3fff)   // clear ATE/ATST/AREF/AFAIL
-        | (uint64_t)1                                          // ATE  = 1
-        | ((uint64_t)6 << 1);                                  // ATST = GREATER (AREF=0, AFAIL=KEEP)
-
-    // Pfx[0..1]: [win color const][pad]. Pfx[2..9]: the wall settings block �
-    // the texture's OWN giftag + 7 A+D regs (TEXFLUSH/CLAMP/TEX1/TEX0/TEXA/
-    // MIPTBP1/2), copied wholesale so punch-through TEXA + custom mip
-    // MIPTBPs ride verbatim � plus a NORMAL-blend ALPHA_1 (NLOOP grown to
-    // 8): the previous buffer's window kick leaves ADDITIVE alpha, and the
-    // fade overlay draws its walls with ABE=1 (inert for the opaque main
-    // city). EOP cleared: the wall prim follows in-kick.
+    // Pfx[0]: the window color const. x128 like the vcl's fmt_color: textured
+    // GS modulate identity is 128 (GetMaxColorValue) — x255 was 2x overbright.
+    // Only rgb is consumed; window verts take their alpha from the wall verts'
+    // pv alpha (the fade animation). x < 0 = window kick disabled (wall-only).
     float* wc = (float*)&Pfx[0];
     if (WinTex) {
-        // x128 like the vcl's fmt_color: textured GS modulate identity is
-        // 128 (GetMaxColorValue) � x255 was 2x overbright. Only rgb is
-        // consumed; window verts take their alpha from the wall verts' pv
-        // alpha (the fade animation).
         wc[0] = WinColor[0] * 128.0f;
         wc[1] = WinColor[1] * 128.0f;
         wc[2] = WinColor[2] * 128.0f;
         wc[3] = WinColor[3] * 128.0f;
+
+        // Pfx[1]: the window prim giftag TEMPLATE — the wall's giftag with
+        // ABE (bit 6 of PRIM) forced on and CTXT (bit 9) selecting GS
+        // context 2. NLOOP patched on VU1 with the emitted count; EOP=1
+        // (BuildGiftag default) closes the compound kick.
+        tGifTag tag = BuildGiftag(GL_TRIANGLES);
+        tag.PRIM |= 0x40 | 0x200;
+        *(tGifTag*)&Pfx[1] = tag;
     } else {
         wc[0] = -1.0f; // window kick disabled (wall-only mode)
         wc[1] = wc[2] = wc[3] = 0.0f;
-    }
-    memset(&Pfx[1], 0, 16);
-    memcpy(&Pfx[2], wall.GetSettingsBlock(), 8 * 16);
-    {
-        tGifTag* bg = (tGifTag*)&Pfx[2];
-        bg->EOP   = 0;
-        bg->NLOOP = 9;
-        // TEXFLUSH is reg 0 of the copied block. In the REAL bind path it
-        // follows a texture/CLUT upload; replayed in every micro-buffer's
-        // prefix it is a stall-then-invalidate barrier ~206x/frame at dense
-        // load (GS manual pp. 43/51/63/131: needed only when NEW texture data
-        // is first used — a TEX0 retarget to resident data needs none). NOP
-        // it in the COPY only; the live upload path keeps its flush.
-        uint64_t* fl = (uint64_t*)&Pfx[3];
-        mErrorIf(fl[1] != (uint64_t)GS::RegAddrs::texflush,
-            "CTexEnv settings-block layout changed?");
-        fl[1] = GS::RegAddrs::nop;
-        // ALPHA_1 = Cv = (Cs - Cd) * As + Cd  (glBlendFunc(SRC_ALPHA,
-        // ONE_MINUS_SRC_ALPHA), the fade overlay's blend):
-        // a=Cs(0) b=Cd(1) c=As(0) d=Cd(1) -> 0x44
-        uint64_t* bq = (uint64_t*)&Pfx[10];
-        bq[0] = 0x44;
-        bq[1] = GS::RegAddrs::alpha_1;
-        uint64_t* bt = (uint64_t*)&Pfx[11];
-        bt[0] = wallTest;
-        bt[1] = GS::RegAddrs::test_1;
+        memset(&Pfx[1], 0, 16);
     }
 
-    // Pfx[12..19]: the window settings block, NLOOP grown to 9 for the
-    // appended additive ALPHA_1 + TEST_1. Pfx[22]: the window prim giftag
-    // template. Only built when the window kick is on.
-    if (WinTex) {
+    // Program GS context 2 once per pass (SetWindowTexture disarms). The
+    // wall prims need NOTHING here: they draw on context 1 with ps2gl's own
+    // live state (texture, ALPHA_1, TEST_1) — the old per-buffer wall prefix
+    // only existed to repair ctx1 after the window kick's writes, and the
+    // window no longer touches ctx1.
+    if (WinTex && !Ctx2Armed) {
         // Path ordering (mirrors SyncGsContext's texture send): wait for
-        // path 1 to drain before any path-2 texture/clut upload, or the
-        // new data can beat the PREVIOUS buffers' kicks that still sample
-        // the old contents ("the new texture settings might beat the
-        // geometry to the gs").
+        // path 1 to drain before the path-2 sends below — prior buffers'
+        // kicks may still be drawing with the OLD ctx2 state / texture data.
         packet.Cnt();
         packet.Flush().Nop();
         packet.CloseTag();
 
-        // Mirror UseCurTexture's bind work for a texture ps2gl never sees
-        // draw-bound in x2 mode. PSMT8 first: the clut upload + TEX0.cb �
-        // and it MUST precede the settings-block copy below (SetClut writes
-        // TEX0). Then Use(), NOT Load(): game-managed textures (pal8/mip16
-        // custom uploads) have no pImageMem and XferImage=false � a raw
-        // Load() stores through NULL (the stage-3 TLB crash); Use() guards
-        // it and its chain-level settings resend is harmless.
+        // PSMT8 window: clut upload + TEX0.cb — MUST precede the settings
+        // copy below (SetClut writes TEX0).
         GS::tPSM psm = WinTex->GetPSM();
         if (psm == GS::kPsm8 || psm == GS::kPsm8h) {
             CMMClut* clut = WinTex->GetOwnClut();
@@ -316,35 +273,94 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
                 WinTex->SetClut(*clut);
             }
         }
-        WinTex->Use(packet);
-        memcpy(&Pfx[12], WinTex->GetSettingsBlock(), 8 * 16);
-        tGifTag* wg = (tGifTag*)&Pfx[12];
-        wg->EOP   = 0;
-        wg->NLOOP = 9;
-        // Same TEXFLUSH strip as the wall block above: Use(packet) just sent
-        // the real settings (flush included) if anything was uploaded.
-        uint64_t* wfl = (uint64_t*)&Pfx[13];
-        mErrorIf(wfl[1] != (uint64_t)GS::RegAddrs::texflush,
-            "CTexEnv settings-block layout changed?");
-        wfl[1] = GS::RegAddrs::nop;
+        // The upload half of Use() ONLY: its ctx1 settings send would stomp
+        // the wall texture's live TEX0_1 (see LoadIfDirty's comment). Inert
+        // for game-managed textures (XferImage=false).
+        WinTex->LoadIfDirty(packet);
 
-        // ALPHA_1 = Cv = (Cs - 0) * As + Cd  (glBlendFunc(SRC_ALPHA, ONE)):
+        // Ctx2[0..7]: the window texture's OWN settings block (giftag + 7
+        // A+D regs), register addresses rewritten to context 2 — so
+        // punch-through TEXA + custom mip MIPTBPs ride verbatim. TEXA is
+        // global (safe with the x2 pairing: a PSMT8 wall takes alpha from
+        // its CLUT, only the PSMCT16 window reads TEXA); TEXFLUSH stripped
+        // to NOP (the real upload path above kept its flush — a TEX0
+        // retarget to resident data needs none, GS manual pp. 43/51/63/131).
+        memcpy(&Ctx2[0], WinTex->GetSettingsBlock(), 8 * 16);
+        tGifTag* cg = (tGifTag*)&Ctx2[0];
+        cg->NLOOP = 15;
+        uint64_t* tq = (uint64_t*)&Ctx2[1];
+        for (int i = 0; i < 7; i++, tq += 2) {
+            switch (tq[1]) {
+            case GS::RegAddrs::texflush: tq[1] = GS::RegAddrs::nop; break;
+            case GS::RegAddrs::clamp_1: tq[1] = GS::RegAddrs::clamp_2; break;
+            case GS::RegAddrs::tex1_1: tq[1] = GS::RegAddrs::tex1_2; break;
+            case GS::RegAddrs::tex0_1: tq[1] = GS::RegAddrs::tex0_2; break;
+            case GS::RegAddrs::texa: break; // global
+            case GS::RegAddrs::miptbp1_1: tq[1] = GS::RegAddrs::miptbp1_2; break;
+            case GS::RegAddrs::miptbp2_1: tq[1] = GS::RegAddrs::miptbp2_2; break;
+            default: mError("unexpected reg in the texture settings block");
+            }
+        }
+
+        // Ctx2[8..14]: blend/test + live draw-env mirrors. All derived from
+        // ps2gl's LIVE values — never built from scratch (TEST also carries
+        // ZTE/ZTST; FRAME/ZBUF/XYOFFSET/SCISSOR must match ctx1 exactly or
+        // window prims draw shifted / mis-scissored / into the wrong buffer).
+        //   Window alpha test: ATE=1, ATST=GREATER, AREF=0, AFAIL=KEEP.
+        //   Gap texels sample alpha exactly 0 (16-bit 5551 + TEXA ta0=0) and
+        //   an additive blend of As=0 is Cs*0 + Cd = Cd — discarding them is
+        //   bit-identical and skips the RMW. Lit texels give A = At*Ag>>7 =
+        //   Ag (ta1=0x80 identity), so a fading building keeps every lit
+        //   texel while Ag >= 1. Mip levels key alpha at ANY coverage
+        //   (ps2_mip16_cache_build), so distant dimmed windows pass.
+        const GS::CDrawEnv& de = pGLContext->GetImmDrawContext().GetDrawEnv();
+        const uint64_t testBase = de.GetTestReg();
+        const uint64_t winTest = (testBase & ~(uint64_t)0x3fff) // clear ATE/ATST/AREF/AFAIL
+            | (uint64_t)1                                       // ATE  = 1
+            | ((uint64_t)6 << 1);                               // ATST = GREATER (AREF=0, AFAIL=KEEP)
+        uint64_t* rq = (uint64_t*)&Ctx2[8];
+        // ALPHA_2 = Cv = (Cs - 0) * As + Cd  (glBlendFunc(SRC_ALPHA, ONE)):
         // a=Cs(0) b=0(2) c=As(0) d=Cd(1) -> 0x48
-        uint64_t* q = (uint64_t*)&Pfx[20];
-        q[0] = 0x48;
-        q[1] = GS::RegAddrs::alpha_1;
-        uint64_t* wt = (uint64_t*)&Pfx[21];
-        wt[0] = winTest;
-        wt[1] = GS::RegAddrs::test_1;
+        rq[0] = 0x48;
+        rq[1] = GS::RegAddrs::alpha_2;
+        rq[2] = winTest;
+        rq[3] = GS::RegAddrs::test_2;
+        rq[4] = de.GetFrameReg();
+        rq[5] = GS::RegAddrs::frame_2;
+        // ZMSK=1 (bit 32): the window re-writes its wall's identical Z — the
+        // write is pure redundant bandwidth, the z-TEST still occludes.
+        rq[6] = de.GetZBufReg() | ((uint64_t)1 << 32);
+        rq[7] = GS::RegAddrs::zbuf_2;
+        rq[8] = de.GetXYOffsetReg();
+        rq[9] = GS::RegAddrs::xyoffset_2;
+        rq[10] = de.GetScissorReg();
+        rq[11] = GS::RegAddrs::scissor_2;
+        rq[12] = de.GetFBAReg();
+        rq[13] = GS::RegAddrs::fba_2;
+        // TEST_1 pin (proof-grade pixel contract): the wall prims draw with
+        // LIVE ctx1 state, and nothing upstream proves ATE is off at city
+        // entry (the old per-buffer prefixes forced it). Send the live TEST
+        // with ATE cleared — byte-identical to ps2gl's cache whenever ATE
+        // was already off (the game's case today), so no state desync; if a
+        // future path enters with ATE on, this pins the walls opaque like
+        // the old architecture did.
+        rq[14] = testBase & ~(uint64_t)1;
+        rq[15] = GS::RegAddrs::test_1;
 
-        // window prim tag: the wall's giftag with ABE forced on (bit 6 of
-        // PRIM: prim_type:3, iip:1, tme:1, fge:1, abe:1). NLOOP patched on
-        // VU1 with the emitted count; EOP=1 ends the window kick.
-        tGifTag tag = BuildGiftag(GL_TRIANGLES);
-        tag.PRIM |= 0x40;
-        *(tGifTag*)&Pfx[22] = tag;
-    } else {
-        memset(&Pfx[12], 0, 11 * 16);
+        // DIRECT-send the block down GIF path 2 (same qword-alignment nop
+        // trick as CTexEnv::SendSettings).
+        packet.Cnt();
+        {
+            packet.Nop();
+            if (!packet.GetTTE())
+                packet.Nop().Nop();
+            packet.OpenDirect();
+            packet.Add(Ctx2, 16);
+            packet.CloseDirect();
+        }
+        packet.CloseTag();
+
+        Ctx2Armed = true;
     }
     (void)block;
 }
@@ -365,8 +381,8 @@ void CClipTriX2Renderer::XferPrefixes(CVifSCDmaPacket& packet)
             packet.Nop().Nop();
         packet.Stcycl(1, 1);
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, kX2PfxOff, Packet::kDoubleBuff);
-        packet.Add(Pfx, 23);
-        packet.CloseUnpack(23);
+        packet.Add(Pfx, 2);
+        packet.CloseUnpack(2);
         packet.Pad128();
     }
     packet.CloseTag();
@@ -411,9 +427,10 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
     DrawBlockX2(packet, block, maxVertsPerBuffer);
 }
 
-// Copy of CLinearRenderer::DrawBlock with ONE change: the prefix blocks are
-// unpacked into both output packets before every buffer kick (XferPrefixes
-// before each FinishBuffer). Keep in sync with linear_renderer.cpp.
+// Copy of CLinearRenderer::DrawBlock with ONE change: the 2q staging block
+// (window color + window prim giftag template) is unpacked per buffer
+// (XferPrefixes before each FinishBuffer). Keep in sync with
+// linear_renderer.cpp.
 void CClipTriX2Renderer::DrawBlockX2(CVifSCDmaPacket& packet,
     CGeometryBlock& block, int maxVertsPerBuffer)
 {

@@ -533,6 +533,25 @@ void CMMTexture::Use(CVifSCDmaPacket& packet)
     SendSettings(packet);
 }
 
+// HyperSolar P2 mip packing (GS Supplement pp. 9-10: trilinear's adjacent
+// levels should share a GS page). Place this texture's image at an explicit
+// GS word address inside a shared pack page and upload it NOW.
+// SetImageGsAddr feeds BOTH TEX0.tb_addr and the upload packet's DBP, so
+// upload and sampling agree by construction. XferImage=false + resident
+// afterward: no later Use()/Load() can lazily allocate this texture's own
+// pImageMem slot or retarget TEX0 off the pack. The pack CMemArea
+// (allocated + locked, owned by the mip registry) holds the VRAM; this
+// texture's own pImageMem stays unallocated, so LockGsSlot/UnlockGsSlot and
+// deletion are no-ops on it — the pack cannot be double-unbound.
+void CMMTexture::UploadPacked(uint32_t gsWordAddr)
+{
+    SetImageGsAddr(gsWordAddr);
+    FlushCache(0);
+    SendImage(true, Packet::kDontFlushCache);
+    XferImage  = false;
+    IsResident = true;
+}
+
 void CMMTexture::Free(void)
 {
     pImageMem->Free();
@@ -878,10 +897,36 @@ struct SMipRegistryEntry {
     unsigned int baseId;
     CMMTexture* levels[6];
     int count;
+    GS::CMemArea* pack; /* P2 packed pyramids: the ONE allocated+locked
+                           pack-page owner (NULL = per-level slots). Freed
+                           exactly once in pgl_delete_mips. */
 };
 static SMipRegistryEntry MipRegistry[PGL_MIP_REGISTRY_MAX];
 
-static void pgl_mips_register(unsigned int baseId, CMMTexture** levels, int count)
+/* P2 packed-pyramid block offsets, valid ONLY for the exact 64x64 four-level
+   pyramids (do not generalize — the in-page block arrangement is PSM-specific
+   and these footprints were derived from the GS manual block tables, secs 8.3
+   + 8.5). One block = 256 bytes = 64 words. PSMT8 packs the WHOLE pyramid in
+   one page (TEX0.TBW stays 2 for L0; MIPTBP TBWn=1 for L1-L3); PSMCT16's L0
+   exactly fills its own page, so only L1-L3 pack into a second one (TBW 1). */
+struct SMipPackSlot {
+    int block, nBlocks;
+};
+static const SMipPackSlot kPackPsmt8[4] = { { 0, 16 }, { 16, 4 }, { 20, 1 }, { 21, 1 } };
+static const SMipPackSlot kPackPsmct16[3] = { { 0, 8 }, { 8, 2 }, { 10, 1 } };
+
+static void pgl_pack_check(const SMipPackSlot* t, int n)
+{
+    for (int i = 0; i < n; i++) {
+        mErrorIf(t[i].block + t[i].nBlocks > 32,
+            "mip pack slot spills past the page (32 blocks)");
+        mErrorIf(i < n - 1 && t[i].block + t[i].nBlocks > t[i + 1].block,
+            "mip pack slots overlap");
+    }
+}
+
+static void pgl_mips_register(unsigned int baseId, CMMTexture** levels, int count,
+                              GS::CMemArea* pack)
 {
     for (int i = 0; i < PGL_MIP_REGISTRY_MAX; i++) {
         if (MipRegistry[i].baseId == 0) {
@@ -889,6 +934,7 @@ static void pgl_mips_register(unsigned int baseId, CMMTexture** levels, int coun
             for (int j = 0; j < count; j++)
                 MipRegistry[i].levels[j] = levels[j];
             MipRegistry[i].count = count;
+            MipRegistry[i].pack  = pack;
             return;
         }
     }
@@ -908,9 +954,17 @@ extern "C" void pgl_delete_mips(unsigned int baseId)
             CMMTexture* m = MipRegistry[i].levels[j];
             if (!m)
                 continue;
-            m->UnlockGsSlot();
+            m->UnlockGsSlot(); /* packed levels own no slot — no-op there */
             delete m;
             MipRegistry[i].levels[j] = NULL;
+        }
+        if (MipRegistry[i].pack) {
+            /* the ONE pack-page owner: unlock, then delete (~CMemArea
+               Free()s the slot). Level CMMTextures above never allocated
+               their own pImageMem, so this is the only unbind. */
+            MipRegistry[i].pack->Unlock();
+            delete MipRegistry[i].pack;
+            MipRegistry[i].pack = NULL;
         }
         MipRegistry[i].baseId = 0;
         MipRegistry[i].count  = 0;
@@ -938,6 +992,21 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
     int nmip = count - 1;
     if (nmip > 6) nmip = 6;              /* GS TEX1.MXL caps at 6 */
 
+    /* P2 packing (special-cased to the exact 64x64 four-level pyramid): L0
+       already fills its page exactly, so L1-L3 pack into ONE extra page
+       (11 of 32 blocks) instead of a page each — 2 pages total vs 4. Any
+       other shape keeps the per-level allocator path below. */
+    bool packedPyramid = (count == 4 && lw[0] == 64 && lh[0] == 64
+        && lw[1] == 32 && lh[1] == 32 && lw[2] == 16 && lh[2] == 16
+        && lw[3] == 8 && lh[3] == 8);
+    GS::CMemArea* pack = NULL;
+    if (packedPyramid) {
+        pgl_pack_check(kPackPsmct16, 3);
+        pack = new GS::CMemArea(64, 64, GS::kPsm16, GS::kAlignPage); /* = 1 page */
+        pack->Alloc();
+        pack->Lock();
+    }
+
     /* Levels 1..nmip: own resident CMMTextures (intentionally never freed — they
        back the floor for the whole run); harvest each GS address for MIPTBP.
        GetImageGsAddr() returns tb_addr*64 (word addr); /64 gives the TBP value
@@ -947,14 +1016,19 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
     for (int i = 1; i <= nmip; i++) {
         CMMTexture* m = new CMMTexture(GS::kContext1);
         m->SetImage((uint128_t*)levels[i], (uint32_t)lw[i], (uint32_t)lh[i], GS::kPsm16);
-        m->Load();
-        m->LockGsSlot();   // pin it — never drawn, so the allocator would evict it
+        if (packedPyramid) {
+            /* one block = 64 words; the level's own pImageMem never allocates */
+            m->UploadPacked(pack->GetWordAddr() + kPackPsmct16[i - 1].block * 64);
+        } else {
+            m->Load();
+            m->LockGsSlot();   // pin it — never drawn, so the allocator would evict it
+        }
         mlist[i - 1] = m;
         tba[i - 1] = m->GetImageGsAddr() / 64;
         tbw[i - 1] = (u32)((lw[i] + 63) / 64);
         if (tbw[i - 1] < 1) tbw[i - 1] = 1;
     }
-    pgl_mips_register(id, mlist, nmip);   /* releasable via pgl_delete_mips */
+    pgl_mips_register(id, mlist, nmip, pack);   /* releasable via pgl_delete_mips */
 
     base.SetMipLevels(nmip, kbias, min_filter);  /* TEX1 MXL/LOD/min-filter, re-emitted
                                          per draw. kbias = GS TEX1.K (S7.4, -16 = -1.0
@@ -969,11 +1043,13 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
         SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]),
         SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]));
 
-    printf("[MIP] id=%u base_tbp=%u mxl=%d\n",
-           (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip);
+    printf("[MIP] id=%u base_tbp=%u mxl=%d pack_tbp=%d\n",
+           (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip,
+           pack ? (int)(pack->GetWordAddr() / 64) : -1);
     for (int i = 0; i < nmip; i++)
-        printf("[MIP]   L%d %dx%d tbp=%u tbw=%u\n",
-               i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i]);
+        printf("[MIP]   L%d %dx%d tbp=%u tbw=%u off=%d\n",
+               i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i],
+               pack ? kPackPsmct16[i].block : -1);
 
     return (unsigned int)id;
 }
@@ -1004,31 +1080,60 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
     int nmip = count - 1;
     if (nmip > 6) nmip = 6;              /* GS TEX1.MXL caps at 6 */
 
-    /* Levels 1..nmip: own resident kPsm8 CMMTextures, pinned (never drawn
-       directly, so the allocator would otherwise evict them). TBW must match
-       what the upload used: PSMT8 pages are 128 px wide, so buffer width rounds
-       up to 128 (SetDimensions does the same) -> TBW = ceil(w/128)*2, min 2. */
+    /* P2 packing (special-cased to the exact 64x64 four-level pyramid): the
+       WHOLE pyramid fits one page (22 of 32 blocks) — L0 is adopted into the
+       pack (its own pImageMem never allocates; OwnClut untouched). MIPTBP
+       TBWn is 1 for the packed sub-64 levels per the register spec (width/64,
+       clamp to 1) — the UPLOAD keeps DBW=2 (SetDimensions' 128-texel floor):
+       these rectangles never cross the physical 128x64 page, so the
+       within-page block walk matches sampling. Other shapes keep the
+       per-level path below (TBW=2, matching what their upload used). */
+    bool packedPyramid = (count == 4 && lw[0] == 64 && lh[0] == 64
+        && lw[1] == 32 && lh[1] == 32 && lw[2] == 16 && lh[2] == 16
+        && lw[3] == 8 && lh[3] == 8);
+    GS::CMemArea* pack = NULL;
+    if (packedPyramid) {
+        pgl_pack_check(kPackPsmt8, 4);
+        pack = new GS::CMemArea(128, 64, GS::kPsm8, GS::kAlignPage); /* = 1 page */
+        pack->Alloc();
+        pack->Lock();
+        base.UploadPacked(pack->GetWordAddr() + kPackPsmt8[0].block * 64);
+    }
+
+    /* Levels 1..nmip: resident kPsm8 CMMTextures (packed: at block offsets in
+       the pack page; unpacked: own pinned slots, TBW matching the 128-px-wide
+       upload buffer). */
     u32 tba[6] = {0}, tbw[6] = {0};
     CMMTexture* mlist[6] = {0};
     for (int i = 1; i <= nmip; i++) {
         CMMTexture* m = new CMMTexture(GS::kContext1);
         m->SetImage((uint128_t*)levels[i], (uint32_t)lw[i], (uint32_t)lh[i], GS::kPsm8);
-        m->Load();
-        m->LockGsSlot();
+        if (packedPyramid) {
+            m->UploadPacked(pack->GetWordAddr() + kPackPsmt8[i].block * 64);
+            tbw[i - 1] = 1;
+        } else {
+            m->Load();
+            m->LockGsSlot();
+            tbw[i - 1] = (u32)(((lw[i] + 127) / 128) * 2);
+            if (tbw[i - 1] < 2) tbw[i - 1] = 2;
+        }
         mlist[i - 1] = m;
         tba[i - 1] = m->GetImageGsAddr() / 64;
-        tbw[i - 1] = (u32)(((lw[i] + 127) / 128) * 2);
-        if (tbw[i - 1] < 2) tbw[i - 1] = 2;
     }
-    pgl_mips_register(id, mlist, nmip);   /* releasable via pgl_delete_mips */
+    pgl_mips_register(id, mlist, nmip, pack);   /* releasable via pgl_delete_mips */
 
     base.SetMipLevels(nmip, kbias, min_filter);
     base.SetMiptbp(
         SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]),
         SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]));
 
-    printf("[MIP8] id=%u base_tbp=%u mxl=%d\n",
-           (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip);
+    printf("[MIP8] id=%u base_tbp=%u mxl=%d pack_tbp=%d\n",
+           (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip,
+           pack ? (int)(pack->GetWordAddr() / 64) : -1);
+    for (int i = 0; i < nmip; i++)
+        printf("[MIP8]   L%d %dx%d tbp=%u tbw=%u off=%d\n",
+               i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i],
+               pack ? kPackPsmt8[i + 1].block : -1);
 
     return (unsigned int)id;
 }

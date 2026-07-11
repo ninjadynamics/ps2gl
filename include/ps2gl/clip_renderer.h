@@ -25,11 +25,17 @@ public:
 
 class CMMTexture;
 
-/* The DOUBLE-KICK city renderer (vu1/general_clip_tri_x2.vcl): per-vertex
-   color through the 5-plane S-H clip, then two XGKICKs per buffer — opaque
-   wall (pv color, base texture) + additive window overlay (constant color,
-   window texture) from the same transformed verts. Selected through
-   PGL_CLIP_TRIANGLES_X2. See PS2/plans/todo/VU1_X2_PLAN.md. */
+/* The DUAL-CONTEXT city renderer (vu1/general_clip_tri_x2.vcl): per-vertex
+   color through the 5-plane S-H clip, then ONE compound XGKICK per buffer —
+   wall prims on GS context 1 (live ps2gl state: texture, blend, test; giftag
+   EOP=0) immediately followed by the additive window prims on GS context 2
+   (PRIM.CTXT=1: window texture + additive ALPHA_2 + alpha-test TEST_2,
+   programmed ONCE per pass; giftag EOP=1 closes the kick). The GS's two
+   persistent contexts exist exactly so intermixed prims can switch state via
+   PRIM.CTXT without repeating register loads (GS manual pp. 47-49); this
+   replaces the old per-micro-buffer settings prefixes + double kick (~206
+   state blocks, TEXFLUSHes and extra kicks per frame at dense city load).
+   Selected through PGL_CLIP_TRIANGLES_X2. */
 class CClipTriX2Renderer : public CLinearRenderer {
     // The pair for the block being drawn is read LIVE in BuildPrefixes.
     // That is only correct because SetWindowTexture submits any pending block
@@ -38,19 +44,35 @@ class CClipTriX2Renderer : public CLinearRenderer {
     CMMTexture* WinTex;
     float WinColor[4]; // 0..1 floats as passed to pglClipX2SetWindowTexture
 
-    // per-draw prefix block, unpacked ONCE per buffer into the STAGING zone
-    // (vu 178..200) — the microcode copies it to the kick sites (VIF-written
-    // qwords must never be GIF-read: VIF races the GIF, the city flicker):
-    //   Pfx[0..1]   [win color][pad]
-    //   Pfx[2..11]  wall texture settings giftag + 9 A+D regs, normal-blend ALPHA_1
-    //   Pfx[12..21] win  texture settings giftag + 9 A+D regs, additive ALPHA_1
-    //   Pfx[22]     window prim giftag template, ABE=1
-    // MUST be 23: kX2PfxOff's unpack sends 23q and the wall-only branch memsets
-    // Pfx[12..22]. At 21 that memset wrote 32 bytes of zeros past the end of this
-    // heap-allocated object, onto the next malloc chunk's header — a corrupt free
-    // list that only surfaced later, inside mallinfo(). Keep in sync with the 23q
-    // block in vu1/general_clip_tri_x2.vcl and packet.Add(Pfx, 23).
-    uint128_t Pfx[23] __attribute__((aligned(16)));
+    // Context-2 program status. GS context 2 is NOT ours alone: glClear draws
+    // through a kContext2 CDrawEnv + CSprite (clear.cpp) and stomps it every
+    // frame. SetWindowTexture() disarms; the first BuildPrefixes after it
+    // re-programs ctx2 down the chain. Correct because the game re-calls
+    // pglClipX2SetWindowTexture for every x2 pass and nothing clears
+    // mid-pass; the live FRAME/ZBUF/XYOFFSET/SCISSOR this mirrors are stable
+    // within a pass (layout switches happen between frames).
+    bool Ctx2Armed;
+
+    // per-draw staging block, unpacked per buffer (double-buffered) into the
+    // vcl's STAGING zone — VU-READ only, never kicked in place (VIF races GIF
+    // path 1; kicked qwords must be VU-written):
+    //   Pfx[0]  window color const (floats, rgb GS 0..128 range;
+    //           x < 0 = window kick disabled, wall-only mode)
+    //   Pfx[1]  window prim giftag TEMPLATE: ABE=1, CTXT=1 (context 2),
+    //           EOP=1 — the vcl patches NLOOP in and writes it after the last
+    //           wall vert to close the compound kick.
+    // Size this from the transfer count (packet.Add(Pfx, 2)) and keep in sync
+    // with the 2q staging block in vu1/general_clip_tri_x2.vcl. (A shortfall
+    // here was a 32-byte heap smasher once — the Pfx[21] incident.)
+    uint128_t Pfx[2] __attribute__((aligned(16)));
+
+    // The context-2 settings block DIRECT-sent down the chain when
+    // !Ctx2Armed: giftag + 15 A+D regs (the window texture's 7 settings regs
+    // address-rewritten ctx1 -> ctx2, additive ALPHA_2, TEST_2, live
+    // FRAME_2/ZBUF_2/XYOFFSET_2/SCISSOR_2/FBA_2 mirrors of the draw env, and
+    // the ctx1 TEST_1 ATE-off pin for the wall pass).
+    // Same transfer-count sizing rule as Pfx (packet.Add(Ctx2, 16)).
+    uint128_t Ctx2[16] __attribute__((aligned(16)));
 
     void BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block);
     void XferPrefixes(CVifSCDmaPacket& packet);
