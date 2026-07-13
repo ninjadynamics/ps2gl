@@ -46,6 +46,23 @@ void CBaseRenderer::GetUnpackAttribs(int numWords, unsigned int& mode, Vifs::tMa
             0, 0, 1, 1 };
         mode = Vifs::UnpackModes::v2_32;
         mask = vec2Mask;
+    } else if (numWords == 1) {
+        // PACKED BYTE vector (4 x u8 = 1 word): GL_UNSIGNED_BYTE color arrays.
+        // NOT a "1-component" vector — the VIF expands V4-8 to a full qword.
+        //
+        // This case was MISSING, and its absence is the root cause of the
+        // 2026-07-10 byte-color "position streak" incident: mError compiles to
+        // NOTHING in release (debug_macros.h), so a 1-word array fell through
+        // the else leaving `mode`/`mask` — which alias the caller's member
+        // vars — holding the PREVIOUS draw's v4_32 values. The VIF then read 4
+        // words per element where 1 was supplied, desynced the chain, and every
+        // later unpack landed shifted: displaced positions, no crash, no log.
+        Vifs::tMask byteMask = { 0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0 };
+        mode = Vifs::UnpackModes::v4_8;
+        mask = byteMask;
     } else {
         mError("shouldn't get here (you're probably calling glDrawArrays"
                "without setting one of the pointers)");

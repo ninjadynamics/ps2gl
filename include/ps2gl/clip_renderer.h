@@ -37,6 +37,7 @@ class CMMTexture;
    state blocks, TEXFLUSHes and extra kicks per frame at dense city load).
    Selected through PGL_CLIP_TRIANGLES_X2. */
 class CClipTriX2Renderer : public CLinearRenderer {
+protected:
     // The pair for the block being drawn is read LIVE in BuildPrefixes.
     // That is only correct because SetWindowTexture submits any pending block
     // BEFORE the pair changes (see its comment) — so a block is always built
@@ -78,6 +79,10 @@ class CClipTriX2Renderer : public CLinearRenderer {
     void XferPrefixes(CVifSCDmaPacket& packet);
     void DrawBlockX2(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
 
+    // shared ctor body for X2 and the descriptor variant below: identical
+    // caps, different microcode + custom-prim property bit
+    CClipTriX2Renderer(void* mcode, int mcodeSize, const char* name, uint64_t prop);
+
 public:
     CClipTriX2Renderer();
 
@@ -86,6 +91,30 @@ public:
     void SetWindowTexture(unsigned int texId, float r, float g, float b, float a);
 
     virtual void InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged);
+    virtual void DrawLinearArrays(CGeometryBlock& block);
+};
+
+/* P3: the DESCRIPTOR variant. Walls arrive as 3q GEO + 3-byte-vector COL
+   descriptors (contract in GL/ps2gl.h). A separately assembled decoder
+   reconstructs each 6-vert pair, then tail-calls the exact hardware-green
+   general_clip_tri_x2 image. This separation is load-bearing: compiling
+   "decoder + x2" as one VCL unit rescheduled the whole clipper and produced
+   building-height radial fans on hardware. Four descriptors per buffer =
+   eight tris, preserving x2's 39-vert output-cap contract. */
+class CClipTriX2DRenderer : public CClipTriX2Renderer {
+    const void* DecoderCode;
+    int DecoderCodeSize;
+    unsigned int DecoderAddr64;
+
+    void DrawBlockX2D(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxElemsPerBuffer);
+    void FinishBufferX2D(CVifSCDmaPacket& packet, int numElems);
+
+public:
+    CClipTriX2DRenderer();
+
+    static void Register();
+
+    virtual void Load();
     virtual void DrawLinearArrays(CGeometryBlock& block);
 };
 

@@ -12,6 +12,7 @@
 #include "ps2gl/drawcontext.h"
 #include "ps2gl/glcontext.h"
 #include "ps2gl/immgmanager.h"
+#include "ps2gl/metrics.h"
 #include "ps2gl/texture.h"
 
 #include "vu1_mem_linear.h"
@@ -26,6 +27,7 @@
 extern "C" {
 VU_FUNCTIONS(GeneralClipTri);
 VU_FUNCTIONS(GeneralClipTriX2);
+VU_FUNCTIONS(GeneralClipTriX2DDecode);
 }
 
 using namespace RendererProps;
@@ -123,6 +125,33 @@ void CClipTriRenderer::DrawLinearArrays(CGeometryBlock& block)
 // VIF-written qwords must never be GIF-read). Changing either side means
 // re-checking the whole layout.
 #define kX2PfxOff 178 // [win color][win prim giftag template] = 2q
+
+// shared body for X2 + X2D (same caps/input contract, different microcode
+// and custom-prim property bit)
+CClipTriX2Renderer::CClipTriX2Renderer(void* mcode, int mcodeSize, const char* name, uint64_t prop)
+    : CLinearRenderer(mcode, mcodeSize, 4, 3, kInputStart, 120, name)
+    , WinTex(NULL)
+    , Ctx2Armed(false)
+{
+    WinColor[0] = WinColor[1] = WinColor[2] = WinColor[3] = 1.0f;
+
+    CRendererProps caps = {
+        PrimType : kTriangles,
+        Lighting : 1,
+        NumDirLights : k3DirLights | k8DirLights,
+        NumPtLights : k1PtLight | k2PtLights | k8PtLights,
+        Texture : 1,
+        Specular : 0,
+        PerVtxMaterial : kDiffuse,
+        Clipping : kNonClipped | kClipped,
+        CullFace : 1,
+        TwoSidedLighting : 0,
+        ArrayAccess : kLinear
+    };
+
+    Capabilities = (uint64_t)caps | prop;
+    Requirements = prop;
+}
 
 CClipTriX2Renderer::CClipTriX2Renderer()
     : CLinearRenderer(mVsmAddr(GeneralClipTriX2), mVsmSize(GeneralClipTriX2), 4, 3,
@@ -224,6 +253,7 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
     // and a pending block reads the next drawer's texture (see SetWindowTexture).
     CTexManager& tm = pGLContext->GetTexManager();
     mErrorIf(!tm.GetTexEnabled(), "the x2 renderer needs texturing enabled (city walls)");
+    (void)tm; // mErrorIf compiles out in release
 
     // Pfx[0]: the window color const. x128 like the vcl's fmt_color: textured
     // GS modulate identity is 128 (GetMaxColorValue) — x255 was 2x overbright.
@@ -534,6 +564,166 @@ void CClipTriX2Renderer::DrawBlockX2(CVifSCDmaPacket& packet,
 }
 
 /********************************************
+ * CClipTriX2DRenderer — separate decoder + exact X2 body (P3)
+ */
+
+// VU-mem descriptor staging offsets (see general_clip_tri_x2d_decode.vcl:
+// GEO 4 descs x 3q at 101, COL 4 descs x 3 V4-8 vectors at 113)
+#define kX2dGeoOff 101
+#define kX2dColOff 113
+
+CClipTriX2DRenderer::CClipTriX2DRenderer()
+    : CClipTriX2Renderer(mVsmAddr(GeneralClipTriX2), mVsmSize(GeneralClipTriX2),
+          "clip x2d, wall descriptors", PGL_CLIP_TRI_X2D_PROP)
+    , DecoderCode(mVsmAddr(GeneralClipTriX2DDecode))
+    , DecoderCodeSize(mVsmSize(GeneralClipTriX2DDecode))
+    , DecoderAddr64(mVsmSize(GeneralClipTriX2) / 8)
+{
+}
+
+/* Upload one independently assembled VU1 image at an instruction address.
+ * This intentionally mirrors CBaseRenderer::Load instead of changing that
+ * proven path for every other ps2gl renderer. MPG and MSCAL addresses are
+ * 64-bit VU instruction addresses; DMA REF counts are 128-bit qwords. */
+static void UploadVu1Range(CVifSCDmaPacket& packet, const void* image,
+    int imageBytes, unsigned int addr64)
+{
+    const u64* code = (const u64*)image;
+    unsigned int size64 = imageBytes / 8;
+
+    mErrorIf((unsigned int)code & 0xf, "x2d: VU code not 16-byte aligned");
+    mErrorIf(imageBytes & 0xf, "x2d: VU code size not 16-byte aligned");
+
+    while (size64 > 0) {
+        unsigned int sendSize64 = (size64 > 256) ? 256 : size64;
+        packet.Ref(code, sendSize64 / 2);
+        packet.Pad96();
+        packet.Mpg(sendSize64 & 0xff, addr64);
+        code += sendSize64;
+        size64 -= sendSize64;
+        addr64 += sendSize64;
+    }
+}
+
+void CClipTriX2DRenderer::Load()
+{
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+
+    // PC 0..DecoderAddr64-1 is literally the checked-in X2 object. The
+    // decoder follows it without concatenation or reassembly, so VCL can
+    // never perturb the hardware-green transform/S-H/compound-kick body.
+    UploadVu1Range(packet, MicrocodePacket, MicrocodePacketSize, 0);
+    UploadVu1Range(packet, DecoderCode, DecoderCodeSize, DecoderAddr64);
+
+    packet.Cnt();
+    packet.Mscal(0); // run X2's six-instruction initialization prologue
+    packet.Pad128();
+    packet.CloseTag();
+
+    pglAddToMetric(kMetricsRendererUpload);
+}
+
+static CClipTriX2DRenderer* pX2DRenderer = NULL;
+
+void CClipTriX2DRenderer::Register()
+{
+    pX2DRenderer = new CClipTriX2DRenderer;
+    pglRegisterRenderer(pX2DRenderer);
+
+    pglRegisterCustomPrimType(PGL_CLIP_TRIANGLES_X2D,
+        PGL_CLIP_TRI_X2D_PROP,
+        ~(pglU64_t)0xffffffff, // match on the custom bits only
+        PGL_MERGE_CONTIGUOUS);
+}
+
+void CClipTriX2DRenderer::DrawLinearArrays(CGeometryBlock& block)
+{
+    // 3 array elements = 1 descriptor (contract in GL/ps2gl.h); a "prim"
+    // of 3 keeps the block splitter on descriptor boundaries
+    block.SetNumVertsPerPrim(3);
+    block.SetNumVertsToRestartStrip(0);
+    block.SetStripsCanBeMerged(true);
+
+    mErrorIf(block.GetWordsPerVertex() != 4,
+        "x2d: the GEO stream must be glVertexPointer(4, GL_FLOAT)");
+    mErrorIf(!block.GetColorsAreValid() || block.GetWordsPerColor() != 1,
+        "x2d: the COLOR stream must be glColorPointer(4, GL_UNSIGNED_BYTE)");
+
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+
+    // unlit-by-contract like x2. No InitXferBlock: this path Refs its two
+    // descriptor streams itself (v4_32 GEO + V4-8 COL).
+    XferNormals = false;
+    XferColors  = true;
+
+    BuildPrefixes(packet, block);
+
+    DrawBlockX2D(packet, block, 12); // 12 elements = 4 descriptors/buffer
+}
+
+void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems)
+{
+    XferPrefixes(packet);
+    packet.Cnt();
+    {
+        // header num_verts = the EXPANDED count: (elems/3) descs x 6 verts
+        XferBufferHeader(packet, 0, numElems * 2, 0, NULL);
+        // XferBufferHeader restores stcycl(1, InputQuadsPerVert) for the
+        // vert-array renderers; the descriptor streams unpack contiguously
+        packet.Stcycl(1, 1);
+        // One activation per buffer is essential: MSCAL and MSCNT each copy
+        // TOPS->TOP and toggle DBF. The decoder tail-jumps to X2 PC 6, so a
+        // second MSCAL/MSCNT would toggle to the wrong buffer half.
+        packet.Mscal(DecoderAddr64);
+        packet.Pad128();
+    }
+    packet.CloseTag();
+}
+
+void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
+    CGeometryBlock& block, int maxElemsPerBuffer)
+{
+    packet.Cnt();
+    {
+        packet.Stcycl(1, 1); // both descriptor streams unpack contiguously
+        packet.Pad128();
+    }
+    packet.CloseTag();
+
+    Vifs::tMask noMask;
+    *(unsigned int*)&noMask = 0;
+
+    int elemsInBuffer = 0;
+    for (int curStrip = 0; curStrip < block.GetNumStrips(); curStrip++) {
+        int stripLen = block.GetStripLength(curStrip);
+        mErrorIf(stripLen % 3, "x2d: draw counts must be 3 elements per descriptor");
+        unsigned int* geo = (unsigned int*)block.GetVertices(curStrip);
+        unsigned int* col = (unsigned int*)block.GetColors(curStrip);
+        int idx = 0;
+        while (idx < stripLen) {
+            int room = maxElemsPerBuffer - elemsInBuffer;
+            int n = stripLen - idx;
+            if (n > room)
+                n = room;
+            // both streams land per-element (1q GEO qword + 1 V4-8 vector
+            // each): buffer-relative staging advances in lockstep
+            XferVectors(packet, geo, idx, n, 4, noMask,
+                Vifs::UnpackModes::v4_32, kX2dGeoOff + elemsInBuffer);
+            XferVectors(packet, col, idx, n, 1, noMask,
+                Vifs::UnpackModes::v4_8, kX2dColOff + elemsInBuffer);
+            elemsInBuffer += n;
+            idx += n;
+            if (elemsInBuffer == maxElemsPerBuffer) {
+                FinishBufferX2D(packet, elemsInBuffer);
+                elemsInBuffer = 0;
+            }
+        }
+    }
+    if (elemsInBuffer > 0)
+        FinishBufferX2D(packet, elemsInBuffer);
+}
+
+/********************************************
  * ps2gl C api
  */
 
@@ -573,4 +763,23 @@ void pglClipX2SetWindowTexture(GLuint texId, float r, float g, float b, float a)
 {
     mErrorIf(pX2Renderer == NULL, "pglRegisterClipTriX2Renderer() first");
     pX2Renderer->SetWindowTexture(texId, r, g, b, a);
+}
+
+/* Keep X2 and X2D pair state completely independent.  Calling both setters
+ * from the legacy X2 entry point changed the hardware-green X2 path merely by
+ * registering X2D; each renderer owns its own pending-block flush, WinTex and
+ * context-2 re-arm. */
+void pglClipX2DSetWindowTexture(GLuint texId, float r, float g, float b, float a)
+{
+    mErrorIf(pX2DRenderer == NULL, "pglRegisterClipTriX2DRenderer() first");
+    pX2DRenderer->SetWindowTexture(texId, r, g, b, a);
+}
+
+/**
+ * Register the descriptor variant + PGL_CLIP_TRIANGLES_X2D (contract in
+ * GL/ps2gl.h). Register the base x2 renderer too if both paths are used.
+ */
+void pglRegisterClipTriX2DRenderer(void)
+{
+    CClipTriX2DRenderer::Register();
 }

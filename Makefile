@@ -46,6 +46,7 @@ RENDERERS = \
 	fast \
 	general_clip_tri \
 	general_clip_tri_x2 \
+	general_clip_tri_x2d_decode \
 	general_nospec_quad \
 	general_nospec_tri \
 	general_nospec \
@@ -61,8 +62,17 @@ RENDERERS = \
 EE_OBJS += $(addsuffix .vo, $(addprefix vu1/, $(RENDERERS)))
 
 VSM_SOURCES = $(addsuffix _vcl.vsm, $(addprefix vu1/, $(RENDERERS)))
+X2_VSM = vu1/general_clip_tri_x2_vcl.vsm
+X2D_DECODER_VSM = vu1/general_clip_tri_x2d_decode_vcl.vsm
+X2D_GUARD = vu1/x2d_microcode_guard.py
 
-all: $(VSM_SOURCES) $(EE_LIB)
+all: $(VSM_SOURCES) x2d-microcode-guard $(EE_LIB)
+
+$(EE_LIB): x2d-microcode-guard
+
+.PHONY: x2d-microcode-guard
+x2d-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2D_GUARD)
+	python3 $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
 
 # Regenerate all VU1 microcode IN PARALLEL. vcl (Sony, 2001) is a
 # single-threaded exhaustive scheduler that takes minutes per renderer; the 13
@@ -98,6 +108,11 @@ include $(PS2SDK)/samples/Makefile.eeglobal
 	dvp-as -o $@ $<
 
 ifeq ($(REBUILD_VU1),1)
+$(X2D_DECODER_VSM): vu1/general_clip_tri_x2d_decode_pp4.vcl $(X2D_GUARD) $(X2_VSM)
+	vcl -o$@ $<
+	python3 $(X2D_GUARD) --fix-decoder $(X2_VSM) $@
+	rm -f $<
+
 %_vcl.vsm: %_pp4.vcl
 	vcl -o$@ $<
 

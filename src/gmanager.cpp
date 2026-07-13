@@ -150,6 +150,17 @@ void glColorPointer(GLint size, GLenum type,
         return;
     }
     if (type != GL_FLOAT) {
+        // HyperSolar X2D ONLY: the wall-descriptor COLOR stream rides
+        // GL_UNSIGNED_BYTE (V4-8 unpack, 1 word per element — see
+        // PGL_CLIP_TRIANGLES_X2D in GL/ps2gl.h). Every other renderer's
+        // color contract stays GL_FLOAT; do not feed byte colors to the
+        // classic/lit paths.
+        if (type == GL_UNSIGNED_BYTE && size == 4) {
+            CVertArray& va = pGLContext->GetGeomManager().GetVertArray();
+            va.SetColors((void*)ptr);
+            va.SetWordsPerColor(1);
+            return;
+        }
         mNotImplemented("type must be float");
         return;
     }

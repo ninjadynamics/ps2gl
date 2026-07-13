@@ -171,19 +171,18 @@ void pglRegisterCustomPrimType(GLenum primType,
 void pglRegisterClipTriRenderer(void);
 void pglSetClipNear(float near_z);
 
-/* HyperSolar VU1 DOUBLE-KICK city renderer (tri lists): transforms + clips
-   each vertex once, then kicks TWO prims per buffer — the opaque wall
+/* HyperSolar VU1 paired city renderer (tri lists): transforms + clips
+   each vertex once, then emits TWO prims in one compound kick — the opaque wall
    (PER-VERTEX color from the color array, current bound texture, ABE=0)
    and the additive window overlay (constant color, the window texture,
    ABE=1) on positionally identical verts. Call order per draw:
      pglClipX2SetWindowTexture(winTex, r,g,b,a);   // 0..1 floats
      glBindTexture(GL_TEXTURE_2D, baseTex);        // AFTER: see below
      glDrawArrays(PGL_CLIP_TRIANGLES_X2, ...);
-   The texture pair is captured per GEOMETRY BLOCK (at block start),
-   so ps2gl's normal deferred flush is correct: NO glFlush() is
-   needed after each draw. pglClipX2SetWindowTexture BINDS winTex to
-   resolve it (the bind is what keeps it resident against the GS LRU),
-   so the base texture must be bound afterwards. winTex = 0 disables
+   Changing the pair flushes any prior pending block before rebinding winTex
+   (the bind keeps it resident against the GS LRU), so the base texture must
+   be bound afterwards. The caller must also flush after the FINAL paired
+   draw before a foreign path changes texture/state. winTex = 0 disables
    the window kick (wall-only mode, for bisects). The window color
    scales the additive add (a rides GS As). PSMT8 window textures are
    supported when they carry their OWN clut (the HyperSolar
@@ -193,6 +192,26 @@ void pglSetClipNear(float near_z);
 #define PGL_CLIP_TRIANGLES_X2 ((GLenum)0x80000000 | 1)
 #define PGL_CLIP_TRI_X2_PROP ((pglU64_t)1 << 33)
 void pglRegisterClipTriX2Renderer(void);
+
+/* P3 DESCRIPTOR variant of the x2 renderer: walls travel as compact
+   parametric descriptors and VU1 reconstructs the vertices, then the same
+   dual-context wall+window compound kick runs. Contract per descriptor
+   (one wall rectangle):
+     GEO   = 3 "vertices" via glVertexPointer(4, GL_FLOAT, 0, geo):
+             [ax az bx bz] [y0 y1 uL uR] [vB 0 0 0]  (q2 .yzw reserved:
+             the per-face fade id will ride .y at game integration)
+     COLOR = 3 byte-vectors via glColorPointer(4, GL_UNSIGNED_BYTE, 0, col):
+             [footRGBA] [topRGBA] [pad]              (0..255 each)
+     glDrawArrays(PGL_CLIP_TRIANGLES_X2D, firstDesc * 3, numDescs * 3)
+   Corners BL(ax,y0,az) BR(bx,y0,bz) TR(bx,y1,bz) TL(ax,y1,az); tris
+   (BL,BR,TR)(BL,TR,TL); UV v is top-anchored (0 at y1, vB at y0), u runs
+   uL..uR from a to b. Foot color paints BL/BR, top color TR/TL (the wall
+   gradient). Window pair via pglClipX2DSetWindowTexture; X2 and X2D keep
+   independent pending-block and context-2 state. */
+#define PGL_CLIP_TRIANGLES_X2D ((GLenum)0x80000000 | 2)
+#define PGL_CLIP_TRI_X2D_PROP ((pglU64_t)1 << 34)
+void pglRegisterClipTriX2DRenderer(void);
+void pglClipX2DSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 void pglClipX2SetWindowTexture(GLuint texId, float r, float g, float b, float a);
 
 // custom state
