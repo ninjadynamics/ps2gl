@@ -10,7 +10,7 @@
      ;
      ; The city submits identical wall geometry twice (opaque base pass +
      ; additive window overlay). This renderer transforms + 5-plane-S-H-clips
-     ; each shared vertex ONCE, then XGKICKs ONE compound packet per buffer:
+     ; each shared vertex ONCE, then XGKICKs compound wall+window chunks:
      ;   section 1 (wall):   prim giftag EOP=0 (CTXT=0: GS context 1 = ps2gl's
      ;                       live texture/blend/test state) + PER-VERTEX tint
      ;                       color verts (input color stream).
@@ -24,7 +24,9 @@
      ;                       window texture + additive ALPHA_2 + alpha-test
      ;                       TEST_2, programmed once per pass by the EE
      ;                       (BuildPrefixes) — no per-buffer state, no
-     ;                       per-buffer TEXFLUSH, one kick instead of two.
+     ;                       per-buffer TEXFLUSH. The normal case is one
+     ;                       compound kick instead of two; clipping overflow
+     ;                       adds a chunk without adding an EE/VIF activation.
      ; Window verts are positionally IDENTICAL to wall verts, so depth needs
      ; no ZMSK for correctness (ZBUF_2 still sets ZMSK=1 to skip the
      ; redundant z re-write).
@@ -55,15 +57,15 @@
      ;                range; x < 0 = WINDOW SECTION DISABLED, wall-only)
      ;            179 window prim giftag TEMPLATE (ABE=1, CTXT=1 -> GS
      ;                context 2, EOP=1)
-     ;   180      wall prim giftag (VU writes: kGifTag template + count;
-     ;            EOP cleared when the window section follows in-kick)
-     ;   181..303 wall output verts (41 x 3q: STQ, RGBA, XYZF2), context 1
-     ;   181+3n   window prim giftag (VU-patched template, EOP=1) written
-     ;            right after the last wall vert (n = emitted count), then
-     ;            the n window verts (wall verts with constant-rgb color
-     ;            splice) — the whole thing is ONE GIF packet, kicked once
-     ;            from 180. Worst case n=41: tag at 304, verts 305..427.
-     ;   428..471 spare
+     ;   180..361 compound output arena A (30 verts max): wall tag + wall
+     ;            verts + window tag + window verts
+     ;   362..471 compound output arena B (18 verts max), same layout
+     ; The two arenas are a PATH1 ping-pong INSIDE one VU activation. Most
+     ; buffers emit <=30 verts and kick A once, exactly like the proven path.
+     ; If clipping expansion fills A, VU1 kicks it, emits into B, then kicks B
+     ; before reusing A. The second XGKICK waits for the first, so the arena
+     ; being reused is no longer GIF-owned. One clipped triangle can fan to at
+     ; most 18 verts, therefore even the smaller B arena always fits one fan.
      ; All per-buffer GS STATE is gone from this layout: walls draw with
      ; ps2gl's live context 1, windows with context 2 (window texture +
      ; additive ALPHA_2 + alpha-test TEST_2 + ZMSK'd ZBUF_2), programmed
@@ -91,9 +93,12 @@ kCPolyA             .equ           130
 kCPolyB             .equ           154
 kCWinClr            .equ           178
 kCWinTag            .equ           179
-kCWallTag           .equ           180
-kCOutData           .equ           181
-kCCapVerts          .equ           39
+kCAWallTag          .equ           180
+kCAOutData          .equ           181
+kCACapVerts         .equ           30
+kCBWallTag          .equ           362
+kCBOutData          .equ           363
+kCBCapVerts         .equ           18
 
      .init_vf_all
      .init_vi_all
@@ -281,6 +286,90 @@ cp_wrap_lid\@:
      sq             shc\@, kCPolyA+(\slot*3)+2(buffer_top)
      .endm
 
+     ; ---------------------------------------------------
+     ; Close and kick the current compound wall+window arena, then switch to
+     ; the other arena and reset its output cursor. XGKICK serializes a second
+     ; PATH1 kick behind the first; therefore when B is kicked, A is free to
+     ; reuse (and vice versa). All labels are per-expansion because this macro
+     ; is used by both overflow guards and by the normal end-of-buffer path.
+
+     .macro         x2_kick_chunk
+     ; Reconstruct the arena base from the live cursor. Keeping arena_tag or
+     ; arena_cap live across the S-H passes would consume VI registers that
+     ; the clipper needs. next_output = arena_tag + 1 + 3*out_count.
+     iadd           arena_used, out_count, out_count
+     iadd           arena_used, arena_used, out_count
+     isub           arena_tag, next_output, arena_used
+     isubiu         arena_tag, arena_tag, 1
+
+     ; window section on? (.x < 0 = wall-only)
+     lq.x           win_chk, kCWinClr(buffer_top)
+     pd_sign        win_skip, win_chk
+     iand           win_skip, win_skip, adc_bit
+
+     ; wall tag: live primitive template + emitted count. Clear EOP when the
+     ; window section follows in the same compound packet.
+     lq             gif_tag_p, kGifTag(vi00)
+     mtir           eop_p, gif_tag_px
+     ior            eop_p, eop_p, out_count
+     ibne           win_skip, vi00, x2_wtag_lid\@
+     isub           eop_p, eop_p, adc_bit
+x2_wtag_lid\@:
+     mfir.x         gif_tag_p, eop_p
+     sq             gif_tag_p, 0(arena_tag)
+
+     ibne           win_skip, vi00, x2_kick_lid\@
+
+     ; window tag follows the committed wall verts; window verts copy STQ and
+     ; XYZF2 verbatim and splice constant RGB with the wall's fade alpha.
+     lq             gif_tag_p, kCWinTag(buffer_top)
+     mtir           eop_p, gif_tag_px
+     ior            eop_p, eop_p, out_count
+     mfir.x         gif_tag_p, eop_p
+     sq             gif_tag_p, 0(next_output)
+
+     iadd           wc_n, out_count, vi00
+     ibeq           wc_n, vi00, x2_kick_lid\@
+     iaddiu         wc_src, arena_tag, 1
+     iaddiu         wc_dst, next_output, 1
+     ; Alias fence: output was written through next_output, read through
+     ; wc_src. The vcl scheduler cannot infer that relationship.
+     b              x2_wcopy_lid\@
+x2_wcopy_lid\@:
+     lq             wc_s, 0(wc_src)
+     sq             wc_s, 0(wc_dst)
+     lq             wc_c, 1(wc_src)
+     move.xyzw      wc_t, win_color
+     move.w         wc_t, wc_c
+     sq             wc_t, 1(wc_dst)
+     lq             wc_p, 2(wc_src)
+     sq             wc_p, 2(wc_dst)
+     iaddiu         wc_src, wc_src, 3
+     iaddiu         wc_dst, wc_dst, 3
+     isubiu         wc_n, wc_n, 1
+     ibgtz          wc_n, x2_wcopy_lid\@
+
+x2_kick_lid\@:
+     ; Store-to-kick scheduling fence, then a second fence prevents following
+     ; arena-selection work from crossing back over XGKICK.
+     b              x2_kick2_lid\@
+x2_kick2_lid\@:
+     xgkick         arena_tag
+     b              x2_after_kick_lid\@
+x2_after_kick_lid\@:
+
+     ; Toggle A <-> B. If this was B's kick, XGKICK could only issue after
+     ; A's earlier packet drained, so A is safe to write again.
+     iaddiu         arena_a, buffer_top, kCAWallTag
+     ibeq           arena_tag, arena_a, x2_use_b_lid\@
+     iaddiu         next_output, buffer_top, kCAOutData
+     b              x2_arena_ready_lid\@
+x2_use_b_lid\@:
+     iaddiu         next_output, buffer_top, kCBOutData
+x2_arena_ready_lid\@:
+     iaddiu         out_count, vi00, 0
+     .endm
+
      --enter
      --endenter
 
@@ -309,7 +398,7 @@ main_loop_lid:
      loi            2048.0
      maxi.w         clip_scales, vf00, i
 
-     init_io_loop   kInputStart, kCOutData
+     init_io_loop   kInputStart, kCAOutData
      ; NO init_out_buf: the stock macro pre-writes a giftag at the stock
      ; output offset, which in THIS layout lands inside the polygon scratch.
      ; Both giftags are written post-loop instead.
@@ -366,21 +455,30 @@ main_loop_lid:
      iaddiu         adc_bit, vi00, 0x7fff
      iaddiu         adc_bit, adc_bit, 1
 
-     ; emitted output verts this buffer (patched into both NLOOPs after)
+     ; init_io_loop started next_output at arena A's first data qword.
      iaddiu         out_count, vi00, 0
 
 xform_loop_lid:
 
-     ; BUFFER-FULL GUARD, loop top (hardware-learned): the fan guard alone
-     ; leaves a hole — fans can fill the output to the cap and later
-     ; fast-path tris still optimistically STORE + commit 3 verts unchecked.
-     ; The cap keeps the compound packet inside the buffer half: at the max
-     ; 41 wall verts the post-loop window section ends at 427 (of 471).
-     ; An overrun would push the window tag/verts into the NEXT BUFFER
-     ; HALF's header (GIF wedge). Drop the remaining tris when another
-     ; 3 verts would not fit — the EE scratch-full-drop policy.
-     isubiu         cap_chk, out_count, kCCapVerts-1
-     ibgtz          cap_chk, tri_next_lid
+     ; Fast-path tris optimistically store 3 verts. Close the current chunk
+     ; before those stores whenever all 3 would not fit; this preserves the
+     ; input triangle instead of applying the old scratch-full drop policy.
+     iadd           arena_used, out_count, out_count
+     iadd           arena_used, arena_used, out_count
+     isub           arena_tag, next_output, arena_used
+     isubiu         arena_tag, arena_tag, 1
+     iaddiu         arena_a, buffer_top, kCAWallTag
+     ibeq           arena_tag, arena_a, x2_fast_cap_a_lid
+     iaddiu         arena_cap, vi00, kCBCapVerts
+     b              x2_fast_cap_lid
+x2_fast_cap_a_lid:
+     iaddiu         arena_cap, vi00, kCACapVerts
+x2_fast_cap_lid:
+     iaddiu         cap_need, out_count, 3
+     isub           cap_chk, cap_need, arena_cap
+     iblez          cap_chk, x2_fast_room_lid
+     x2_kick_chunk
+x2_fast_room_lid:
 
      ; ---- vertex 1 (ADC always set; F field still feeds fog interpolation)
 
@@ -521,14 +619,26 @@ sh_fence_lid:
      isubiu         sh_t, sh_n, 3
      ibltz          sh_t, tri_next_lid
 
-     ; capacity guard (mirrors the EE scratch-full drop): fan emits
-     ; 3*(sh_n-2) verts
+     ; Capacity guard: fan emits 3*(sh_n-2) verts. One fan is <=18 verts,
+     ; so after a chunk kick it always fits even the smaller B arena.
+     iadd           arena_used, out_count, out_count
+     iadd           arena_used, arena_used, out_count
+     isub           arena_tag, next_output, arena_used
+     isubiu         arena_tag, arena_tag, 1
+     iaddiu         arena_a, buffer_top, kCAWallTag
+     ibeq           arena_tag, arena_a, x2_fan_cap_a_lid
+     iaddiu         arena_cap, vi00, kCBCapVerts
+     b              x2_fan_cap_lid
+x2_fan_cap_a_lid:
+     iaddiu         arena_cap, vi00, kCACapVerts
+x2_fan_cap_lid:
      isubiu         fe_t, sh_n, 2
      iadd           fe_v, fe_t, fe_t
      iadd           fe_v, fe_v, fe_t
      iadd           fe_chk, out_count, fe_v
-     isubiu         fe_chk, fe_chk, kCCapVerts
-     ibgtz          fe_chk, tri_next_lid
+     isub           fe_chk, fe_chk, arena_cap
+     iblez          fe_chk, fe_fence_lid
+     x2_kick_chunk
 
      ; SCHEDULING FENCE: pass 5 wrote the final polygon through cp_dst;
      ; the fan reads it through fe_p0/fe_pi. Same aliasing bug as above.
@@ -566,75 +676,9 @@ tri_next_lid:
      isubiu         loop_left, loop_left, 11
      ibgtz          loop_left, xform_loop_lid
 
-     ; ----------- build the compound wall+window packet, kick ONCE -----------
-
-     ; window section on? (win color .x < 0 = wall-only mode)
-     lq.x           win_chk, kCWinClr(buffer_top)
-     pd_sign        win_skip, win_chk
-     iand           win_skip, win_skip, adc_bit
-
-     ; wall giftag: kGifTag template + the emitted vert count. The template
-     ; has EOP=1 (BuildGiftag); when the window section follows in-kick,
-     ; clear EOP (bit 15 of word 0 = adc_bit — guaranteed set, so a
-     ; subtract clears it) and the GIF walks straight from the last wall
-     ; vert into the window giftag.
-     lq             gif_tag_p, kGifTag(vi00)
-     mtir           eop_p, gif_tag_px
-     ior            eop_p, eop_p, out_count
-     ibne           win_skip, vi00, x2_wtag_lid
-     isub           eop_p, eop_p, adc_bit
-x2_wtag_lid:
-     mfir.x         gif_tag_p, eop_p
-     sq             gif_tag_p, kCWallTag(buffer_top)
-
-     ibne           win_skip, vi00, x2_kick_lid
-
-     ; window giftag: the EE-built TEMPLATE (ABE=1, CTXT=1 -> GS context 2,
-     ; EOP=1 closes the packet) + the count, written right after the LAST
-     ; wall vert (next_output points there after the loop).
-     lq             gif_tag_p, kCWinTag(buffer_top)
-     mtir           eop_p, gif_tag_px
-     ior            eop_p, eop_p, out_count
-     mfir.x         gif_tag_p, eop_p
-     sq             gif_tag_p, 0(next_output)
-
-     ; window verts: the wall verts with the color spliced to the constant
-     ; window rgb (alpha kept from the wall vert = the pv fade alpha); stq
-     ; and xyzf ride verbatim (identical positions — the z-TEST occludes,
-     ; ZBUF_2's ZMSK=1 skips the redundant z re-write). Zero emitted verts
-     ; skips the loop (both NLOOP=0 tags still kick fine — the NLOOP=0
-     ; torture case).
-     iadd           wc_n, out_count, vi00
-     ibeq           wc_n, vi00, x2_kick_lid
-     iaddiu         wc_src, buffer_top, kCOutData
-     iaddiu         wc_dst, next_output, 1
-     ; SCHEDULING FENCE: the copy reads wall verts stored through
-     ; next_output-relative pointers (the vcl memory-aliasing bug — it does
-     ; not model VU-mem aliasing between pointer regs). Block boundary
-     ; before the first load.
-     b              x2_wcopy_lid
-x2_wcopy_lid:
-     lq             wc_s, 0(wc_src)
-     sq             wc_s, 0(wc_dst)
-     lq             wc_c, 1(wc_src)
-     move.xyzw      wc_t, win_color
-     move.w         wc_t, wc_c
-     sq             wc_t, 1(wc_dst)
-     lq             wc_p, 2(wc_src)
-     sq             wc_p, 2(wc_dst)
-     iaddiu         wc_src, wc_src, 3
-     iaddiu         wc_dst, wc_dst, 3
-     isubiu         wc_n, wc_n, 1
-     ibgtz          wc_n, x2_wcopy_lid
-
-x2_kick_lid:
-     ; SCHEDULING FENCE: every kicked qword above is stored through
-     ; wc_dst / next_output / buffer_top — the kick must not be hoisted
-     ; above those stores. Same aliasing-bug class; keep the boundary.
-     b              x2_kick2_lid
-x2_kick2_lid:
-     iaddiu         packet_start_p, buffer_top, kCWallTag
-     xgkick         packet_start_p
+     ; Close the final (possibly empty) chunk. NLOOP=0 remains legal and is
+     ; already torture-tested by the original renderer.
+     x2_kick_chunk
 
      --cont
 
