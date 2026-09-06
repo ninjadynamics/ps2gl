@@ -55,14 +55,16 @@ xform_loop_lid:          --LoopCS 1,3
      ; XYZF2 F fields still feed the fog interpolation of the kicked triangle
      do_bfc_vert    0, 0, xformed_vert_1, gs_vert_1
      clip_vert      xformed_vert_1
-     fog_coef       fog_i1, xformed_vert_1, fog_params
+     lq.w           fog_alpha1, 3(next_input)
+     fog_coef_alpha fog_i1, fog_alpha1
      ior            fog_adc1, adc_bit, fog_i1
      mfir.w         gs_vert_1, fog_adc1
      store_xyzf     gs_vert_1, 0
 
      do_bfc_vert    kInputQPerV, kOutputQPerV, xformed_vert_2, gs_vert_2
      clip_vert      xformed_vert_2
-     fog_coef       fog_i2, xformed_vert_2, fog_params
+     lq.w           fog_alpha2, kInputQPerV+3(next_input)
+     fog_coef_alpha fog_i2, fog_alpha2
      ior            fog_adc2, adc_bit, fog_i2
      mfir.w         gs_vert_2, fog_adc2
      store_xyzf     gs_vert_2, kOutputQPerV
@@ -83,7 +85,8 @@ xform_loop_lid:          --LoopCS 1,3
      ior            new_adc_bit, vi01, z_sign
      iaddiu         new_adc_bit, new_adc_bit, 0x7fff
      iand           new_adc_bit, new_adc_bit, adc_bit
-     fog_coef       fog_i3, xformed_vert_3, fog_params
+     lq.w           fog_alpha3, kInputQPerV+kInputQPerV+3(next_input)
+     fog_coef_alpha fog_i3, fog_alpha3
      ior            new_adc_bit, new_adc_bit, fog_i3
 
      mfir.w         gs_vert_3, new_adc_bit

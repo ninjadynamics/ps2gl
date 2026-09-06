@@ -162,3 +162,16 @@
      ftoi4.w        fog_t\@, fog_t\@
      mtir           \fog_i, fog_t\@[w]
      .endm
+
+     ; Caller-authored vertex-fog coefficient: source color alpha is the
+     ; no-fog share (0..1). Pack it into XYZF2.F so the GS fog stage computes
+     ; texture*color*A + FOGCOL*(1-A), including originally-black texels.
+     .macro         fog_coef_alpha fog_i, color
+     loi            255.0
+     muli.w         foga_t\@, \color, i
+     maxx.w         foga_t\@, foga_t\@, vf00
+     loi            255.0
+     minii.w        foga_t\@, foga_t\@, i
+     ftoi4.w        foga_t\@, foga_t\@
+     mtir           \fog_i, foga_t\@[w]
+     .endm

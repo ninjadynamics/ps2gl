@@ -183,8 +183,9 @@ void pglSetClipNear(float near_z);
    (the bind keeps it resident against the GS LRU), so the base texture must
    be bound afterwards. The caller must also flush after the FINAL paired
    draw before a foreign path changes texture/state. winTex = 0 disables
-   the window kick (wall-only mode, for bisects). The window color
-   scales the additive add (a rides GS As). PSMT8 window textures are
+   the window kick (wall-only mode, for bisects). Window alpha scales the
+   additive add through GS ALPHA.FIX and remains independent of wall alpha
+   (which may carry a vertex-fog coefficient). PSMT8 window textures are
    supported when they carry their OWN clut (the HyperSolar
    per-texture-palette path); sampling is whatever mode the texture
    last drew with (kModulate).

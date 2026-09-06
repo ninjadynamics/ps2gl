@@ -16,10 +16,10 @@ import re
 from pathlib import Path
 
 
-X2_INSTRUCTIONS = 810
+X2_INSTRUCTIONS = 806
 X2_MAIN_PC = 6
 VU1_MICRO_CAPACITY = 2048
-X2_VSM_SHA256 = "888b5ab8d8f4d703a50260cc12ecde092422750b9fbb03d4155691ec9d459cc8"
+X2_VSM_SHA256 = "9bc147d131326d97bc07ee8e9037604a3704935e9f956122b81ef5829874cf49"
 X2D_DECODER_VSM_SHA256 = "3ba063fc6baa758450aec971c0b57a44e3df8d216c4837280c036bbc9743a6ad"
 
 
@@ -125,7 +125,7 @@ def verify(x2_path: Path, decoder_path: Path) -> None:
     digest = hashlib.sha256(x2_bytes).hexdigest()
     if digest != X2_VSM_SHA256:
         fail(
-            "X2 VSM is no longer the hardware-green image "
+            "X2 VSM is no longer the guarded generated image "
             f"(sha256 {digest}, expected {X2_VSM_SHA256})"
         )
     decoder_digest = hashlib.sha256(decoder_bytes).hexdigest()

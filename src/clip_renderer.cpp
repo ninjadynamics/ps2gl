@@ -257,8 +257,11 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
 
     // Pfx[0]: the window color const. x128 like the vcl's fmt_color: textured
     // GS modulate identity is 128 (GetMaxColorValue) — x255 was 2x overbright.
-    // Only rgb is consumed; window verts take their alpha from the wall verts'
-    // pv alpha (the fade animation). x < 0 = window kick disabled (wall-only).
+    // RGBA is consumed by VU1. The window kick uses this constant alpha rather
+    // than the wall vertex alpha: city haze deliberately stores its GS fog
+    // coefficient in wall A, and leaking that byte into the window would make
+    // mode-1 windows disappear at the fully fogged rim. x < 0 disables the
+    // window kick (wall-only).
     float* wc = (float*)&Pfx[0];
     if (WinTex) {
         wc[0] = WinColor[0] * 128.0f;
@@ -271,7 +274,9 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
         // context 2. NLOOP patched on VU1 with the emitted count; EOP=1
         // (BuildGiftag default) closes the compound kick.
         tGifTag tag = BuildGiftag(GL_TRIANGLES);
-        tag.PRIM |= 0x40 | 0x200;
+        /* Settled wall influence may use alpha-driven GS fog. The paired
+           additive window kick must not inherit FGE from the wall giftag. */
+        tag.PRIM = (tag.PRIM & ~0x20) | 0x40 | 0x200;
         *(tGifTag*)&Pfx[1] = tag;
     } else {
         wc[0] = -1.0f; // window kick disabled (wall-only mode)
@@ -349,9 +354,13 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
             | (uint64_t)1                                       // ATE  = 1
             | ((uint64_t)6 << 1);                               // ATST = GREATER (AREF=0, AFAIL=KEEP)
         uint64_t* rq = (uint64_t*)&Ctx2[8];
-        // ALPHA_2 = Cv = (Cs - 0) * As + Cd  (glBlendFunc(SRC_ALPHA, ONE)):
-        // a=Cs(0) b=0(2) c=As(0) d=Cd(1) -> 0x48
-        rq[0] = 0x48;
+        // (Cs - 0) * FIX + Cd. Wall A may carry the hardware-fog coefficient,
+        // so the paired window's brightness is the explicit constant instead.
+        float af = WinColor[3] * 128.0f;
+        if (af < 0.0f) af = 0.0f;
+        if (af > 128.0f) af = 128.0f;
+        const uint64_t fix = (uint64_t)(af + 0.5f);
+        rq[0] = 0x68 | (fix << 32); // c=FIX(2)
         rq[1] = GS::RegAddrs::alpha_2;
         rq[2] = winTest;
         rq[3] = GS::RegAddrs::test_2;

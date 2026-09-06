@@ -3,7 +3,7 @@
  * This is deliberately a SEPARATE microprogram from general_clip_tri_x2.
  * X2 is uploaded byte-for-byte at PC 0; this decoder is uploaded immediately
  * after it and entered with MSCAL(decoder_pc). It expands four wall
- * descriptors at most, then JR 6 tail-calls X2's hardware-green main_loop.
+ * descriptors at most, then JR 6 tail-calls X2's guarded main_loop.
  * One MSCAL means TOP/DBF toggles exactly once for the buffer.
  *
  * Register contract: X2's initialization leaves VF01..VF06 live and its

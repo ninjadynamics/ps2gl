@@ -17,8 +17,8 @@
      ;   section 2 (window): prim giftag template ABE=1 CTXT=1 EOP=1
      ;                       (EE-built — VU cannot flip giftag bit 53, no
      ;                       integer shifts) + the SAME verts with CONSTANT
-     ;                       rgb (g_win_bright is globally flat; alpha kept
-     ;                       per-vert = the fade animation), written right
+     ;                       RGBA (g_win_bright is globally flat; settled
+     ;                       window alpha is independent of wall fog A), written right
      ;                       after the last wall vert so the GIF walks
      ;                       straight through. GS context 2 carries the
      ;                       window texture + additive ALPHA_2 + alpha-test
@@ -265,7 +265,7 @@ cp_wrap_lid\@:
      sq.xyz         ems\@, 0+\k(next_output)
      fmt_color      emc\@, \c
      store_rgba     emc\@, \k
-     fog_coef       emf\@, \p, fog_params
+     fog_coef_alpha emf\@, \c
      ior            emadc\@, \adcreg, emf\@
      mfir.w         emp\@, emadc\@
      store_xyzf     emp\@, \k
@@ -321,7 +321,8 @@ x2_wtag_lid\@:
      ibne           win_skip, vi00, x2_kick_lid\@
 
      ; window tag follows the committed wall verts; window verts copy STQ and
-     ; XYZF2 verbatim and splice constant RGB with the wall's fade alpha.
+     ; XYZF2 verbatim and splice the constant window RGBA. Wall alpha may carry
+     ; the radial GS-fog coefficient and must never leak into the clear window.
      lq             gif_tag_p, kCWinTag(buffer_top)
      mtir           eop_p, gif_tag_px
      ior            eop_p, eop_p, out_count
@@ -340,7 +341,7 @@ x2_wcopy_lid\@:
      sq             wc_s, 0(wc_dst)
      lq             wc_c, 1(wc_src)
      move.xyzw      wc_t, win_color
-     move.w         wc_t, wc_c
+     move.w         wc_t, win_color
      sq             wc_t, 1(wc_dst)
      lq             wc_p, 2(wc_src)
      sq             wc_p, 2(wc_dst)
@@ -408,14 +409,11 @@ main_loop_lid:
      lq.w           bfc_multiplier, kBackFaceCullMult(vi00)
      get_ones_vec   ones
 
-     ; window color const, once per buffer: floats from the EE (rgb already
-     ; in GS 0..128 modulate range), GS ints after ftoi0. Only .xyz is used —
-     ; each window vert takes its ALPHA from the wall vert's pv alpha, so the
-     ; fade overlay's animated per-building alpha scales the additive add
-     ; exactly like the classic window pass (main-city verts carry alpha 1.0
-     ; -> 128, identical to a constant). (.x < 0 disables the window section
-     ; — checked post-loop, no extra register held here.) Held across the
-     ; loop for the post-loop window-vert color splice.
+     ; window color const, once per buffer: floats from the EE (RGBA already
+     ; in GS 0..128 modulate range), GS ints after ftoi0. Wall A may carry the
+     ; radial fog coefficient, so the window copies this constant A too.
+     ; (.x < 0 disables the window section — checked post-loop, no extra
+     ; register held here.) Held across the loop for the post-loop splice.
      lq             win_color, kCWinClr(buffer_top)
      loi            255.0
      minii.xyz      win_color, win_color, i
@@ -503,7 +501,7 @@ x2_fast_room_lid:
      iand           near_any, near_f, adc_bit
 
      clip_vert      xformed_vert_1
-     fog_coef       fog_i1, xformed_vert_1, fog_params
+     fog_coef_alpha fog_i1, pv_col
      ior            fog_adc1, adc_bit, fog_i1
      mfir.w         gs_vert_1, fog_adc1
      store_xyzf     gs_vert_1, 0
@@ -531,7 +529,7 @@ x2_fast_room_lid:
      ior            near_any, near_any, near_f
 
      clip_vert      xformed_vert_2
-     fog_coef       fog_i2, xformed_vert_2, fog_params
+     fog_coef_alpha fog_i2, pv_col
      ior            fog_adc2, adc_bit, fog_i2
      mfir.w         gs_vert_2, fog_adc2
      store_xyzf     gs_vert_2, kOutputQPerV
@@ -574,7 +572,7 @@ x2_fast_room_lid:
      ior            new_adc_bit, z_sign, vi00
      iaddiu         new_adc_bit, new_adc_bit, 0x7fff
      iand           new_adc_bit, new_adc_bit, adc_bit
-     fog_coef       fog_i3, xformed_vert_3, fog_params
+     fog_coef_alpha fog_i3, pv_col
      ior            new_adc_bit, new_adc_bit, fog_i3
 
      mfir.w         gs_vert_3, new_adc_bit
