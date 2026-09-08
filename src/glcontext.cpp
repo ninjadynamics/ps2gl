@@ -56,12 +56,20 @@ int CGLContext::VsyncSemaId                      = -1;
 
 CGLContext::tRenderingFinishedCallback CGLContext::RenderingFinishedCallback = NULL;
 
+// Submission is owned by the main thread; completion by the GS interrupt.
+// Separate counters avoid a shared pending-bit read/modify/write race. They
+// describe our end-of-chain SIGNALs, not mere VIF DMA idleness or CPU returns.
+static volatile unsigned int NormalChainsSubmitted = 0, NormalChainsCompleted = 0;
+static volatile unsigned int ImmediateChainsSubmitted = 0, ImmediateChainsCompleted = 0;
+
 CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
     : StateChangesArePushed(false)
     , IsCurrentFieldEven(true)
     , CurrentFrameNumber(0)
     , CurBuffer(0)
 {
+    NormalChainsSubmitted = NormalChainsCompleted = 0;
+    ImmediateChainsSubmitted = ImmediateChainsCompleted = 0;
     CurPacket = new CVifSCDmaPacket(kDmaPacketMaxQwordLength, DMAC::Channels::vif1,
         Packet::kXferTags, Core::MemMappings::UncachedAccl);
     LastPacket = new CVifSCDmaPacket(kDmaPacketMaxQwordLength, DMAC::Channels::vif1,
@@ -275,6 +283,7 @@ void CGLContext::RenderImmediateGeometry()
     ImmVif1Packet->Pad128();
     ImmVif1Packet->CloseTag();
 
+    ++ImmediateChainsSubmitted;
     ImmVif1Packet->Send();
 }
 
@@ -339,6 +348,7 @@ void CGLContext::RenderGeometry()
     while (PollSema(RenderingFinishedSemaId) != -1)
         ;
 
+    ++NormalChainsSubmitted;
     LastPacket->Send();
 }
 
@@ -364,11 +374,13 @@ int CGLContext::GsIntHandler(int cause)
             if ((uint16_t)(sigLblId >> 16) == GetPs2glSignalId()) {
                 switch (sigLblId & 0xffff) {
                 case 1:
+                    ++NormalChainsCompleted;
                     iSignalSema(RenderingFinishedSemaId);
                     if (RenderingFinishedCallback != NULL)
                         RenderingFinishedCallback();
                     break;
                 case 2:
+                    ++ImmediateChainsCompleted;
                     iSignalSema(ImmediateRenderingFinishedSemaId);
                     break;
                 default:
@@ -503,7 +515,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.07.13 17:29]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.08 12:46]\n");
 
     ps2sInit();
     pGLContext = new CGLContext(immBufferVertexSize, immDrawBufferQwordSize);
@@ -572,6 +584,17 @@ void pglSwapBuffers(void)
 void pglSetRenderingFinishedCallback(void (*cb)(void))
 {
     pGLContext->SetRenderingFinishedCallback(cb);
+}
+
+void pglGetRenderProgress(unsigned int* pendingSignals,
+    unsigned int* normalAcknowledged, unsigned int* immediateAcknowledged)
+{
+    const unsigned int normalDone = NormalChainsCompleted;
+    const unsigned int immediateDone = ImmediateChainsCompleted;
+    *pendingSignals = (NormalChainsSubmitted != normalDone ? 1u : 0u)
+        | (ImmediateChainsSubmitted != immediateDone ? 2u : 0u);
+    *normalAcknowledged = normalDone;
+    *immediateAcknowledged = immediateDone;
 }
 
 /********************************************

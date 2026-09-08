@@ -888,9 +888,10 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
    the base texture's GL name, so the game can RELEASE a whole mip pyramid when
    a stage/scene switch swaps textures. Without this the locked slots +
    CMMTextures leak (~14 pages per swap), and the only escape was a full GS
-   layout reinit. Sized for the worst co-resident set: 2 floors + the 8 city
-   wall/window tiles, with headroom. */
-#define PGL_MIP_REGISTRY_MAX 16
+   layout reinit. The current city needs 20 entries: one floor, eight wall
+   bases, eight window tiles, refinery, road and sidewalk. Keep headroom for
+   scene transitions, and reject overflow BEFORE creating a pyramid. */
+#define PGL_MIP_REGISTRY_MAX 32
 /* NOTE: the identifier "mips" is unusable here — the MIPS GCC target
    predefines it as a macro (`#define mips 1`), like `unix`/`linux`. */
 struct SMipRegistryEntry {
@@ -925,21 +926,26 @@ static void pgl_pack_check(const SMipPackSlot* t, int n)
     }
 }
 
-static void pgl_mips_register(unsigned int baseId, CMMTexture** levels, int count,
-                              GS::CMemArea* pack)
+static SMipRegistryEntry* pgl_mips_available(void)
 {
     for (int i = 0; i < PGL_MIP_REGISTRY_MAX; i++) {
-        if (MipRegistry[i].baseId == 0) {
-            MipRegistry[i].baseId = baseId;
-            for (int j = 0; j < count; j++)
-                MipRegistry[i].levels[j] = levels[j];
-            MipRegistry[i].count = count;
-            MipRegistry[i].pack  = pack;
-            return;
-        }
+        if (MipRegistry[i].baseId == 0)
+            return &MipRegistry[i];
     }
-    printf("pgl_mips_register: table full — mip levels for %u will leak\n", baseId);
-    mError("PGL_MIP_REGISTRY_MAX exceeded — bump it before adding more mipped assets");
+    printf("pgl_create_mip: registry full (%d); texture not created\n", PGL_MIP_REGISTRY_MAX);
+    return NULL;
+}
+
+/* Creation runs synchronously on the rendering thread: the entry checked at
+   admission remains available until the finished pyramid is published here. */
+static void pgl_mips_register(SMipRegistryEntry* entry, unsigned int baseId,
+                              CMMTexture** levels, int count, GS::CMemArea* pack)
+{
+    entry->baseId = baseId;
+    for (int j = 0; j < count; j++)
+        entry->levels[j] = levels[j];
+    entry->count = count;
+    entry->pack = pack;
 }
 
 /* Release the mip pyramid registered for `baseId` (no-op if none): unlock each
@@ -962,7 +968,12 @@ extern "C" void pgl_delete_mips(unsigned int baseId)
             /* the ONE pack-page owner: unlock, then delete (~CMemArea
                Free()s the slot). Level CMMTextures above never allocated
                their own pImageMem, so this is the only unbind. */
-            MipRegistry[i].pack->Unlock();
+            /* A GS layout reset may already have destroyed the slot and
+               unbound this owner. Teardown must still release the descriptor;
+               calling Unlock on an unallocated area dereferences NULL Slot.
+               This does not make stale mip addresses usable after a reset. */
+            if (MipRegistry[i].pack->IsAllocated() && MipRegistry[i].pack->IsLocked())
+                MipRegistry[i].pack->Unlock();
             delete MipRegistry[i].pack;
             MipRegistry[i].pack = NULL;
         }
@@ -977,6 +988,8 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
                                          int min_filter)
 {
     if (!levels || count < 1) return 0;
+    SMipRegistryEntry* entry = pgl_mips_available();
+    if (!entry) return 0;
     CTexManager& tm = pGLContext->GetTexManager();
 
     /* Base level (0) is a real GL texture name so the game's glBindTexture binds
@@ -1028,7 +1041,7 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
         tbw[i - 1] = (u32)((lw[i] + 63) / 64);
         if (tbw[i - 1] < 1) tbw[i - 1] = 1;
     }
-    pgl_mips_register(id, mlist, nmip, pack);   /* releasable via pgl_delete_mips */
+    pgl_mips_register(entry, id, mlist, nmip, pack);   /* releasable via pgl_delete_mips */
 
     base.SetMipLevels(nmip, kbias, min_filter);  /* TEX1 MXL/LOD/min-filter, re-emitted
                                          per draw. kbias = GS TEX1.K (S7.4, -16 = -1.0
@@ -1069,6 +1082,8 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
                                               int min_filter)
 {
     if (!levels || !clut || count < 1) return 0;
+    SMipRegistryEntry* entry = pgl_mips_available();
+    if (!entry) return 0;
 
     GLuint id = pgl_create_index8(levels[0], lw[0], lh[0], clut);
     if (id == 0) return 0;
@@ -1120,7 +1135,7 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
         mlist[i - 1] = m;
         tba[i - 1] = m->GetImageGsAddr() / 64;
     }
-    pgl_mips_register(id, mlist, nmip, pack);   /* releasable via pgl_delete_mips */
+    pgl_mips_register(entry, id, mlist, nmip, pack);   /* releasable via pgl_delete_mips */
 
     base.SetMipLevels(nmip, kbias, min_filter);
     base.SetMiptbp(

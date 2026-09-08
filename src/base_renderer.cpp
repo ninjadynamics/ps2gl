@@ -323,7 +323,9 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
 
         // stick in the offset to convert clip space depth value to GS
         float depthClipToGs = (float)((1 << drawContext.GetDepthBits()) - 1) / 2.0f;
-        packet += depthClipToGs;
+        // Both classic and X2 add this AFTER perspective division. Bias only
+        // the output depth; depthClipToGs below still describes clipping.
+        packet += depthClipToGs + drawContext.GetDepthOffset();
 
         // cur material
 

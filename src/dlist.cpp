@@ -5,10 +5,12 @@
 	  main directory of this archive for more details.                             */
 
 #include "ps2gl/dlist.h"
+#include "GL/ps2gl.h"
 #include "ps2gl/glcontext.h"
 #include "ps2gl/immgmanager.h"
 
 #include "kernel.h"
+#include <new>
 
 /********************************************
  * CDList
@@ -40,6 +42,46 @@ CDList::~CDList()
     delete FirstCmdBlock;
     for (int i = 0; i < NumRenderPackets; i++)
         delete RenderPackets[i];
+}
+
+bool CDList::ReserveGeometry(unsigned int vertices, unsigned int normals,
+    unsigned int texCoords, unsigned int colors)
+{
+    if (VertexBuf || NormalBuf || TexCoordBuf || ColorBuf)
+        return false;
+
+    const unsigned int counts[4] = { vertices, normals, texCoords, colors };
+    const unsigned int bytesPerElement[4] = { 16, 12, 8, 16 };
+    CDmaPacket* buffers[4] = { NULL, NULL, NULL, NULL };
+    for (int i = 0; i < 4; i++) {
+        if (counts[i] > (0x7fffffffu - 63u) / bytesPerElement[i])
+            break;
+        unsigned int bytes = (counts[i] * bytesPerElement[i] + 63u) & ~63u;
+        // BeginGeom records each attribute cursor even when no values follow.
+        if (!bytes)
+            bytes = 64;
+        void* memory = CDmaPacket::AllocBuffer(bytes / 16,
+            Core::MemMappings::UncachedAccl);
+        if (!memory)
+            break;
+        buffers[i] = new (std::nothrow) CDmaPacket((uint128_t*)memory, bytes / 16,
+            DMAC::Channels::vif1, Core::MemMappings::UncachedAccl);
+        if (!buffers[i]) {
+            free(Core::MakePtrNormal(memory));
+            break;
+        }
+        buffers[i]->TakeBufferOwnership();
+    }
+    if (!buffers[3]) {
+        for (int i = 0; i < 4; i++)
+            delete buffers[i];
+        return false;
+    }
+    VertexBuf = buffers[0];
+    NormalBuf = buffers[1];
+    TexCoordBuf = buffers[2];
+    ColorBuf = buffers[3];
+    return true;
 }
 
 void CDList::Begin()
@@ -192,6 +234,13 @@ GLuint glGenLists(GLsizei range)
     GL_FUNC_DEBUG("%s(%d)\n", __FUNCTION__, range);
 
     return pGLContext->GetDListManager().GenLists(range);
+}
+
+int pglReserveDListGeometry(unsigned int vertices, unsigned int normals,
+    unsigned int texCoords, unsigned int colors)
+{
+    return pGLContext->GetDListManager().GetOpenDList().ReserveGeometry(
+        vertices, normals, texCoords, colors);
 }
 
 void glDeleteLists(GLuint list, GLsizei range)

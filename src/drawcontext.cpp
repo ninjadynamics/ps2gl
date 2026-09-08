@@ -36,6 +36,7 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , DepthTestIsEnabled(false)
     , DrawInterlaced(true)
     , PolyMode(GL_FILL)
+    , DepthOffset(0.0f)
     , FogIsEnabled(false)
     , FogStart(0.0f)
     , FogEnd(1.0f)
@@ -266,6 +267,17 @@ void CImmDrawContext::SetClipNear(float near_z)
     if (ClipNear != near_z) {
         ClipNear = near_z;
         GLContext.ShadingChanged(); // resend the context packet (kFogParams.x)
+    }
+}
+
+void CImmDrawContext::SetDepthOffset(float units)
+{
+    if (DepthOffset != units) {
+        // Pending geometry must use its old context before the new offset is
+        // sent. This queues the draw; it does not recycle client-array memory.
+        GLContext.GetImmGeomManager().Flush();
+        DepthOffset = units;
+        GLContext.GlobalAmbChanged(); // depth offset shares global ambient W
     }
 }
 
@@ -877,6 +889,20 @@ void glDepthFunc(GLenum func)
     GL_FUNC_DEBUG("%s(0x%x)\n", __FUNCTION__, func);
 
     pGLContext->GetDrawContext().SetDepthFunc(func);
+}
+
+void pglSetDepthOffset(float units)
+{
+    if (pGLContext->InDListDef()) {
+        mError("pglSetDepthOffset is not supported inside display-list definitions");
+        return;
+    }
+    pGLContext->GetImmDrawContext().SetDepthOffset(units);
+}
+
+void pglGetRasterScale(float out[3])
+{
+    if (out) pGLContext->GetImmDrawContext().GetRasterScale(out);
 }
 
 void glDrawBuffer(GLenum mode)

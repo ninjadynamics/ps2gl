@@ -204,6 +204,8 @@ public:
     CDmaPacket& GetNormalBuf();
     CDmaPacket& GetTexCoordBuf();
     CDmaPacket& GetColorBuf();
+    bool ReserveGeometry(unsigned int vertices, unsigned int normals,
+        unsigned int texCoords, unsigned int colors);
 
     void RegisterNewPacket(CVifSCDmaPacket* packet)
     {

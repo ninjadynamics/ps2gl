@@ -92,6 +92,7 @@ public:
     bool DrawInterlaced;
     GLenum PolyMode;
     int DepthBits;
+    float DepthOffset;      // constant GS depth units; positive is nearer
     // GS hardware fog (glEnable(GL_FOG) + glFogf START/END): PRIM.FGE in the
     // output giftag + the kFogParams qword in the VU1 renderer context.
     bool FogIsEnabled;
@@ -134,9 +135,16 @@ public:
 
     int GetFBWidth() const { return Width; }
     int GetFBHeight() const { return Height; }
+    void GetRasterScale(float out[3]) const {
+        out[0] = GSScale.get_col0()(0);
+        out[1] = GSScale.get_col1()(1);
+        out[2] = GSScale.get_col2()(2);
+    }
 
     int GetDepthBits() const { return DepthBits; }
     void SetDepthBits(int depth) { DepthBits = depth; }
+    float GetDepthOffset() const { return DepthOffset; }
+    void SetDepthOffset(float units);
 
     // virtuals
 

@@ -51,6 +51,13 @@ extern void pglTexImageTakeOwnership(void);
    14.3 qw/vert ("a pitiful hack") — 1.4 MB for one game's model dlists. */
 extern void pglSetDListPacketSizing(int qwPerVert, int qwPerStrip, int qwFlat);
 
+/* Reserve exact attribute counts in a newly opened, still-empty display list.
+   Returns zero on allocation failure; no geometry may be emitted in that case.
+   Counts include every glBegin/glEnd block in the list. Existing clients that
+   do not reserve retain the default fixed-capacity attribute buffers. */
+extern int pglReserveDListGeometry(unsigned int vertices, unsigned int normals,
+    unsigned int texCoords, unsigned int colors);
+
 // gs mem slots
 
 typedef unsigned int pgl_slot_handle_t;
@@ -111,6 +118,15 @@ extern void pglSetFlickerFilter(int enable, int alpha);
    correct in interlaced (half-height) modes. Persists across pglSetVideoMode. */
 extern void pglSetViewportScale(float sx, float sy);
 
+/* Immediate draws only: constant GS depth offset, default 0. Positive units
+   move depth nearer (ps2gl reverses Z). Does not move geometry, alter clipping,
+   or implement glPolygonOffset's slope term. Flushes pending draws on change;
+   callers must restore 0 afterwards and keep biased depth within its range. */
+extern void pglSetDepthOffset(float units);
+/* Read the live NDC-to-GS diagonal scale (signed X/Y/Z, before center offsets).
+   Includes the active draw-buffer size, screen fit and depth format. */
+extern void pglGetRasterScale(float out[3]);
+
 // textures
 
 void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle);
@@ -136,6 +152,14 @@ void pglRenderGeometry(void);
 void pglFinishRenderingGeometry(int forceImmediateStop);
 
 void pglSetRenderingFinishedCallback(void (*cb)(void));
+
+/* Read-only, nonblocking diagnostic snapshot, safe in an interrupt handler.
+ * pendingSignals: bit 0 normal / bit 1 immediate submitted chains awaiting
+ * their GS SIGNAL; the other outputs are each channel's wrapping count of
+ * handled SIGNALs. All pointers must be non-NULL. A concurrent completion may
+ * be seen on the next snapshot; this is not a synchronization/fence API. */
+void pglGetRenderProgress(unsigned int* pendingSignals,
+    unsigned int* normalAcknowledged, unsigned int* immediateAcknowledged);
 
 // general
 
