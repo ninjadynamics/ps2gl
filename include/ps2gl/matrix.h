@@ -7,6 +7,7 @@
 #ifndef ps2gl_matrix_h
 #define ps2gl_matrix_h
 
+#include "GL/ps2gl.h"
 #include "ps2gl/debug.h"
 #include "ps2s/cpu_matrix.h"
 
@@ -23,7 +24,8 @@ class CMatrixStack {
 protected:
     CGLContext& GLContext;
     static const int MaxStackDepth = 16;
-    cpu_mat_44 Matrices[MaxStackDepth], InverseMatrices[MaxStackDepth];
+    cpu_mat_44 Matrices[MaxStackDepth];
+    mutable cpu_mat_44 InverseMatrices[MaxStackDepth];
     int CurStackDepth;
 
 public:
@@ -42,6 +44,10 @@ public:
     virtual void Push() = 0;
     virtual void Concat(const cpu_mat_44& xform, const cpu_mat_44& inverse) = 0;
     virtual void SetTop(const cpu_mat_44& newMat, const cpu_mat_44& newInv) = 0;
+#if PGL_LAZY_MATRIX_INVERSE
+    // The default path computes eagerly, including display-list recording.
+    virtual void SetTopFromMatrix(const cpu_mat_44& newMat);
+#endif
 };
 
 /********************************************
@@ -49,9 +55,18 @@ public:
  */
 
 class CImmMatrixStack : public CMatrixStack {
+#if PGL_LAZY_MATRIX_INVERSE
+    // A pending inverse slot holds its original glLoadMatrixf operand. Never
+    // invert the later composed forward matrix: that changes rounding/order.
+    mutable bool InversePending[MaxStackDepth];
+    void EnsureInverse() const;
+#endif
 public:
     CImmMatrixStack(CGLContext& context)
         : CMatrixStack(context)
+#if PGL_LAZY_MATRIX_INVERSE
+        , InversePending{}
+#endif
     {
     }
 
@@ -68,11 +83,19 @@ public:
             "No room on stack!");
         Matrices[CurStackDepth + 1]        = Matrices[CurStackDepth];
         InverseMatrices[CurStackDepth + 1] = InverseMatrices[CurStackDepth];
+#if PGL_LAZY_MATRIX_INVERSE
+        InversePending[CurStackDepth + 1] = InversePending[CurStackDepth];
+#endif
         ++CurStackDepth;
     }
 
     void Concat(const cpu_mat_44& xform, const cpu_mat_44& inverse)
     {
+#if PGL_LAZY_MATRIX_INVERSE
+        // Preserve inverse * curInv exactly, including analytic inverses from
+        // glTranslate/Rotate/Scale and eagerly inverted glMultMatrixf input.
+        EnsureInverse();
+#endif
         cpu_mat_44& curMat = Matrices[CurStackDepth];
         cpu_mat_44& curInv = InverseMatrices[CurStackDepth];
         curMat             = curMat * xform;
@@ -84,11 +107,23 @@ public:
     {
         Matrices[CurStackDepth]        = newMat;
         InverseMatrices[CurStackDepth] = newInv;
+#if PGL_LAZY_MATRIX_INVERSE
+        InversePending[CurStackDepth] = false;
+#endif
         GLContext.GetImmDrawContext().SetVertexXformValid(false);
     }
 
     const cpu_mat_44& GetTop() const { return Matrices[CurStackDepth]; }
-    const cpu_mat_44& GetInvTop() const { return InverseMatrices[CurStackDepth]; }
+    const cpu_mat_44& GetInvTop() const
+    {
+#if PGL_LAZY_MATRIX_INVERSE
+        EnsureInverse();
+#endif
+        return InverseMatrices[CurStackDepth];
+    }
+#if PGL_LAZY_MATRIX_INVERSE
+    void SetTopFromMatrix(const cpu_mat_44& newMat);
+#endif
 };
 
 /********************************************

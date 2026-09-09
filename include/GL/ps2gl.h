@@ -9,6 +9,38 @@
 
 #include "GL/gl.h"
 
+/* Aligned client-array transfers use the identical CNT/STMASK/REF/UNPACK
+ * packet without running the generic unaligned-head/tail preparation. */
+#ifndef PGL_ALIGNED_VECTOR_TRANSFER
+#define PGL_ALIGNED_VECTOR_TRANSFER 1
+#endif
+#if PGL_ALIGNED_VECTOR_TRANSFER != 0 && PGL_ALIGNED_VECTOR_TRANSFER != 1
+#error "PGL_ALIGNED_VECTOR_TRANSFER must be 0 or 1"
+#endif
+
+/* Whole-renderer A/B: CPU construction of the two normal frame DMA chains.
+ * 0 preserves UCAB; 1 uses cached memory with the existing Send() writeback.
+ * Geometry, immediate packets, display lists and VU programs are unchanged.
+ * This is a library build setting: rebuild ps2gl EE objects after changing it.
+ */
+#ifndef PGL_CACHED_FRAME_PACKETS
+#define PGL_CACHED_FRAME_PACKETS 1
+#endif
+#if PGL_CACHED_FRAME_PACKETS != 0 && PGL_CACHED_FRAME_PACKETS != 1
+#error "PGL_CACHED_FRAME_PACKETS must be 0 or 1"
+#endif
+
+/* Defer immediate glLoadMatrixf inversion until an inverse is consumed.
+ * Concat retains the original inverse multiplication order; display-list
+ * recording remains eager. Independent library-build A/B, no matrix rounding
+ * change. Rebuild all ps2gl EE objects when changing this class-layout gate. */
+#ifndef PGL_LAZY_MATRIX_INVERSE
+#define PGL_LAZY_MATRIX_INVERSE 1
+#endif
+#if PGL_LAZY_MATRIX_INVERSE != 0 && PGL_LAZY_MATRIX_INVERSE != 1
+#error "PGL_LAZY_MATRIX_INVERSE must be 0 or 1"
+#endif
+
 /********************************************
  * types
  */
@@ -216,7 +248,20 @@ void pglSetClipNear(float near_z);
    Near plane shared with pglSetClipNear. */
 #define PGL_CLIP_TRIANGLES_X2 ((GLenum)0x80000000 | 1)
 #define PGL_CLIP_TRI_X2_PROP ((pglU64_t)1 << 33)
-void pglRegisterClipTriX2Renderer(void);
+  void pglRegisterClipTriX2Renderer(void);
+
+  /* Unlit textured float-RGBA triangles already clipped by the caller to
+     positive W and the GS guard band. No near-plane splitting is performed.
+     XYZ float3/4, UV float2 or explicit STQ float3, RGBA float4 in0..1 are
+     required; texturing must be enabled (white texture for untextured effects).
+     Normals and fixed-function lighting/color-material flags are ignored.
+     RGB/alpha use the textured GS128 scale; optional fog uses source alpha.
+     Existing GS blend/depth state and PGL guard/backface culling are honored.
+     Client arrays must survive asynchronous DMA; flush before foreign state.
+     Register once after pglInit. Generic lighted renderers remain unchanged. */
+  #define PGL_UNLIT_TEX_TRIANGLES ((GLenum)0x80000000 | 3)
+  #define PGL_UNLIT_TEX_TRI_PROP ((pglU64_t)1 << 35)
+  void pglRegisterUnlitTexTriRenderer(void);
 
 /* P3 DESCRIPTOR variant of the x2 renderer: walls travel as compact
    parametric descriptors and VU1 reconstructs the vertices, then the same
@@ -238,6 +283,41 @@ void pglRegisterClipTriX2Renderer(void);
 void pglRegisterClipTriX2DRenderer(void);
 void pglClipX2DSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 void pglClipX2SetWindowTexture(GLuint texId, float r, float g, float b, float a);
+
+/* Exact vertical wall corners, including trapezoids, with arbitrary per-corner
+   UV and FLOAT RGBA. No color normalization or geometry arithmetic occurs in
+   the decoder. It expands (A,B,C,A,C,D) then enters the unchanged X2 body.
+     GEO = 4 elements via glVertexPointer(4, GL_FLOAT, 0, geo):
+           [Ax Az Bx Bz] [Ay By Cy Dy] [uA vA uB vB] [uC vC uD vD]
+     COLOR = 4 elements via glColorPointer(4, GL_FLOAT, 0, colors):
+             [A.rgba] [B.rgba] [C.rgba] [D.rgba]
+     glDrawArrays(PGL_CLIP_TRIANGLES_X2Q, firstDesc*4, numDescs*4)
+   D shares A's X/Z and C shares B's X/Z exactly. The caller must qualify that
+   contract and preserve the repeated A/C attributes before packing. Colors
+   have the same semantic owner as X2 (wall alpha may carry fog keep); paired
+   windows retain their independent constant color/alpha and exact shared
+   geometry. Source arrays remain DMA-live through frame completion. Set the
+   window pair before binding the base texture, and flush the final draw just
+   like X2/X2D. Both older primitives and their wire formats remain unchanged. */
+#define PGL_CLIP_TRIANGLES_X2Q ((GLenum)0x80000000 | 4)
+#define PGL_CLIP_TRI_X2Q_PROP ((pglU64_t)1 << 36)
+void pglRegisterClipTriX2QRenderer(void);
+void pglClipX2QSetWindowTexture(GLuint texId, float r, float g, float b, float a);
+
+/* Compact camera-facing glow quads, independent of the paired-wall state.
+   Register once after pglInit; call SetAxes with the source-space U/V axes.
+   GEO glVertexPointer(4,GL_FLOAT): [center.xyz,half][u0,v0,u1,v1].
+   COL glColorPointer(4,GL_FLOAT): [normalized RGBA][reserved].
+   Draw count is two elements per complete glow. Sources remain immutable
+   through chain completion. The decoder emits A,B,C,A,C,D and tail-calls
+   the unchanged X2 clip/output body; there is no second material kick.
+   Caller owns texture/blend/depth and disables fog (alpha remains opacity).
+   Floor-boundary intersections and uncertain near/side admission stay on the
+   existing caller fallback. This is not a generic GL quad ABI. */
+#define PGL_CLIP_GLOW_QUADS_X2G ((GLenum)0x80000000 | 5)
+#define PGL_CLIP_GLOW_X2G_PROP ((pglU64_t)1 << 37)
+void pglRegisterClipGlowX2GRenderer(void);
+void pglClipX2GSetAxes(float ux, float uy, float uz, float vx, float vy, float vz);
 
 // custom state
 

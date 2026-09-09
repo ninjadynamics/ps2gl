@@ -242,7 +242,10 @@ void CClipTriX2Renderer::SetWindowTexture(unsigned int texId, float r, float g, 
 
 void CClipTriX2Renderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
 {
-    CLinearRenderer::InitContext(GL_TRIANGLES, rcChanges, userRcChanged);
+    (void)primType;
+    (void)rcChanges;
+    (void)userRcChanged;
+    InitUnlitContext();
 }
 
 void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block)
@@ -587,6 +590,21 @@ CClipTriX2DRenderer::CClipTriX2DRenderer()
     , DecoderCode(mVsmAddr(GeneralClipTriX2DDecode))
     , DecoderCodeSize(mVsmSize(GeneralClipTriX2DDecode))
     , DecoderAddr64(mVsmSize(GeneralClipTriX2) / 8)
+    , DescriptorElements(3)
+    , DescriptorColorWords(1)
+    , DescriptorColorOffset(kX2dColOff)
+{
+}
+
+CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
+    const char* name, uint64_t prop, int elements, int colorWords)
+    : CClipTriX2Renderer(mVsmAddr(GeneralClipTriX2), mVsmSize(GeneralClipTriX2), name, prop)
+    , DecoderCode(decoder)
+    , DecoderCodeSize(decoderSize)
+    , DecoderAddr64(mVsmSize(GeneralClipTriX2) / 8)
+    , DescriptorElements(elements)
+    , DescriptorColorWords(colorWords)
+    , DescriptorColorOffset(kX2dGeoOff + 4 * elements)
 {
 }
 
@@ -647,27 +665,27 @@ void CClipTriX2DRenderer::Register()
 
 void CClipTriX2DRenderer::DrawLinearArrays(CGeometryBlock& block)
 {
-    // 3 array elements = 1 descriptor (contract in GL/ps2gl.h); a "prim"
-    // of 3 keeps the block splitter on descriptor boundaries
-    block.SetNumVertsPerPrim(3);
+    // One complete descriptor is the indivisible source primitive. Both
+    // formats keep four descriptors (24 expanded vertices) per activation.
+    block.SetNumVertsPerPrim(DescriptorElements);
     block.SetNumVertsToRestartStrip(0);
     block.SetStripsCanBeMerged(true);
 
     mErrorIf(block.GetWordsPerVertex() != 4,
         "x2d: the GEO stream must be glVertexPointer(4, GL_FLOAT)");
-    mErrorIf(!block.GetColorsAreValid() || block.GetWordsPerColor() != 1,
-        "x2d: the COLOR stream must be glColorPointer(4, GL_UNSIGNED_BYTE)");
+    mErrorIf(!block.GetColorsAreValid() || block.GetWordsPerColor() != DescriptorColorWords,
+        "x2d/x2q: COLOR stream does not match the descriptor format");
 
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
 
-    // unlit-by-contract like x2. No InitXferBlock: this path Refs its two
-    // descriptor streams itself (v4_32 GEO + V4-8 COL).
+    // Unlit-by-contract like X2. The two source streams are transferred
+    // directly: float GEO plus byte COL (X2D) or exact float COL (X2Q).
     XferNormals = false;
     XferColors  = true;
 
     BuildPrefixes(packet, block);
 
-    DrawBlockX2D(packet, block, 12); // 12 elements = 4 descriptors/buffer
+    DrawBlockX2D(packet, block, 4 * DescriptorElements);
 }
 
 void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems)
@@ -675,8 +693,9 @@ void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems)
     XferPrefixes(packet);
     packet.Cnt();
     {
-        // header num_verts = the EXPANDED count: (elems/3) descs x 6 verts
-        XferBufferHeader(packet, 0, numElems * 2, 0, NULL);
+        // Header names the expanded count; the source count stays aligned
+        // to the selected format's complete descriptor size.
+        XferBufferHeader(packet, 0, (numElems / DescriptorElements) * 6, 0, NULL);
         // XferBufferHeader restores stcycl(1, InputQuadsPerVert) for the
         // vert-array renderers; the descriptor streams unpack contiguously
         packet.Stcycl(1, 1);
@@ -705,7 +724,8 @@ void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
     int elemsInBuffer = 0;
     for (int curStrip = 0; curStrip < block.GetNumStrips(); curStrip++) {
         int stripLen = block.GetStripLength(curStrip);
-        mErrorIf(stripLen % 3, "x2d: draw counts must be 3 elements per descriptor");
+        mErrorIf(stripLen % DescriptorElements,
+            "x2d/x2q: draw count must contain complete descriptors");
         unsigned int* geo = (unsigned int*)block.GetVertices(curStrip);
         unsigned int* col = (unsigned int*)block.GetColors(curStrip);
         int idx = 0;
@@ -714,12 +734,13 @@ void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
             int n = stripLen - idx;
             if (n > room)
                 n = room;
-            // both streams land per-element (1q GEO qword + 1 V4-8 vector
-            // each): buffer-relative staging advances in lockstep
+            // Both streams land one unpacked qword per source element;
+            // only the legacy byte COLOR stream has a smaller wire size.
             XferVectors(packet, geo, idx, n, 4, noMask,
                 Vifs::UnpackModes::v4_32, kX2dGeoOff + elemsInBuffer);
-            XferVectors(packet, col, idx, n, 1, noMask,
-                Vifs::UnpackModes::v4_8, kX2dColOff + elemsInBuffer);
+            XferVectors(packet, col, idx, n, DescriptorColorWords, noMask,
+                DescriptorColorWords == 1 ? Vifs::UnpackModes::v4_8 : Vifs::UnpackModes::v4_32,
+                DescriptorColorOffset + elemsInBuffer);
             elemsInBuffer += n;
             idx += n;
             if (elemsInBuffer == maxElemsPerBuffer) {

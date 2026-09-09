@@ -22,6 +22,11 @@ VU1_MICRO_CAPACITY = 2048
 X2_VSM_SHA256 = "9bc147d131326d97bc07ee8e9037604a3704935e9f956122b81ef5829874cf49"
 X2D_DECODER_VSM_SHA256 = "3ba063fc6baa758450aec971c0b57a44e3df8d216c4837280c036bbc9743a6ad"
 
+# CClipTriX2Renderer::InitContext uploads these absolute context locations.
+# Its C++ offset checks retain the full ABI, including the untouched holes and
+# guard q78. Changing the generated read set requires reviewing that EE writer.
+X2_CONTEXT_READS = {0, 57, 62, 63, 64, 65, 75, 76, 77}
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"x2d microcode guard: {message}")
@@ -32,6 +37,19 @@ def instruction_count(text: str, name: str) -> int:
     if not match:
         fail(f"{name}: missing iCount")
     return int(match.group(1))
+
+
+def context_reads(text: str) -> set[int]:
+    # The committed X2 image addresses shared context through VI00. Buffer
+    # references use XTOP-derived registers and remain guarded by its hash.
+    code = "\n".join(line.split(";", 1)[0] for line in text.splitlines())
+    return {
+        int(address, 0)
+        for address in re.findall(
+            r"\b(?:lq|ilw)(?:\.[xyzw]+)?\s+\w+,\s*(0x[0-9a-f]+|\d+)\(VI00\)",
+            code, re.IGNORECASE,
+        )
+    }
 
 
 def label_pc(text: str, label: str) -> int:
@@ -134,6 +152,12 @@ def verify(x2_path: Path, decoder_path: Path) -> None:
             "decoder VSM changed since its generated store schedule was audited "
             f"(sha256 {decoder_digest}, expected {X2D_DECODER_VSM_SHA256})"
         )
+
+    reads = context_reads(x2)
+    if reads != X2_CONTEXT_READS:
+        fail(f"X2 sparse EE context read set changed: {sorted(reads)}")
+    if context_reads(decoder):
+        fail("decoder now reads shared context; review the sparse EE writer")
 
     x2_count = instruction_count(x2, "X2")
     decoder_count = instruction_count(decoder, "decoder")

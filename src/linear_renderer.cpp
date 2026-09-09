@@ -49,6 +49,86 @@ void CLinearRenderer::DrawLinearArrays(CGeometryBlock& block)
     DrawBlock(packet, block, maxVertsPerBuffer);
 }
 
+void CLinearRenderer::InitUnlitContext()
+{
+    // X2 is unlit even when the application's fixed-function LIGHTING flag
+    // selects it. Its generated program reads only these context qwords:
+    // 0.w, 57.w, 62..65, 75, 76 and 77.x. X2D uses the same context; the
+    // preclipped unlit textured program uses the subset excluding 77.x.
+    // Keep the complete memory layout (including the sacrificial q78) and
+    // upload only those ranges, instead of preparing 8 lights, materials and
+    // normal/light transforms that none of these programs reads. The build's
+    // x2d_microcode_guard.py also checks the generated absolute read set.
+#if kBackFaceCullMult != 0 || kClipToGsDepthOffset != 57 || \
+    kVertexXfrm != 62 || kGifTag != 75 || kClipInfo != 76 || \
+    kFogParams != 77 || kFogPad != 78 || kDoubleBufBase != 79
+#error "X2 sparse context must be reviewed against the VU context ABI"
+#endif
+    CImmDrawContext& drawContext = pGLContext->GetImmDrawContext();
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+    const float depthClipToGs = (float)((1 << drawContext.GetDepthBits()) - 1) / 2.0f;
+
+    packet.Cnt();
+    packet.Stcycl(1, 1);
+    packet.Flush();
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, kBackFaceCullMult, Packet::kSingleBuff);
+    packet += (uint64_t)0;
+    packet += 0;
+    float bfc_mult = (float)drawContext.GetCullFaceDir();
+    unsigned int bfc_word;
+    asm(" ## nop ## " : "=r"(bfc_word) : "0"(bfc_mult));
+    packet += bfc_word | (unsigned int)drawContext.GetDoCullFace() << 5;
+    packet.CloseUnpack();
+
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, kClipToGsDepthOffset, Packet::kSingleBuff);
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += depthClipToGs + drawContext.GetDepthOffset();
+    packet.CloseUnpack();
+
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, kVertexXfrm, Packet::kSingleBuff);
+    packet += drawContext.GetVertexXform();
+    packet.CloseUnpack();
+
+    // Giftag remains last, after the same VIF FLUSH as the generic context:
+    // the preceding buffer must finish consuming its old tag before overwrite.
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, kGifTag, Packet::kSingleBuff);
+    GLenum newPrimType = drawContext.GetPolygonMode();
+    if (newPrimType == GL_FILL) newPrimType = GL_TRIANGLES;
+    packet += BuildGiftag(newPrimType & 0xff);
+    const float xClip = 2048.0f / (drawContext.GetFBWidth() * 0.5f * 2.0f);
+    const float yClip = 2048.0f / (drawContext.GetFBHeight() * 0.5f * 2.0f);
+    packet += Math::Max(xClip, 1.0f);
+    packet += Math::Max(yClip, 1.0f);
+    float depthClip = 2048.0f / depthClipToGs;
+    depthClip *= 1.003f;
+    packet += depthClip;
+    packet += (drawContext.GetDoClipping()) ? 1 : 0;
+    // X2 reads only near (.x): F comes from vertex alpha, not these legacy
+    // depth-fog coefficients. Leave the unread components deterministic.
+    packet += drawContext.GetClipNear();
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += (uint64_t)0; // q78 guard; double buffers still begin at q79
+    packet += (uint64_t)0;
+    packet.CloseUnpack();
+
+    // Preserve the existing activation, double-buffer and transfer-state
+    // contract. A subsequent generic renderer still uploads its full context.
+    packet.Mscal(0);
+    packet.Flushe();
+    packet.Base(kDoubleBufBase);
+    packet.Offset(kDoubleBufOffset);
+    packet.CloseTag();
+    CacheRendererState();
+}
+
 void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
 {
     CGLContext& glContext   = *pGLContext;

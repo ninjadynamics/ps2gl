@@ -135,6 +135,33 @@ void glPopMatrix(void)
 // courtesy the lovely folks at Intel
 extern void Invert2(float* mat, float* dst);
 
+#if PGL_LAZY_MATRIX_INVERSE
+void CMatrixStack::SetTopFromMatrix(const cpu_mat_44& newMat)
+{
+    cpu_mat_44 invMatrix;
+    Invert2((float*)&newMat, (float*)&invMatrix);
+    SetTop(newMat, invMatrix);
+}
+
+void CImmMatrixStack::SetTopFromMatrix(const cpu_mat_44& newMat)
+{
+    Matrices[CurStackDepth] = newMat;
+    InverseMatrices[CurStackDepth] = newMat;
+    InversePending[CurStackDepth] = true;
+    GLContext.GetImmDrawContext().SetVertexXformValid(false);
+}
+
+void CImmMatrixStack::EnsureInverse() const
+{
+    if (!InversePending[CurStackDepth]) return;
+    float* pending = (float*)&InverseMatrices[CurStackDepth];
+    // Invert2 first transposes all 16 inputs into its local src array before
+    // writing any output, so in-place inversion preserves the exact kernel.
+    Invert2(pending, pending);
+    InversePending[CurStackDepth] = false;
+}
+#endif
+
 void glLoadMatrixf(const GLfloat* m)
 {
     GL_FUNC_DEBUG("%s\n", __FUNCTION__);
@@ -147,10 +174,13 @@ void glLoadMatrixf(const GLfloat* m)
     for (int i = 0; i < 16; i++)
         *dest++ = *m++;
 
+#if PGL_LAZY_MATRIX_INVERSE
+    matStack.SetTopFromMatrix(newMat);
+#else
     cpu_mat_44 invMatrix;
     Invert2((float*)&newMat, (float*)&invMatrix);
-
     matStack.SetTop(newMat, invMatrix);
+#endif
 }
 
 void glFrustum(GLdouble left, GLdouble right,

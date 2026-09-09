@@ -22,6 +22,8 @@ EE_OBJS = \
 	src/base_renderer.o \
 	src/clear.o \
 	src/clip_renderer.o \
+	src/x2q_renderer.o \
+	src/x2g_renderer.o \
 	src/displaycontext.o \
 	src/dlgmanager.o \
 	src/dlist.o \
@@ -41,17 +43,22 @@ EE_OBJS = \
 	src/renderermanager.o \
 	src/texture.o
 
+EE_OBJS += src/unlit_renderer.o
+
 RENDERERS = \
 	fast_nolights \
 	fast \
 	general_clip_tri \
 	general_clip_tri_x2 \
 	general_clip_tri_x2d_decode \
+	general_clip_tri_x2q_decode \
+	general_clip_glow_x2g_decode \
 	general_nospec_quad \
 	general_nospec_tri \
 	general_nospec \
 	general_pv_diff_quad \
 	general_pv_diff_tri \
+	general_unlit_tex_tri \
 	general_pv_diff \
 	general_quad \
 	general_tri \
@@ -65,10 +72,24 @@ VSM_SOURCES = $(addsuffix _vcl.vsm, $(addprefix vu1/, $(RENDERERS)))
 X2_VSM = vu1/general_clip_tri_x2_vcl.vsm
 X2D_DECODER_VSM = vu1/general_clip_tri_x2d_decode_vcl.vsm
 X2D_GUARD = vu1/x2d_microcode_guard.py
+X2Q_DECODER_VSM = vu1/general_clip_tri_x2q_decode_vcl.vsm
+X2Q_GUARD = vu1/x2q_microcode_guard.py
+X2G_DECODER_VSM = vu1/general_clip_glow_x2g_decode_vcl.vsm
+X2G_GUARD = vu1/x2g_microcode_guard.py
 
 all: $(VSM_SOURCES) x2d-microcode-guard $(EE_LIB)
 
 $(EE_LIB): x2d-microcode-guard
+$(EE_LIB): x2q-microcode-guard
+$(EE_LIB): x2g-microcode-guard
+
+.PHONY: x2g-microcode-guard
+x2g-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2G_DECODER_VSM) $(X2D_GUARD) $(X2Q_GUARD) $(X2G_GUARD)
+	python3 $(X2G_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2G_DECODER_VSM)
+
+.PHONY: x2q-microcode-guard
+x2q-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2Q_DECODER_VSM) $(X2D_GUARD) $(X2Q_GUARD)
+	python3 $(X2Q_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2Q_DECODER_VSM)
 
 .PHONY: x2d-microcode-guard
 x2d-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2D_GUARD)
@@ -108,6 +129,16 @@ include $(PS2SDK)/samples/Makefile.eeglobal
 	dvp-as -o $@ $<
 
 ifeq ($(REBUILD_VU1),1)
+$(X2G_DECODER_VSM): vu1/general_clip_glow_x2g_decode_pp4.vcl $(X2G_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
+	vcl -o$@ $<
+	python3 $(X2G_GUARD) --fix-decoder $(X2_VSM) $(X2D_DECODER_VSM) $@
+	rm -f $<
+
+$(X2Q_DECODER_VSM): vu1/general_clip_tri_x2q_decode_pp4.vcl $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
+	vcl -o$@ $<
+	python3 $(X2Q_GUARD) --fix-decoder $(X2_VSM) $(X2D_DECODER_VSM) $@
+	rm -f $<
+
 $(X2D_DECODER_VSM): vu1/general_clip_tri_x2d_decode_pp4.vcl $(X2D_GUARD) $(X2_VSM)
 	vcl -o$@ $<
 	python3 $(X2D_GUARD) --fix-decoder $(X2_VSM) $@

@@ -16,6 +16,8 @@
 
 class CLinearRenderer : public CBaseRenderer {
 protected:
+    // Sparse fixed-address context shared by the unlit X2 and textured lanes.
+    void InitUnlitContext();
     int InputGeomBufSize;
 
     // called by DrawArrays

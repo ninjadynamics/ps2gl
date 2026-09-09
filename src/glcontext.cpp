@@ -70,10 +70,16 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
 {
     NormalChainsSubmitted = NormalChainsCompleted = 0;
     ImmediateChainsSubmitted = ImmediateChainsCompleted = 0;
+    // Tag/UNPACK backpatches read packet memory after stores. UCAB has one
+    // read-only cache line invalidated by stores; test cached construction
+    // without changing geometry or the asynchronous frame-buffer ownership.
+    // RenderGeometry must retain Send()'s full cache writeback before DMA.
+    const unsigned int framePacketMapping = PGL_CACHED_FRAME_PACKETS
+        ? Core::MemMappings::Normal : Core::MemMappings::UncachedAccl;
     CurPacket = new CVifSCDmaPacket(kDmaPacketMaxQwordLength, DMAC::Channels::vif1,
-        Packet::kXferTags, Core::MemMappings::UncachedAccl);
+        Packet::kXferTags, framePacketMapping);
     LastPacket = new CVifSCDmaPacket(kDmaPacketMaxQwordLength, DMAC::Channels::vif1,
-        Packet::kXferTags, Core::MemMappings::UncachedAccl);
+        Packet::kXferTags, framePacketMapping);
     Vif1Packet = CurPacket;
 
     ImmVif1Packet = new CVifSCDmaPacket(immDrawBufferQwordSize, DMAC::Channels::vif1,
@@ -515,7 +521,12 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.08 12:46]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.09 20:42]\n");
+    printf("[PS2-PACKETS] normal=%s\n",
+        PGL_CACHED_FRAME_PACKETS ? "cached" : "ucab");
+    printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",
+        PGL_LAZY_MATRIX_INVERSE, PGL_ALIGNED_VECTOR_TRANSFER,
+        PS2S_DIRECT_PACKET_TAGS);
 
     ps2sInit();
     pGLContext = new CGLContext(immBufferVertexSize, immDrawBufferQwordSize);

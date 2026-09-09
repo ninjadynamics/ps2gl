@@ -489,6 +489,25 @@ void CBaseRenderer::XferVectors(CVifSCDmaPacket& packet, unsigned int* dataStart
     mErrorIf((unsigned int)vecDataStart & (4 - 1),
         "XferVectors only works with word-aligned data");
 
+#if PGL_ALIGNED_VECTOR_TRANSFER
+    if ((((uintptr_t)vecDataStart | (uintptr_t)vecDataEnd) & 15u) == 0u) {
+        /* Same packet as the generic path with both edge counts zero.
+         * Keep the mask, double-buffer bit, REF alias and UNPACK count; the
+         * source still belongs to its frame until DMA completes. */
+        packet.Cnt();
+        packet.Stmask(unpackMask);
+        packet.Pad128();
+        packet.CloseTag();
+        packet.Ref(Core::MakePtrNormal(vecDataStart),
+            (numVectors * wordsPerVec) / 4);
+        packet.Nop();
+        packet.OpenUnpack(unpackMode, vu1MemOffset,
+            VifDoubleBuffered, Packet::kMasked);
+        packet.CloseUnpack(numVectors);
+        return;
+    }
+#endif
+
     int numWordsToPrepend      = 0;
     unsigned int* refXferStart = vecDataStart;
     while ((unsigned int)refXferStart & (16 - 1)) {

@@ -648,6 +648,10 @@ void CRendererManager::MakeNewRendererCurrent()
     mAssert(NewRenderer != NULL);
     CurrentRenderer = NewRenderer;
     NewRenderer     = NULL;
+    // A renderer may upload only the context it consumes (X2 does). A custom
+    // requirement-bit change need not change any GL context value, so force
+    // the new owner to restore its own context before consuming shared VU RAM.
+    pGLContext->SetRendererContextChanged(true);
 }
 
 void CRendererManager::LoadRenderer(CVifSCDmaPacket& packet)

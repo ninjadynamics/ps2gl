@@ -1,0 +1,70 @@
+; =================================================
+; flowMon::Emit() vcl 1.4beta7 produced this code:
+		.vu
+		.align 4
+		.global	vsmGeneralClipGlowX2GDecode_CodeStart
+		.global	vsmGeneralClipGlowX2GDecode_CodeEnd
+vsmGeneralClipGlowX2GDecode_CodeStart:
+__v_vu1_general_clip_glow_x2g_decode_pp4_vcl_4:
+; _LNOPT_w=[ normal2 ] 8 [8 0] 8   [__v_vu1_general_clip_glow_x2g_decode_pp4_vcl_4]
+         NOP                                                        xtop          VI13                                
+         NOP                                                        ilw.x         VI11,0(VI13)                        
+         NOP                                                        iaddiu        VI10,VI13,0x00000005                
+         NOP                                                        iaddiu        VI12,VI13,0x00000065                
+         NOP                                                        iaddiu        VI13,VI13,0x0000006d                
+         NOP                                                        iadd          VI11,VI11,VI11                      
+         NOP                                                        iadd          VI11,VI11,VI11                      
+         NOP                                                        iadd          VI11,VI10,VI11                      
+xg_decode_loop_lid:
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [xg_decode_loop_lid]
+         NOP                                                        isub          VI14,VI11,VI10                      
+         NOP                                                        NOP                                               
+         NOP                                                        iblez         VI14,xg_decode_done_lid             
+         NOP                                                        NOP                                               
+; _LNOPT_w=[ normal2 ] 35 [30 0] 65   [__v_vu1_general_clip_glow_x2g_decode_pp4_vcl_6]
+         NOP                                                        lq            VF26,0(VI12)                        
+         NOP                                                        lq.xyz        VF28,58(VI00)                       
+         NOP                                                        lq.xyz        VF27,59(VI00)                       
+         mulw.xyz      VF28,VF28,VF26w                              iaddiu        VI10,VI10,0x00000018                       ;	STALL_LATENCY ?2
+         mulw.xyz      VF27,VF27,VF26w                              iaddiu        VI12,VI12,0x00000002                
+         max.w         VF26,VF00,VF00                               iaddiu        VI13,VI13,0x00000002                
+         sub.xyz       VF31,VF26,VF28                               NOP                                                      ;	STALL_LATENCY ?1
+         add.xyz       VF30,VF26,VF28                               NOP                                               
+         add.xyz       VF29,VF26,VF28                               NOP                                               
+         sub.xyz       VF28,VF26,VF28                               NOP                                               
+         sub.xyz       VF26,VF31,VF27                               NOP                                               
+         NOP                                                        sq            VF26,-24(VI10)                             ;	STALL_LATENCY ?3
+         sub.xyz       VF26,VF30,VF27                               sq            VF26,-12(VI10)                      
+         add.xyz       VF26,VF29,VF27                               sq            VF26,-20(VI10)                             ;	STALL_LATENCY ?3
+         NOP                                                        sq            VF26,-16(VI10)                             ;	STALL_LATENCY ?3
+         add.xyz       VF26,VF28,VF27                               sq            VF26,-8(VI10)                       
+         NOP                                                        lq            VF27,-1(VI12)                       
+         sub.w         VF26,VF00,VF00                               sq            VF26,-4(VI10)                              ;	STALL_LATENCY ?2
+         max.xy        VF26,VF27,VF27                               mr32.yz       VF27,VF27                           
+         NOP                                                        mr32.z        VF26,VF00                           
+         NOP                                                        mr32.xy       VF28,VF27                                  ;	STALL_LATENCY ?2
+         NOP                                                        sq            VF26,-22(VI10)                      
+         max.x         VF26,VF28,VF28                               sq            VF26,-10(VI10)                             ;	STALL_LATENCY ?2
+         max.y         VF26,VF28,VF28                               sq            VF26,-18(VI10)                             ;	STALL_LATENCY ?3
+         NOP                                                        sq            VF26,-14(VI10)                             ;	STALL_LATENCY ?3
+         max.x         VF26,VF27,VF27                               sq            VF26,-6(VI10)                       
+         NOP                                                        sq            VF26,-2(VI10)                              ;	STALL_LATENCY ?3
+         NOP                                                        lq            VF26,-2(VI13)                       
+         NOP                                                        sq            VF26,-21(VI10)                             ;	STALL_LATENCY ?3
+         NOP                                                        sq            VF26,-17(VI10)                      
+         NOP                                                        sq            VF26,-13(VI10)                      
+         NOP                                                        sq            VF26,-9(VI10)                       
+         NOP                                                        sq            VF26,-5(VI10)                       
+         NOP                                                        b             xg_decode_loop_lid                  
+         NOP                                                        sq            VF26,-1(VI10)                       
+xg_decode_done_lid:
+; _LNOPT_w=[ normal2 ] 2 [1 0] 2   [xg_decode_done_lid]
+         NOP                                                     iaddiu        VI15,VI00,0x00000006
+         NOP                                                        jr            VI15
+         NOP                                                        NOP
+		.align 4
+vsmGeneralClipGlowX2GDecode_CodeEnd:
+;	iCount=50
+; register stats:
+;   7 VU User integer
+;   7 VU User floating point

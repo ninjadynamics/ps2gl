@@ -100,14 +100,24 @@ public:
    general_clip_tri_x2 image. This separation is load-bearing: compiling
    "decoder + x2" as one VCL unit rescheduled the whole clipper and produced
    building-height radial fans on hardware. Four descriptors per buffer =
-   eight tris, preserving x2's 39-vert output-cap contract. */
+   eight tris, preserving X2's normal activation and its lossless output spill. */
 class CClipTriX2DRenderer : public CClipTriX2Renderer {
     const void* DecoderCode;
     int DecoderCodeSize;
     unsigned int DecoderAddr64;
+    int DescriptorElements;
+    int DescriptorColorWords;
+    int DescriptorColorOffset;
 
     void DrawBlockX2D(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxElemsPerBuffer);
     void FinishBufferX2D(CVifSCDmaPacket& packet, int numElems);
+
+protected:
+    // Shared upload/activation machinery; the legacy public constructor
+    // retains its three-element byte-color ABI. Exact-corner descriptors use
+    // four elements and float colors through the separate X2Q primitive.
+    CClipTriX2DRenderer(const void* decoder, int decoderSize,
+        const char* name, uint64_t prop, int elements, int colorWords);
 
 public:
     CClipTriX2DRenderer();
