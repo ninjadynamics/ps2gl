@@ -177,6 +177,41 @@ GLboolean pglUsesCachedImmediateGeometry(void)
     return PGL_CACHED_IMMEDIATE_GEOMETRY ? GL_TRUE : GL_FALSE;
 }
 
+template <int WordsPerVertex>
+static inline const float* WriteTexturedQuads2D(const float* quads, int count,
+    bool corners, float* p, float* t)
+{
+    const float* q = quads;
+    // Both widths share the exact source mapping. Width branches disappear
+    // in each template instance; rectangle/corner layout is unswitched once.
+    if (corners) {
+        for (int i = 0; i < count; ++i, q += 16, p += 4 * WordsPerVertex, t += 8) {
+            p[0] = q[0]; p[1] = q[1]; p[2] = 0.0f;
+            p[WordsPerVertex] = q[4]; p[WordsPerVertex + 1] = q[5]; p[WordsPerVertex + 2] = 0.0f;
+            p[2 * WordsPerVertex] = q[8]; p[2 * WordsPerVertex + 1] = q[9]; p[2 * WordsPerVertex + 2] = 0.0f;
+            p[3 * WordsPerVertex] = q[12]; p[3 * WordsPerVertex + 1] = q[13]; p[3 * WordsPerVertex + 2] = 0.0f;
+            if (WordsPerVertex == 4) {
+                p[3] = 1.0f; p[7] = 1.0f; p[11] = 1.0f; p[15] = 1.0f;
+            }
+            t[0] = q[2]; t[1] = q[3]; t[2] = q[6]; t[3] = q[7];
+            t[4] = q[10]; t[5] = q[11]; t[6] = q[14]; t[7] = q[15];
+        }
+    } else {
+        for (int i = 0; i < count; ++i, q += 8, p += 4 * WordsPerVertex, t += 8) {
+            p[0] = q[0]; p[1] = q[3]; p[2] = 0.0f;
+            p[WordsPerVertex] = q[0]; p[WordsPerVertex + 1] = q[1]; p[WordsPerVertex + 2] = 0.0f;
+            p[2 * WordsPerVertex] = q[2]; p[2 * WordsPerVertex + 1] = q[1]; p[2 * WordsPerVertex + 2] = 0.0f;
+            p[3 * WordsPerVertex] = q[2]; p[3 * WordsPerVertex + 1] = q[3]; p[3 * WordsPerVertex + 2] = 0.0f;
+            if (WordsPerVertex == 4) {
+                p[3] = 1.0f; p[7] = 1.0f; p[11] = 1.0f; p[15] = 1.0f;
+            }
+            t[0] = q[4]; t[1] = q[7]; t[2] = q[4]; t[3] = q[5];
+            t[4] = q[6]; t[5] = q[5]; t[6] = q[6]; t[7] = q[7];
+        }
+    }
+    return q;
+}
+
 bool CImmGeomManager::TryDrawTexturedQuads2D(const float* quads, int count, bool corners)
 {
     // Validate the ENTIRE run before reserving or changing renderer state.
@@ -189,32 +224,22 @@ bool CImmGeomManager::TryDrawTexturedQuads2D(const float* quads, int count, bool
         !CurTexCoordBuf->CanReserveWords(count * 8))
         return false;
 
-    float* const vertices = (float*)CurVertexBuf->ReserveWords(count * 16);
+    int wordsPerVertex = 4;
+#if PGL_BULK_QUAD_XYZ3
+    // The stock quad programs read XYZ and supply homogeneous W themselves.
+    // Do not infer the next renderer from flags while a change is pending.
+    if (Prim == GL_QUADS && RendererManager.CanReuseUnlitQuadRenderer())
+        wordsPerVertex = 3;
+#endif
+    float* const vertices = (float*)CurVertexBuf->ReserveWords(count * 4 * wordsPerVertex);
     float* const texcoords = (float*)CurTexCoordBuf->ReserveWords(count * 8);
-    float* p = vertices;
-    float* t = texcoords;
-    const float* q = quads;
-    // Unswitch layout once per run; share all reservation, renderer and
-    // lifetime handling with the existing rectangle path.
-    if (corners) {
-        for (int i = 0; i < count; ++i, q += 16, p += 16, t += 8) {
-            p[0] = q[0]; p[1] = q[1]; p[2] = 0.0f; p[3] = 1.0f;
-            p[4] = q[4]; p[5] = q[5]; p[6] = 0.0f; p[7] = 1.0f;
-            p[8] = q[8]; p[9] = q[9]; p[10] = 0.0f; p[11] = 1.0f;
-            p[12] = q[12]; p[13] = q[13]; p[14] = 0.0f; p[15] = 1.0f;
-            t[0] = q[2]; t[1] = q[3]; t[2] = q[6]; t[3] = q[7];
-            t[4] = q[10]; t[5] = q[11]; t[6] = q[14]; t[7] = q[15];
-        }
-    } else {
-        for (int i = 0; i < count; ++i, q += 8, p += 16, t += 8) {
-            p[0] = q[0]; p[1] = q[3]; p[2] = 0.0f; p[3] = 1.0f;
-            p[4] = q[0]; p[5] = q[1]; p[6] = 0.0f; p[7] = 1.0f;
-            p[8] = q[2]; p[9] = q[1]; p[10] = 0.0f; p[11] = 1.0f;
-            p[12] = q[2]; p[13] = q[3]; p[14] = 0.0f; p[15] = 1.0f;
-            t[0] = q[4]; t[1] = q[7]; t[2] = q[4]; t[3] = q[5];
-            t[4] = q[6]; t[5] = q[5]; t[6] = q[6]; t[7] = q[7];
-        }
-    }
+    const float* q;
+#if PGL_BULK_QUAD_XYZ3
+    if (wordsPerVertex == 3)
+        q = WriteTexturedQuads2D<3>(quads, count, corners, vertices, texcoords);
+    else
+#endif
+        q = WriteTexturedQuads2D<4>(quads, count, corners, vertices, texcoords);
 
     if (Prim != GL_QUADS) PrimChanged(GL_QUADS);
     Geometry.SetPrimType(GL_QUADS);
@@ -227,7 +252,7 @@ bool CImmGeomManager::TryDrawTexturedQuads2D(const float* quads, int count, bool
     Geometry.SetTexCoordsAreValid(true);
     Geometry.SetNormalsAreValid(false);
     Geometry.SetColorsAreValid(false);
-    Geometry.SetWordsPerVertex(4);
+    Geometry.SetWordsPerVertex(wordsPerVertex);
     Geometry.SetWordsPerNormal(3);
     Geometry.SetWordsPerTexCoord(2);
     Geometry.SetWordsPerColor(4);

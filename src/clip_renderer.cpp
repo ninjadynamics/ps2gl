@@ -80,6 +80,13 @@ void CClipTriRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool use
     // microcode consumes plain tri lists (tri-strip prim + ADC on the first
     // two verts of each tri, like general_nospec_tri), which is exactly what
     // GL_TRIANGLES builds.
+#if PGL_CLIP_CONTEXT_DELTA
+    // Only the original GeneralClipTri program has this uniform-color layout.
+    // Its q58..61 material and q62..65 transform words match the stock unlit
+    // writer. Reuse the exact delta/restart path; X2 and arbitrary custom
+    // programs remain excluded. A prior full upload establishes ownership.
+    if (TryUnlitContextDelta(GL_TRIANGLES, rcChanges, userRcChanged, true)) return;
+#endif
 #if PGL_SPARSE_CLIP_CONTEXT
     if (!pGLContext->GetImmLighting().GetLightingEnabled()) {
         // The original GeneralClipTri VU program reads q0,57..60,62..65,
@@ -87,10 +94,16 @@ void CClipTriRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool use
         // Keep its existing transform, near-plane math, fan emission and
         // uniform color/fog. Do not substitute X2's vertex-alpha semantics.
         InitLinearContext(GL_TRIANGLES, true);
+#if PGL_CLIP_CONTEXT_DELTA
+        NoteUnlitContext(pGLContext->GetVif1Packet(), GL_TRIANGLES, true);
+#endif
         return;
     }
 #endif
     CLinearRenderer::InitContext(GL_TRIANGLES, rcChanges, userRcChanged);
+#if PGL_CLIP_CONTEXT_DELTA
+    NoteUnlitContext(pGLContext->GetVif1Packet(), GL_TRIANGLES, true);
+#endif
 }
 
 void CClipTriRenderer::DrawLinearArrays(CGeometryBlock& block)

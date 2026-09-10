@@ -105,9 +105,10 @@ protected:
     void AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset,
         bool sparseUnlit = false);
     bool CanUseUnlitContextDelta(const CVifSCDmaPacket& packet, GLenum primType,
-        uint32_t changes, bool userChanged) const;
+        uint32_t changes, bool userChanged, bool originalClip) const;
     void AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes);
-    void NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType);
+    void NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType,
+        bool originalClip = false);
     tGifTag BuildGiftag(GLenum primType);
     void CacheRendererState();
 

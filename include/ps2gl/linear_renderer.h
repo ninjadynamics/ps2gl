@@ -18,6 +18,8 @@ class CLinearRenderer : public CBaseRenderer {
 protected:
     // Identical activation/fences for full and verified sparse contexts.
     void InitLinearContext(GLenum primType, bool sparseUnlit);
+    bool TryUnlitContextDelta(GLenum primType, uint32_t changes,
+        bool userChanged, bool originalClip = false);
     // Sparse fixed-address context shared by the unlit X2 and textured lanes.
     void InitUnlitContext();
     int InputGeomBufSize;

@@ -12,6 +12,7 @@
  */
 
 #include "ps2s/cpu_matrix.h"
+#include "GL/ps2gl.h"
 
 #include "ps2gl/glcontext.h"
 #include "ps2gl/immgmanager.h"
@@ -113,6 +114,17 @@ public:
     // Centered viewport squish (glViewport): 1.0 = full frame. Persisted across
     // SetDrawBuffers so a layout switch keeps the active "screen fit".
     float VpScaleX, VpScaleY;
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+    // Pure coefficients of persistent raster/fog state, not a VU-RAM proof.
+    // Matrix/material changes do not change any of these divisions.
+    mutable bool ClipCoefficientsValid, FogCoefficientValid;
+    mutable float CachedDepthClipToGs, CachedFogScale;
+    mutable int CachedWidth, CachedHeight, CachedDepthBits;
+    mutable float CachedFogStart, CachedFogEnd;
+    mutable cpu_vec_xyz CachedClipScales;
+    void UpdateClipCoefficients() const;
+    void UpdateFogCoefficient() const;
+#endif
 
 public:
     CImmDrawContext(CGLContext& context);
@@ -146,7 +158,30 @@ public:
     }
 
     int GetDepthBits() const { return DepthBits; }
-    void SetDepthBits(int depth) { DepthBits = depth; }
+    void SetDepthBits(int depth) {
+        DepthBits = depth;
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+        ClipCoefficientsValid = false;
+#endif
+    }
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+    float GetContextDepthScale() const {
+        if (!ClipCoefficientsValid || CachedDepthBits != DepthBits) UpdateClipCoefficients();
+        return CachedDepthClipToGs;
+    }
+    const cpu_vec_xyz& GetContextClipScales() const {
+        // These legacy state fields are public. Also detect direct writes,
+        // rather than relying only on the normal GL setter invalidations.
+        if (!ClipCoefficientsValid || CachedWidth != Width || CachedHeight != Height
+            || CachedDepthBits != DepthBits) UpdateClipCoefficients();
+        return CachedClipScales;
+    }
+    float GetContextFogScale() const {
+        if (!FogCoefficientValid || CachedFogStart != FogStart || CachedFogEnd != FogEnd)
+            UpdateFogCoefficient();
+        return CachedFogScale;
+    }
+#endif
     float GetDepthOffset() const { return DepthOffset; }
     void SetDepthOffset(float units);
 

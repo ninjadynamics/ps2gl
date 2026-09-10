@@ -5,6 +5,7 @@
 	  main directory of this archive for more details.                             */
 
 #include "ps2s/drawenv.h"
+#include "ps2s/math.h"
 
 #include "GL/ps2gl.h"
 
@@ -47,6 +48,10 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , Height(0)
     , VpScaleX(1.0f)
     , VpScaleY(1.0f)
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+    , ClipCoefficientsValid(false)
+    , FogCoefficientValid(false)
+#endif
 {
     GSScale.set_identity();
 
@@ -91,6 +96,9 @@ void CImmDrawContext::SetDrawBuffers(bool interlaced,
     int width = frame0Mem->GetWidth(), height = frame0Mem->GetHeight();
     Width  = width;
     Height = height;
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+    ClipCoefficientsValid = false;
+#endif
 
     // get max depth buffer value
 
@@ -218,6 +226,35 @@ CImmDrawContext::GetVertexXform()
     return VertexXform;
 }
 
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+void CImmDrawContext::UpdateClipCoefficients() const
+{
+    // Match AddVu1RendererContext and InitUnlitContext literally. In
+    // particular, keep both half/double operations and the final 1.003 multiply;
+    // do not reassociate to a reciprocal or use the screen-fit raster scale.
+    CachedDepthClipToGs = (float)((1 << DepthBits) - 1) / 2.0f;
+    float xClip = 2048.0f / (Width * 0.5f * 2.0f);
+    CachedClipScales.x = Math::Max(xClip, 1.0f);
+    float yClip = 2048.0f / (Height * 0.5f * 2.0f);
+    CachedClipScales.y = Math::Max(yClip, 1.0f);
+    float depthClip = 2048.0f / CachedDepthClipToGs;
+    depthClip *= 1.003f;
+    CachedClipScales.z = depthClip;
+    CachedWidth = Width;
+    CachedHeight = Height;
+    CachedDepthBits = DepthBits;
+    ClipCoefficientsValid = true;
+}
+
+void CImmDrawContext::UpdateFogCoefficient() const
+{
+    CachedFogScale = (FogEnd > FogStart) ? 255.0f / (FogEnd - FogStart) : 0.0f;
+    CachedFogStart = FogStart;
+    CachedFogEnd = FogEnd;
+    FogCoefficientValid = true;
+}
+#endif
+
 void CImmDrawContext::SetDoSmoothShading(bool yesNo)
 {
     if (DoSmoothShading != yesNo) {
@@ -259,6 +296,9 @@ void CImmDrawContext::SetFogRange(float start, float end)
     if (FogStart != start || FogEnd != end) {
         FogStart = start;
         FogEnd   = end;
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+        FogCoefficientValid = false;
+#endif
         GLContext.ShadingChanged();
     }
 }

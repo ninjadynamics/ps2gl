@@ -109,6 +109,24 @@
 #error "PGL_UNLIT_CONTEXT_DELTA must be 0 or 1"
 #endif
 
+/* Extend the proven context-delta spans to the original GeneralClipTri
+ * renderer only. Other custom VU programs retain their existing contracts. */
+#ifndef PGL_CLIP_CONTEXT_DELTA
+#define PGL_CLIP_CONTEXT_DELTA 1
+#endif
+#if PGL_CLIP_CONTEXT_DELTA != 0 && PGL_CLIP_CONTEXT_DELTA != 1
+#error "PGL_CLIP_CONTEXT_DELTA must be 0 or 1"
+#endif
+
+/* Cache scalar depth/clip/fog coefficients at the owning state boundaries.
+ * Original arithmetic and uploaded context words remain unchanged. */
+#ifndef PGL_CONTEXT_COEFFICIENT_CACHE
+#define PGL_CONTEXT_COEFFICIENT_CACHE 1
+#endif
+#if PGL_CONTEXT_COEFFICIENT_CACHE != 0 && PGL_CONTEXT_COEFFICIENT_CACHE != 1
+#error "PGL_CONTEXT_COEFFICIENT_CACHE must be 0 or 1"
+#endif
+
 /* Exact byte-to-float color mapping, replacing four software double divides.
  * The public float values and color/material/display-list behavior stay the
  * same. Rebuild ps2gl EE after changing either gate below. */
@@ -126,6 +144,16 @@
 #endif
 #if PGL_BULK_QUAD_CORNERS != 0 && PGL_BULK_QUAD_CORNERS != 1
 #error "PGL_BULK_QUAD_CORNERS must be 0 or 1"
+#endif
+
+/* Omit unused source W in stable stock unlit quad runs. The existing VIF
+ * XYZ unpack and quad shader still produce the same homogeneous position.
+ * Unknown/custom/changing renderer ownership keeps the XYZW source path. */
+#ifndef PGL_BULK_QUAD_XYZ3
+#define PGL_BULK_QUAD_XYZ3 1
+#endif
+#if PGL_BULK_QUAD_XYZ3 != 0 && PGL_BULK_QUAD_XYZ3 != 1
+#error "PGL_BULK_QUAD_XYZ3 must be 0 or 1"
 #endif
 
 /* Defer immediate glLoadMatrixf inversion until an inverse is consumed.
@@ -198,7 +226,10 @@ extern GLboolean pglUsesCachedImmediateGeometry(void);
  * bit8=unchanged color/material suppression, bit9=unchanged blend/alpha test,
  * bit10=identical resident managed texture synchronization reuse,
  * bit11=stock unlit context delta, bit12=exact byte-color lookup,
- * bit13=caller-ordered immediate quad-corner runs.
+ * bit13=caller-ordered immediate quad-corner runs,
+ * bit14=original GeneralClipTri context delta,
+ * bit15=state-owned scalar context coefficients,
+ * bit16=XYZ source packing for stable stock unlit quad runs.
  * Query once per report, not per vertex. */
 extern unsigned int pglGetContextOptimizationFlags(void);
 extern void pglFinish(void);

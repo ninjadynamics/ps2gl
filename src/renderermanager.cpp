@@ -646,7 +646,7 @@ bool CRendererManager::UpdateNewRenderer()
 
 void CRendererManager::MakeNewRendererCurrent()
 {
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     mAssert(NewRenderer != NULL);

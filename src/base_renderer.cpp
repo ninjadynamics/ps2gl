@@ -33,28 +33,31 @@ extern "C" unsigned int pglGetContextOptimizationFlags(void)
         | (PGL_LAZY_MATRIX_INVERSE << 6) | (PS2S_MATRIX_VU0 << 7)
         | (PGL_SKIP_REDUNDANT_COLOR << 8) | (PGL_SKIP_REDUNDANT_BLEND_ALPHA << 9)
         | (PGL_SKIP_REDUNDANT_TEXTURE_SYNC << 10) | (PGL_UNLIT_CONTEXT_DELTA << 11)
-        | (PGL_COLOR4UB_LUT << 12) | (PGL_BULK_QUAD_CORNERS << 13);
+        | (PGL_COLOR4UB_LUT << 12) | (PGL_BULK_QUAD_CORNERS << 13)
+        | (PGL_CLIP_CONTEXT_DELTA << 14) | (PGL_CONTEXT_COEFFICIENT_CACHE << 15)
+        | (PGL_BULK_QUAD_XYZ3 << 16);
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
 // A proof about the last context written to this ordered VIF chain, not a
 // cross-frame cache of VU RAM. Frame/reset/program transitions invalidate it.
 static const CBaseRenderer* unlitContextOwner;
 static const CVifSCDmaPacket* unlitContextPacket;
 static GLenum unlitContextPrim;
+static bool unlitContextOriginalClip;
 #endif
 
 extern "C" void pglInvalidateUnlitContextDelta(void)
 {
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
     unlitContextOwner = NULL;
     unlitContextPacket = NULL;
 #endif
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
 bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
-    GLenum primType, uint32_t changes, bool userChanged) const
+    GLenum primType, uint32_t changes, bool userChanged, bool originalClip) const
 {
     const uint32_t allowed = RendererCtxtFlags::Xform | RendererCtxtFlags::CurMaterial;
     CGLContext& context = *pGLContext;
@@ -63,10 +66,11 @@ bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
     // back: draw-buffer/layout transitions can change clip/depth fields.
     return changes != 0 && (changes & ~allowed) == 0 && !userChanged
         && unlitContextOwner == this && unlitContextPacket == &packet
+        && unlitContextOriginalClip == originalClip
         && unlitContextPrim == primType && !context.InDListDef()
         && context.GetGsContextChanged() == 0
         && !context.GetImmLighting().GetLightingEnabled()
-        && !context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom();
+        && context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() == originalClip;
 }
 
 void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
@@ -100,17 +104,19 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
     packet.CloseUnpack();
 }
 
-void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType)
+void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType,
+    bool originalClip)
 {
     CGLContext& context = *pGLContext;
     if (context.InDListDef() || context.GetImmLighting().GetLightingEnabled()
-        || context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom()) {
+        || context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() != originalClip) {
         pglInvalidateUnlitContextDelta();
         return;
     }
     unlitContextOwner = this;
     unlitContextPacket = &packet;
     unlitContextPrim = primType;
+    unlitContextOriginalClip = originalClip;
 }
 #endif
 
@@ -300,7 +306,7 @@ void CBaseRenderer::XferBlock(CVifSCDmaPacket& packet,
 void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset,
     bool sparseUnlit)
 {
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     CGLContext& glContext = *pGLContext;
@@ -437,7 +443,11 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         packet += globalAmb.z;
 
         // stick in the offset to convert clip space depth value to GS
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+        float depthClipToGs = drawContext.GetContextDepthScale();
+#else
         float depthClipToGs = (float)((1 << drawContext.GetDepthBits()) - 1) / 2.0f;
+#endif
         // Both classic and X2 add this AFTER perspective division. Bias only
         // the output depth; depthClipToGs below still describes clipping.
         packet += depthClipToGs + drawContext.GetDepthOffset();
@@ -503,6 +513,12 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
 
         // add info used by clipping code
         // first the dimensions of the framebuffer
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+        const cpu_vec_xyz& clipScales = drawContext.GetContextClipScales();
+        packet += clipScales.x;
+        packet += clipScales.y;
+        packet += clipScales.z;
+#else
         float xClip = (float)2048.0f / (drawContext.GetFBWidth() * 0.5f * 2.0f);
         packet += Math::Max(xClip, 1.0f);
         float yClip = (float)2048.0f / (drawContext.GetFBHeight() * 0.5f * 2.0f);
@@ -511,14 +527,19 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         // FIXME: maybe these 2048's should be 2047.5s...
         depthClip *= 1.003f; // round up a bit for fp error (????)
         packet += depthClip;
+#endif
         // enable/disable clipping
         packet += (drawContext.GetDoClipping()) ? 1 : 0;
 
         // GS hardware fog params (kFogParams, see vu1/geometry.i fog_coef):
         // x unused, y = F clamp max, z = 255/(far - near), w = eye far Z
-        float fogStart = drawContext.GetFogStart();
         float fogEnd   = drawContext.GetFogEnd();
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+        float fogScale = drawContext.GetContextFogScale();
+#else
+        float fogStart = drawContext.GetFogStart();
         float fogScale = (fogEnd > fogStart) ? 255.0f / (fogEnd - fogStart) : 0.0f;
+#endif
         // x rides the eye-space near plane for the VU1 clip renderer
         // (pglSetClipNear); the stock renderers never read it
         packet += drawContext.GetClipNear();
@@ -570,7 +591,7 @@ void CBaseRenderer::CacheRendererState()
 
 void CBaseRenderer::Load()
 {
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     unsigned int size64     = MicrocodePacketSize / 8;

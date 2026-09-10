@@ -68,6 +68,17 @@ public:
 
     bool IsCurRendererCustom() const { return ((uint32_t)CurrentRenderer >= (uint32_t)UserRenderers); }
 
+    // No prediction or selection side effects: a pending change, custom
+    // owner or different primitive retains the caller's four-word input.
+    bool CanReuseUnlitQuadRenderer() const
+    {
+        return CurrentRenderer != NULL && !RendererReqsHaveChanged && !IsCurRendererCustom()
+            && RendererRequirements.PrimType == RendererProps::kQuads
+            && RendererRequirements.ArrayAccess == RendererProps::kLinear
+            && RendererRequirements.Lighting == 0
+            && RendererRequirements.PerVtxMaterial == RendererProps::kNoMaterial;
+    }
+
     // state updates
 
     void EnableCustom(uint64_t flag);

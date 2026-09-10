@@ -51,7 +51,7 @@ void CLinearRenderer::DrawLinearArrays(CGeometryBlock& block)
 
 void CLinearRenderer::InitUnlitContext()
 {
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     // X2 is unlit even when the application's fixed-function LIGHTING flag
@@ -69,7 +69,11 @@ void CLinearRenderer::InitUnlitContext()
 #endif
     CImmDrawContext& drawContext = pGLContext->GetImmDrawContext();
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+    const float depthClipToGs = drawContext.GetContextDepthScale();
+#else
     const float depthClipToGs = (float)((1 << drawContext.GetDepthBits()) - 1) / 2.0f;
+#endif
 
     packet.Cnt();
     packet.Stcycl(1, 1);
@@ -104,6 +108,12 @@ void CLinearRenderer::InitUnlitContext()
     GLenum newPrimType = drawContext.GetPolygonMode();
     if (newPrimType == GL_FILL) newPrimType = GL_TRIANGLES;
     packet += BuildGiftag(newPrimType & 0xff);
+#if PGL_CONTEXT_COEFFICIENT_CACHE
+    const cpu_vec_xyz& clipScales = drawContext.GetContextClipScales();
+    packet += clipScales.x;
+    packet += clipScales.y;
+    packet += clipScales.z;
+#else
     const float xClip = 2048.0f / (drawContext.GetFBWidth() * 0.5f * 2.0f);
     const float yClip = 2048.0f / (drawContext.GetFBHeight() * 0.5f * 2.0f);
     packet += Math::Max(xClip, 1.0f);
@@ -111,6 +121,7 @@ void CLinearRenderer::InitUnlitContext()
     float depthClip = 2048.0f / depthClipToGs;
     depthClip *= 1.003f;
     packet += depthClip;
+#endif
     packet += (drawContext.GetDoClipping()) ? 1 : 0;
     // X2 reads only near (.x): F comes from vertex alpha, not these legacy
     // depth-fog coefficients. Leave the unread components deterministic.
@@ -132,13 +143,14 @@ void CLinearRenderer::InitUnlitContext()
     CacheRendererState();
 }
 
-void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+bool CLinearRenderer::TryUnlitContextDelta(GLenum primType, uint32_t changes,
+    bool userChanged, bool originalClip)
 {
-#if PGL_UNLIT_CONTEXT_DELTA
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
-    if (CanUseUnlitContextDelta(packet, primType, rcChanges, userRcChanged)) {
+    if (CanUseUnlitContextDelta(packet, primType, changes, userChanged, originalClip)) {
         packet.Cnt();
-        AddUnlitContextDelta(packet, rcChanges);
+        AddUnlitContextDelta(packet, changes);
         // The programs latch transforms/fog (and some latch constant color)
         // before --cont. Keep their original restart and double-buffer setup.
         packet.Mscal(0);
@@ -147,9 +159,17 @@ void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool user
         packet.Offset(kDoubleBufOffset);
         packet.CloseTag();
         CacheRendererState();
-        NoteUnlitContext(packet, primType);
-        return;
+        NoteUnlitContext(packet, primType, originalClip);
+        return true;
     }
+    return false;
+}
+#endif
+
+void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
+{
+#if PGL_UNLIT_CONTEXT_DELTA
+    if (TryUnlitContextDelta(primType, rcChanges, userRcChanged)) return;
 #endif
     bool sparseUnlit = false;
 #if PGL_SPARSE_UNLIT_CONTEXT
@@ -158,7 +178,7 @@ void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool user
 #endif
     InitLinearContext(primType, sparseUnlit);
 #if PGL_UNLIT_CONTEXT_DELTA
-    NoteUnlitContext(packet, primType);
+    NoteUnlitContext(pGLContext->GetVif1Packet(), primType);
 #endif
 }
 
