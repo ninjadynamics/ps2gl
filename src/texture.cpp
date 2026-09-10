@@ -17,6 +17,7 @@
 
 #include "kernel.h"
 #include <stdio.h>
+#include <string.h>
 
 /********************************************
  * CTexManager
@@ -30,6 +31,10 @@ CTexManager::CTexManager(CGLContext& context)
     , LastTexSent(NULL)
     , CurClut(NULL)
     , TexMode(GS::TexMode::kModulate)
+    , LastClutSent(NULL)
+    , LastTexturePacket(NULL)
+    , LastTextureSerial(0)
+    , LastTexModeSent(GS::TexMode::kModulate)
 {
     // clear the texture name entries
     for (int i      = 0; i < NumTexNames; i++)
@@ -99,9 +104,12 @@ public:
 
 void CTexManager::SetTexMode(GS::tTexMode mode)
 {
-    if (!InsideDListDef)
+    if (!InsideDListDef) {
+#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
+        if (TexMode != mode) GLContext.TextureChanged();
+#endif
         TexMode = mode;
-    else {
+    } else {
         CDList& dlist = GLContext.GetDListManager().GetOpenDList();
         dlist += CSetTexModeCmd(mode);
     }
@@ -135,18 +143,51 @@ void CTexManager::GenTextures(GLsizei numNewTexNames, GLuint* newTexNames)
     }
 }
 
+bool CTexManager::CanReuseTextureSync(const CVifSCDmaPacket& packet, CMMClut* clut)
+{
+#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
+    // Check at synchronization, never at glBindTexture: uploads or a custom
+    // kick may intervene between that call and the draw that consumes it.
+    if (InsideDListDef || LastTexSent != CurTexture || LastTexturePacket != &packet ||
+        LastTextureSerial == 0 || LastTextureSerial != GS::CTexEnv::GetTextureSyncSerial() ||
+        LastTexModeSent != TexMode || LastClutSent != clut ||
+        GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() ||
+        CurTexture->GetContext() != GS::kContext1 ||
+        !CurTexture->HasManagedResidentImage() ||
+        memcmp(LastTextureSettings, CurTexture->GetSettingsBlock(), sizeof(LastTextureSettings)) != 0)
+        return false;
+    const GS::tPSM psm = CurTexture->GetPSM();
+    if (psm == GS::kPsm4 || psm == GS::kPsm4hl || psm == GS::kPsm4hh)
+        return false; // retain the legacy 4-bit palette route without extending it
+    // Load originally touches the palette first, then the image. Preserve
+    // that MRU order even when no register/upload packet is necessary.
+    if (clut && (CurTexture->GetClutGsAddr() != clut->GetGsAddr() || !clut->TouchIfResident()))
+        return false;
+    return CurTexture->TouchImageIfResident();
+#else
+    (void)packet;
+    (void)clut;
+    return false;
+#endif
+}
+
 void CTexManager::UseCurTexture(CVifSCDmaPacket& renderPacket)
 {
     if (IsTexEnabled) {
         GS::tPSM psm = CurTexture->GetPSM();
+        CMMClut* clut = NULL;
+        if (psm == GS::kPsm8 || psm == GS::kPsm8h) {
+            clut = CurTexture->GetOwnClut();
+            if (clut == NULL) clut = CurClut;
+        }
+#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
+        if (CanReuseTextureSync(renderPacket, clut)) return;
+#endif
         // do we need to send the clut?
         if (psm == GS::kPsm8 || psm == GS::kPsm8h) {
             // HyperSolar: prefer the texture's own palette so simultaneous
             // PSMT8 textures don't collide on the manager-global CurClut. Fall
             // back to CurClut for the legacy single-paletted-texture path.
-            CMMClut* clut = CurTexture->GetOwnClut();
-            if (clut == NULL)
-                clut = CurClut;
             mErrorIf(clut == NULL,
                 "Trying to use an indexed-color texture with no color table given!");
             clut->Load(renderPacket);
@@ -155,6 +196,22 @@ void CTexManager::UseCurTexture(CVifSCDmaPacket& renderPacket)
         // use the texture
         CurTexture->SetTexMode(TexMode);
         CurTexture->Use(renderPacket);
+#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
+        // Capture only AFTER Use has queued any necessary image/CLUT upload,
+        // TEXFLUSH and complete settings. Any later texture writer invalidates
+        // this proof, including context2's globally shared TEXA/CLUT effects.
+        if (InsideDListDef || !CurTexture->HasManagedResidentImage() ||
+            GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom()) {
+            LastTexSent = NULL;
+            return;
+        }
+        LastTexSent = CurTexture;
+        LastClutSent = clut;
+        LastTexturePacket = &renderPacket;
+        LastTextureSerial = GS::CTexEnv::GetTextureSyncSerial();
+        LastTexModeSent = TexMode;
+        memcpy(LastTextureSettings, CurTexture->GetSettingsBlock(), sizeof(LastTextureSettings));
+#endif
     }
 }
 
@@ -228,6 +285,11 @@ void CTexManager::SetCurTexParam(GLenum pname, GLint param)
 {
     if (!InsideDListDef) {
         CMMTexture& tex = *CurTexture;
+#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
+        // Parameter-only edits must reach the next draw even without a bind.
+        // Keep validation/conversion in the original switch below.
+        GLContext.TextureChanged();
+#endif
 
         switch (pname) {
         case GL_TEXTURE_MIN_FILTER:

@@ -78,6 +78,10 @@ public:
     CClearEnv* ClearEnv;
 
     bool FrameIsDblBuffered;
+    // A raw context-1 override may differ from DrawEnv until its next full send.
+    bool DrawEnvOverridden;
+    void NoteDrawEnvOverride() { DrawEnvOverridden = true; }
+    void NoteDrawEnvSubmission() { DrawEnvOverridden = false; }
 
     // gl state
     bool DoSmoothShading;

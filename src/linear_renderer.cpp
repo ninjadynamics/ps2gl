@@ -51,6 +51,9 @@ void CLinearRenderer::DrawLinearArrays(CGeometryBlock& block)
 
 void CLinearRenderer::InitUnlitContext()
 {
+#if PGL_UNLIT_CONTEXT_DELTA
+    pglInvalidateUnlitContextDelta();
+#endif
     // X2 is unlit even when the application's fixed-function LIGHTING flag
     // selects it. Its generated program reads only these context qwords:
     // 0.w, 57.w, 62..65, 75, 76 and 77.x. X2D uses the same context; the
@@ -131,12 +134,42 @@ void CLinearRenderer::InitUnlitContext()
 
 void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
 {
+#if PGL_UNLIT_CONTEXT_DELTA
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+    if (CanUseUnlitContextDelta(packet, primType, rcChanges, userRcChanged)) {
+        packet.Cnt();
+        AddUnlitContextDelta(packet, rcChanges);
+        // The programs latch transforms/fog (and some latch constant color)
+        // before --cont. Keep their original restart and double-buffer setup.
+        packet.Mscal(0);
+        packet.Flushe();
+        packet.Base(kDoubleBufBase);
+        packet.Offset(kDoubleBufOffset);
+        packet.CloseTag();
+        CacheRendererState();
+        NoteUnlitContext(packet, primType);
+        return;
+    }
+#endif
+    bool sparseUnlit = false;
+#if PGL_SPARSE_UNLIT_CONTEXT
+    sparseUnlit = !pGLContext->GetImmLighting().GetLightingEnabled()
+        && !pGLContext->GetImmGeomManager().GetRendererManager().IsCurRendererCustom();
+#endif
+    InitLinearContext(primType, sparseUnlit);
+#if PGL_UNLIT_CONTEXT_DELTA
+    NoteUnlitContext(packet, primType);
+#endif
+}
+
+void CLinearRenderer::InitLinearContext(GLenum primType, bool sparseUnlit)
+{
     CGLContext& glContext   = *pGLContext;
     CVifSCDmaPacket& packet = glContext.GetVif1Packet();
 
     packet.Cnt();
     {
-        AddVu1RendererContext(packet, primType, kContextStart);
+        AddVu1RendererContext(packet, primType, kContextStart, sparseUnlit);
 
         packet.Mscal(0);
         packet.Flushe();

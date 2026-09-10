@@ -5,6 +5,7 @@
 	  main directory of this archive for more details.                             */
 
 #include <stdio.h>
+#include <limits.h>
 
 #include "ps2s/cpu_matrix.h"
 #include "ps2s/displayenv.h"
@@ -18,11 +19,15 @@
 #include "ps2gl/glcontext.h"
 #include "ps2gl/gmanager.h"
 #include "ps2gl/material.h"
+#include "ps2gl/lighting.h"
 #include "ps2gl/matrix.h"
 #include "ps2gl/renderer.h"
 #include "ps2gl/texture.h"
 
 using namespace ArrayType;
+
+static const unsigned int immediateMapping = PGL_CACHED_IMMEDIATE_GEOMETRY
+    ? Core::MemMappings::Normal : Core::MemMappings::UncachedAccl;
 
 /********************************************
  * CImmGeomManager
@@ -32,21 +37,21 @@ CImmGeomManager::CImmGeomManager(CGLContext& context, int immBufferQwordSize)
     : CGeomManager(context)
     , RendererManager(context)
     , VertexBuf0(immBufferQwordSize + immBufferQwordSize % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
     , NormalBuf0(immBufferQwordSize * 4 / 3 + 1 + (immBufferQwordSize * 4 / 3 + 1) % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
     , TexCoordBuf0(immBufferQwordSize / 2 + (immBufferQwordSize / 2) % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
     , ColorBuf0(immBufferQwordSize + immBufferQwordSize % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
     , VertexBuf1(immBufferQwordSize + immBufferQwordSize % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
     , NormalBuf1(immBufferQwordSize * 4 / 3 + 1 + (immBufferQwordSize * 4 / 3 + 1) % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
     , TexCoordBuf1(immBufferQwordSize / 2 + (immBufferQwordSize / 2) % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
     , ColorBuf1(immBufferQwordSize + immBufferQwordSize % 4,
-          DMAC::Channels::vif1, Core::MemMappings::UncachedAccl)
+          DMAC::Channels::vif1, immediateMapping)
 {
     CurVertexBuf   = &VertexBuf0;
     CurNormalBuf   = &NormalBuf0;
@@ -122,6 +127,139 @@ void CImmGeomManager::Vertex(cpu_vec_xyzw newVert)
     Geometry.AddVertices();
     Geometry.AddNormals();
     Geometry.AddTexCoords();
+}
+
+bool CImmGeomManager::TryTexturedQuad2D(float x0, float y0, float x1, float y1,
+    float u0, float v0, float u1, float v1)
+{
+    // Prim describes the last synchronized renderer, not necessarily this
+    // glBegin. Test the pending primitive before touching any cursor/state.
+    if (!InsideBeginEnd || Geometry.GetNewPrimType() != GL_QUADS ||
+        !CurVertexBuf->CanReserveWords(16) ||
+        !CurNormalBuf->CanReserveWords(12) ||
+        !CurTexCoordBuf->CanReserveWords(8))
+        return false;
+
+    float* p = (float*)CurVertexBuf->ReserveWords(16);
+    float* n = (float*)CurNormalBuf->ReserveWords(12);
+    float* t = (float*)CurTexCoordBuf->ReserveWords(8);
+    const cpu_vec_xyz normal = GetCurNormal();
+    // Preserve the GL_QUADS diagonal, homogeneous coordinates and attribute
+    // streams exactly. No temporary arrays, alternate renderer or early flush.
+    p[0] = x0; p[1] = y1; p[2] = 0.0f; p[3] = 1.0f;
+    p[4] = x0; p[5] = y0; p[6] = 0.0f; p[7] = 1.0f;
+    p[8] = x1; p[9] = y0; p[10] = 0.0f; p[11] = 1.0f;
+    p[12] = x1; p[13] = y1; p[14] = 0.0f; p[15] = 1.0f;
+    for (int i = 0; i < 12; i += 3) {
+        n[i] = normal.x; n[i + 1] = normal.y; n[i + 2] = normal.z;
+    }
+    t[0] = u0; t[1] = v1; t[2] = u0; t[3] = v0;
+    t[4] = u1; t[5] = v0; t[6] = u1; t[7] = v1;
+    CurTexCoord[0] = u1;
+    CurTexCoord[1] = v1;
+    Geometry.AddVertices(4);
+    Geometry.AddNormals(4);
+    Geometry.AddTexCoords(4);
+    return true;
+}
+
+GLboolean pglTryTexturedQuad2D(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1,
+    GLfloat u0, GLfloat v0, GLfloat u1, GLfloat v1)
+{
+    // Display-list recording must keep its own manager and command stream.
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().TryTexturedQuad2D(x0, y0, x1, y1,
+        u0, v0, u1, v1) ? GL_TRUE : GL_FALSE;
+}
+
+GLboolean pglUsesCachedImmediateGeometry(void)
+{
+    return PGL_CACHED_IMMEDIATE_GEOMETRY ? GL_TRUE : GL_FALSE;
+}
+
+bool CImmGeomManager::TryDrawTexturedQuads2D(const float* quads, int count, bool corners)
+{
+    // Validate the ENTIRE run before reserving or changing renderer state.
+    // These absent attributes are not read by the unlit uniform-color path.
+    if (InsideBeginEnd || !quads || count <= 0 || count > INT_MAX / 16 ||
+        GLContext.GetImmLighting().GetLightingEnabled() ||
+        GLContext.GetMaterialManager().GetColorMaterialEnabled() ||
+        !GLContext.GetTexManager().GetTexEnabled() ||
+        !CurVertexBuf->CanReserveWords(count * 16) ||
+        !CurTexCoordBuf->CanReserveWords(count * 8))
+        return false;
+
+    float* const vertices = (float*)CurVertexBuf->ReserveWords(count * 16);
+    float* const texcoords = (float*)CurTexCoordBuf->ReserveWords(count * 8);
+    float* p = vertices;
+    float* t = texcoords;
+    const float* q = quads;
+    // Unswitch layout once per run; share all reservation, renderer and
+    // lifetime handling with the existing rectangle path.
+    if (corners) {
+        for (int i = 0; i < count; ++i, q += 16, p += 16, t += 8) {
+            p[0] = q[0]; p[1] = q[1]; p[2] = 0.0f; p[3] = 1.0f;
+            p[4] = q[4]; p[5] = q[5]; p[6] = 0.0f; p[7] = 1.0f;
+            p[8] = q[8]; p[9] = q[9]; p[10] = 0.0f; p[11] = 1.0f;
+            p[12] = q[12]; p[13] = q[13]; p[14] = 0.0f; p[15] = 1.0f;
+            t[0] = q[2]; t[1] = q[3]; t[2] = q[6]; t[3] = q[7];
+            t[4] = q[10]; t[5] = q[11]; t[6] = q[14]; t[7] = q[15];
+        }
+    } else {
+        for (int i = 0; i < count; ++i, q += 8, p += 16, t += 8) {
+            p[0] = q[0]; p[1] = q[3]; p[2] = 0.0f; p[3] = 1.0f;
+            p[4] = q[0]; p[5] = q[1]; p[6] = 0.0f; p[7] = 1.0f;
+            p[8] = q[2]; p[9] = q[1]; p[10] = 0.0f; p[11] = 1.0f;
+            p[12] = q[2]; p[13] = q[3]; p[14] = 0.0f; p[15] = 1.0f;
+            t[0] = q[4]; t[1] = q[7]; t[2] = q[4]; t[3] = q[5];
+            t[4] = q[6]; t[5] = q[5]; t[6] = q[6]; t[7] = q[7];
+        }
+    }
+
+    if (Prim != GL_QUADS) PrimChanged(GL_QUADS);
+    Geometry.SetPrimType(GL_QUADS);
+    Geometry.SetArrayType(kLinear);
+    Geometry.SetVertices(vertices);
+    Geometry.SetTexCoords(texcoords);
+    Geometry.SetNormals(NULL);
+    Geometry.SetColors(NULL);
+    Geometry.SetVerticesAreValid(true);
+    Geometry.SetTexCoordsAreValid(true);
+    Geometry.SetNormalsAreValid(false);
+    Geometry.SetColorsAreValid(false);
+    Geometry.SetWordsPerVertex(4);
+    Geometry.SetWordsPerNormal(3);
+    Geometry.SetWordsPerTexCoord(2);
+    Geometry.SetWordsPerColor(4);
+    Geometry.AddVertices(count * 4);
+    Geometry.AddNormals(count * 4);
+    Geometry.AddTexCoords(count * 4);
+    Geometry.AddColors(count * 4);
+    SyncColorMaterial(false);
+    CommitNewGeom();
+    CurTexCoord[0] = q[-2];
+    CurTexCoord[1] = q[-1];
+    return true;
+}
+
+GLboolean pglTryDrawTexturedQuads2D(const GLfloat* quads, GLsizei count)
+{
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().TryDrawTexturedQuads2D(quads, count)
+        ? GL_TRUE : GL_FALSE;
+}
+
+GLboolean pglTryDrawTexturedQuadCorners2D(const GLfloat* quads, GLsizei count)
+{
+#if PGL_BULK_QUAD_CORNERS
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().TryDrawTexturedQuads2D(quads, count, true)
+        ? GL_TRUE : GL_FALSE;
+#else
+    (void)quads;
+    (void)count;
+    return GL_FALSE;
+#endif
 }
 
 void CImmGeomManager::Normal(cpu_vec_xyz normal)
@@ -407,6 +545,7 @@ void CImmGeomManager::SyncGsContext()
             // FIXME
             GLContext.AddingDrawEnvToPacket((uint128_t*)GLContext.GetVif1Packet().GetNextPtr() + 1);
             GLContext.GetImmDrawContext().GetDrawEnv().SendSettings(GLContext.GetVif1Packet());
+            GLContext.GetImmDrawContext().NoteDrawEnvSubmission();
         }
 
         GLContext.SetGsContextChanged(false);

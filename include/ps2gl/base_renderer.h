@@ -102,7 +102,12 @@ protected:
         int vu1MemOffset);
 
     // used by InitContext
-    void AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset);
+    void AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset,
+        bool sparseUnlit = false);
+    bool CanUseUnlitContextDelta(const CVifSCDmaPacket& packet, GLenum primType,
+        uint32_t changes, bool userChanged) const;
+    void AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes);
+    void NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType);
     tGifTag BuildGiftag(GLenum primType);
     void CacheRendererState();
 

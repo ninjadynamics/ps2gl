@@ -148,17 +148,91 @@ void CImmMatrixStack::SetTopFromMatrix(const cpu_mat_44& newMat)
     Matrices[CurStackDepth] = newMat;
     InverseMatrices[CurStackDepth] = newMat;
     InversePending[CurStackDepth] = true;
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+    DiscardInverseOps();
+#endif
     GLContext.GetImmDrawContext().SetVertexXformValid(false);
 }
+#endif
 
+#if PGL_LAZY_MATRIX_INVERSE || PGL_DEFER_MATRIX_CONCAT_INVERSE
 void CImmMatrixStack::EnsureInverse() const
 {
-    if (!InversePending[CurStackDepth]) return;
-    float* pending = (float*)&InverseMatrices[CurStackDepth];
-    // Invert2 first transposes all 16 inputs into its local src array before
-    // writing any output, so in-place inversion preserves the exact kernel.
-    Invert2(pending, pending);
-    InversePending[CurStackDepth] = false;
+#if PGL_LAZY_MATRIX_INVERSE
+    if (InversePending[CurStackDepth]) {
+        float* pending = (float*)&InverseMatrices[CurStackDepth];
+        // Invert2 reads/transposes every input before writing any output.
+        // This slot owns its base; pending journal entries may be shared.
+        Invert2(pending, pending);
+        InversePending[CurStackDepth] = false;
+    }
+#endif
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+    if (InverseHead[CurStackDepth] < 0) return;
+
+    // Reverse the predecessor chain, then apply the original left-multiplies
+    // in their exact order. Inverting the final forward matrix or combining
+    // operands first would change rounding, analytic inverses and singulars.
+    unsigned char order[MaxPendingInverseOps];
+    int count = 0;
+    for (int i = InverseHead[CurStackDepth]; i >= 0; i = InverseOps[i].Previous)
+        order[count++] = (unsigned char)i;
+
+    cpu_mat_44& curInv = InverseMatrices[CurStackDepth];
+    while (count) {
+        const PendingInverseOp& op = InverseOps[order[--count]];
+        if (op.NeedsInverse) {
+            cpu_mat_44 inverse;
+            // Invert only this original glMultMatrixf operand. Keep the
+            // journal immutable: parent stack levels may still refer to it.
+            Invert2((float*)&op.Operand, (float*)&inverse);
+            curInv = inverse * curInv;
+        } else {
+            curInv = op.Operand * curInv;
+        }
+    }
+    DiscardInverseOps();
+#endif
+}
+#endif
+
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+void CMatrixStack::ConcatFromMatrix(const cpu_mat_44& xform)
+{
+    // Recording a display list keeps the established command payload and
+    // eager inverse calculation. Playback calls the ordinary Concat method.
+    cpu_mat_44 inverse;
+    Invert2((float*)&xform, (float*)&inverse);
+    Concat(xform, inverse);
+}
+
+bool CImmMatrixStack::DeferInverse(const cpu_mat_44& operand, bool needsInverse)
+{
+    if (NumInverseOps == MaxPendingInverseOps) {
+        EnsureInverse();
+        // A full ancestor prefix cannot be reclaimed by this child. The
+        // caller then does exactly the old eager operation; nothing drops.
+        if (NumInverseOps == MaxPendingInverseOps) return false;
+    }
+    PendingInverseOp& op = InverseOps[NumInverseOps];
+    op.Operand = operand;
+    op.Previous = InverseHead[CurStackDepth];
+    op.NeedsInverse = needsInverse;
+    InverseHead[CurStackDepth] = NumInverseOps++;
+    return true;
+}
+
+void CImmMatrixStack::ConcatFromMatrix(const cpu_mat_44& xform)
+{
+    if (!DeferInverse(xform, true)) {
+        cpu_mat_44 inverse;
+        Invert2((float*)&xform, (float*)&inverse);
+        cpu_mat_44& curInv = InverseMatrices[CurStackDepth];
+        curInv = inverse * curInv;
+    }
+    cpu_mat_44& curMat = Matrices[CurStackDepth];
+    curMat = curMat * xform;
+    GLContext.GetImmDrawContext().SetVertexXformValid(false);
 }
 #endif
 
@@ -339,11 +413,15 @@ void glMultMatrixf(const GLfloat* m)
    invMatrix = scaleMat * invMatrix;
    */
 
+    CMatrixStack& matStack = pGLContext->GetCurMatrixStack();
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+    matStack.ConcatFromMatrix(newMatrix);
+#else
     cpu_mat_44 invMatrix;
     //     invMatrix.set_identity();
     Invert2((float*)&newMatrix, (float*)&invMatrix);
-    CMatrixStack& matStack = pGLContext->GetCurMatrixStack();
     matStack.Concat(newMatrix, invMatrix);
+#endif
 
     //     mWarn( "glMultMatrix is not correct" );
 }

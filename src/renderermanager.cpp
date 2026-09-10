@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "ps2s/packet.h"
+#include "ps2s/texture.h"
 
 #include "ps2gl/glcontext.h"
 #include "ps2gl/metrics.h"
@@ -645,9 +646,18 @@ bool CRendererManager::UpdateNewRenderer()
 
 void CRendererManager::MakeNewRendererCurrent()
 {
+#if PGL_UNLIT_CONTEXT_DELTA
+    pglInvalidateUnlitContextDelta();
+#endif
     mAssert(NewRenderer != NULL);
     CurrentRenderer = NewRenderer;
     NewRenderer     = NULL;
+#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
+    // A cached custom display-list packet can replay raw texture writes
+    // without executing its builder again. Never carry an ordinary texture
+    // proof through entry to such a renderer, even when no bind occurs.
+    if (IsCurRendererCustom()) GS::CTexEnv::InvalidateTextureSync();
+#endif
     // A renderer may upload only the context it consumes (X2 does). A custom
     // requirement-bit change need not change any GL context value, so force
     // the new owner to restore its own context before consuming shared VU RAM.

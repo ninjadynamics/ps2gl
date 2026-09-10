@@ -8,6 +8,7 @@
 #include "ps2gl/dlist.h"
 #include "ps2gl/glcontext.h"
 #include "ps2gl/lighting.h"
+#include <string.h>
 
 /********************************************
  * CImmMaterial
@@ -107,6 +108,49 @@ void CDListMaterial::SetShininess(float shine)
 
 void CMaterialManager::Color(cpu_vec_xyzw color)
 {
+#if PGL_SKIP_REDUNDANT_COLOR
+    // Exact object bytes retain signed zero and avoid a float/int alias cast.
+    // Only suppress the manager update: immediate glColor still appends each
+    // vertex color, and the display-list manager still records every command.
+    if (!InDListDef &&
+        !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+        memcmp(&CurColor, &color, sizeof(color)) == 0) {
+        bool materialMatches = !UseColorMaterial;
+        if (UseColorMaterial) {
+            switch (ColorMaterialMode) {
+            case GL_EMISSION: {
+                const cpu_vec_xyzw current = ImmMaterial.GetEmission();
+                materialMatches = memcmp(&current, &color, sizeof(color)) == 0;
+                break;
+            }
+            case GL_AMBIENT: {
+                const cpu_vec_xyzw current = ImmMaterial.GetAmbient();
+                materialMatches = memcmp(&current, &color, sizeof(color)) == 0;
+                break;
+            }
+            case GL_DIFFUSE: {
+                const cpu_vec_xyzw current = ImmMaterial.GetDiffuse();
+                materialMatches = memcmp(&current, &color, sizeof(color)) == 0;
+                break;
+            }
+            case GL_AMBIENT_AND_DIFFUSE: {
+                const cpu_vec_xyzw ambient = ImmMaterial.GetAmbient();
+                const cpu_vec_xyzw diffuse = ImmMaterial.GetDiffuse();
+                materialMatches = memcmp(&ambient, &color, sizeof(color)) == 0 &&
+                    memcmp(&diffuse, &color, sizeof(color)) == 0;
+                break;
+            }
+            default:
+                // Specular also updates light/renderer capabilities; keep its
+                // original callback even when the material value is identical.
+                break;
+            }
+        }
+        // A glMaterial call may have changed the tracked field independently;
+        // glColor must still reassert it even if CurColor itself is unchanged.
+        if (materialMatches) return;
+    }
+#endif
     CurColor = color;
 
     if (UseColorMaterial) {

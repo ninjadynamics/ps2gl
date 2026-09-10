@@ -7,7 +7,7 @@
 #ifndef ps2gl_lighting_h
 #define ps2gl_lighting_h
 
-#include "GL/gl.h"
+#include "GL/ps2gl.h"
 
 #include "ps2s/cpu_vector.h"
 
@@ -236,6 +236,9 @@ public:
 
     void SetLightingEnabled(bool enabled)
     {
+#if PGL_SKIP_REDUNDANT_DRAW_STATE
+        if (IsEnabled == enabled) return;
+#endif
         GLContext.LightingEnabledChanged();
         GLContext.GetImmGeomManager().GetRendererManager().LightingEnabledChanged(enabled);
         IsEnabled = enabled;

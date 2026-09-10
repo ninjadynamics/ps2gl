@@ -25,6 +25,7 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , DrawEnv(NULL)
     , ClearEnv(NULL)
     , FrameIsDblBuffered(false)
+    , DrawEnvOverridden(false)
     , DoSmoothShading(true)
     , DoClipping(true)
     , DoCullFace(false)
@@ -315,12 +316,22 @@ void CImmDrawContext::SetRescaleNormals(bool rescale)
 
 void CImmDrawContext::SetDepthWriteEnabled(bool enabled)
 {
+#if PGL_SKIP_REDUNDANT_DRAW_STATE
+    if (!DrawEnvOverridden &&
+        !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+        DrawEnv->GetDepthWriteEnabled() == enabled) return;
+#endif
     DrawEnv->SetDepthWriteEnabled(enabled);
     GLContext.DepthWriteEnabledChanged();
 }
 
 void CImmDrawContext::SetFrameBufferDrawMask(unsigned int mask)
 {
+#if PGL_SKIP_REDUNDANT_DRAW_STATE
+    if (!DrawEnvOverridden &&
+        !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+        DrawEnv->GetFrameBufferDrawMask() == mask) return;
+#endif
     DrawEnv->SetFrameBufferDrawMask(mask);
     GLContext.FrameBufferDrawMaskChanged();
 }
@@ -385,16 +396,31 @@ void CImmDrawContext::SetBlendMode(GLenum source, GLenum dest)
     switch (blendFactor) {
     case mCombineBlendFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA):
         using namespace GS::ABlend;
+#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
+        if (!DrawEnvOverridden &&
+            !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+            DrawEnv->HasAlphaBlendFunc(kSourceRGB, kDestRGB, kSourceAlpha, kDestRGB, 0x80)) return;
+#endif
         DrawEnv->SetAlphaBlendFunc(kSourceRGB, kDestRGB, kSourceAlpha, kDestRGB, 0x80);
         GLContext.BlendModeChanged();
         break;
     case mCombineBlendFactors(GL_SRC_ALPHA, GL_ONE):
+#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
+        if (!DrawEnvOverridden &&
+            !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+            DrawEnv->HasAlphaBlendFunc(kSourceRGB, kZero, kSourceAlpha, kDestRGB, 0x80)) return;
+#endif
         DrawEnv->SetAlphaBlendFunc(kSourceRGB, kZero, kSourceAlpha, kDestRGB, 0x80);
         GLContext.BlendModeChanged();
         break;
     // the following is actually subtractive blending, which
     // should be GL_MINUS_ALPHA, GL_ONE but there is no minus alpha in GL
     case mCombineBlendFactors(GL_ONE_MINUS_SRC_ALPHA, GL_ONE):
+#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
+        if (!DrawEnvOverridden &&
+            !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+            DrawEnv->HasAlphaBlendFunc(kZero, kSourceRGB, kSourceAlpha, kDestRGB, 0x80)) return;
+#endif
         DrawEnv->SetAlphaBlendFunc(kZero, kSourceRGB, kSourceAlpha, kDestRGB, 0x80);
         GLContext.BlendModeChanged();
         break;
@@ -447,7 +473,13 @@ void CImmDrawContext::SetAlphaFunc(GLenum func, GLclampf ref)
         return;
     }
 
-    DrawEnv->SetAlphaRefVal((unsigned int)(ref * 0xff));
+    const uint8_t reference = (unsigned int)(ref * 0xff);
+#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
+    if (!DrawEnvOverridden &&
+        !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+        DrawEnv->HasAlphaTestFunc(reference, ePassMode, GS::ATest::kKeep)) return;
+#endif
+    DrawEnv->SetAlphaRefVal(reference);
     DrawEnv->SetAlphaTestPassMode(ePassMode);
     DrawEnv->SetAlphaTestFailAction(GS::ATest::kKeep);
 
@@ -492,6 +524,11 @@ void CImmDrawContext::SetDepthFunc(GLenum func)
         return;
     }
 
+#if PGL_SKIP_REDUNDANT_DRAW_STATE
+    if (!DrawEnvOverridden &&
+        !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
+        DrawEnv->HasDepthTestPassMode(ePassMode)) return;
+#endif
     DrawEnv->SetDepthTestPassMode(ePassMode);
 
     GLContext.DepthTestFuncChanged();

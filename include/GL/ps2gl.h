@@ -30,6 +30,104 @@
 #error "PGL_CACHED_FRAME_PACKETS must be 0 or 1"
 #endif
 
+/* Immediate attribute buffers only; keep the existing full-cache writeback
+ * in source-chain Send(), double buffering and append-only frame lifetime.
+ * Independent of PGL_CACHED_FRAME_PACKETS. Rebuild ps2gl EE after changing. */
+#ifndef PGL_CACHED_IMMEDIATE_GEOMETRY
+#define PGL_CACHED_IMMEDIATE_GEOMETRY 1
+#endif
+#if PGL_CACHED_IMMEDIATE_GEOMETRY != 0 && PGL_CACHED_IMMEDIATE_GEOMETRY != 1
+#error "PGL_CACHED_IMMEDIATE_GEOMETRY must be 0 or 1"
+#endif
+
+/* Suppress unchanged immediate depth/write-mask and lighting setters.
+ * Compare the authoritative draw environment, including depth-disable side
+ * effects; never discard a recorded display-list state command. */
+#ifndef PGL_SKIP_REDUNDANT_DRAW_STATE
+#define PGL_SKIP_REDUNDANT_DRAW_STATE 1
+#endif
+#if PGL_SKIP_REDUNDANT_DRAW_STATE != 0 && PGL_SKIP_REDUNDANT_DRAW_STATE != 1
+#error "PGL_SKIP_REDUNDANT_DRAW_STATE must be 0 or 1"
+#endif
+
+/* Keep immediate vertex colors, but avoid rebuilding an unchanged constant
+ * color/material context. Display-list recording and custom renderers retain
+ * their original invalidation contract. Rebuild ps2gl EE after changing. */
+#ifndef PGL_SKIP_REDUNDANT_COLOR
+#define PGL_SKIP_REDUNDANT_COLOR 1
+#endif
+#if PGL_SKIP_REDUNDANT_COLOR != 0 && PGL_SKIP_REDUNDANT_COLOR != 1
+#error "PGL_SKIP_REDUNDANT_COLOR must be 0 or 1"
+#endif
+
+/* Compare authoritative quantized GS fields before re-sending an unchanged
+ * blend/alpha-test setup. Preserve explicit reassertion after custom kicks. */
+#ifndef PGL_SKIP_REDUNDANT_BLEND_ALPHA
+#define PGL_SKIP_REDUNDANT_BLEND_ALPHA 1
+#endif
+#if PGL_SKIP_REDUNDANT_BLEND_ALPHA != 0 && PGL_SKIP_REDUNDANT_BLEND_ALPHA != 1
+#error "PGL_SKIP_REDUNDANT_BLEND_ALPHA must be 0 or 1"
+#endif
+
+/* Reuse an identical managed texture synchronization at its actual draw
+ * boundary. Uploads, CLUT/global state writes and custom contexts invalidate
+ * the proof. Bind commands and required TEXFLUSH operations are retained.
+ * Initial integration needs ps2stuff and all ps2gl EE objects. Later gate
+ * changes need all ps2gl EE objects; ps2stuff's write serial remains active. */
+#ifndef PGL_SKIP_REDUNDANT_TEXTURE_SYNC
+#define PGL_SKIP_REDUNDANT_TEXTURE_SYNC 1
+#endif
+#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC != 0 && PGL_SKIP_REDUNDANT_TEXTURE_SYNC != 1
+#error "PGL_SKIP_REDUNDANT_TEXTURE_SYNC must be 0 or 1"
+#endif
+
+/* Stock linear renderers with lighting OFF: upload their live context spans
+ * without preparing eight unused lights and lighting-only matrices. Custom
+ * and indexed renderers retain their existing context contract. EE-only A/B. */
+#ifndef PGL_SPARSE_UNLIT_CONTEXT
+#define PGL_SPARSE_UNLIT_CONTEXT 1
+#endif
+#if PGL_SPARSE_UNLIT_CONTEXT != 0 && PGL_SPARSE_UNLIT_CONTEXT != 1
+#error "PGL_SPARSE_UNLIT_CONTEXT must be 0 or 1"
+#endif
+
+/* Explicit opt-in for the proven July PGL_CLIP_TRIANGLES VU program only,
+ * with GL lighting OFF. Other custom programs keep their own contracts. */
+#ifndef PGL_SPARSE_CLIP_CONTEXT
+#define PGL_SPARSE_CLIP_CONTEXT 1
+#endif
+#if PGL_SPARSE_CLIP_CONTEXT != 0 && PGL_SPARSE_CLIP_CONTEXT != 1
+#error "PGL_SPARSE_CLIP_CONTEXT must be 0 or 1"
+#endif
+
+/* Reuse a verified stock-unlit context; upload only changed material/xform
+ * spans. Renderer/frame transitions invalidate the proof. EE-only A/B. */
+#ifndef PGL_UNLIT_CONTEXT_DELTA
+#define PGL_UNLIT_CONTEXT_DELTA 1
+#endif
+#if PGL_UNLIT_CONTEXT_DELTA != 0 && PGL_UNLIT_CONTEXT_DELTA != 1
+#error "PGL_UNLIT_CONTEXT_DELTA must be 0 or 1"
+#endif
+
+/* Exact byte-to-float color mapping, replacing four software double divides.
+ * The public float values and color/material/display-list behavior stay the
+ * same. Rebuild ps2gl EE after changing either gate below. */
+#ifndef PGL_COLOR4UB_LUT
+#define PGL_COLOR4UB_LUT 1
+#endif
+#if PGL_COLOR4UB_LUT != 0 && PGL_COLOR4UB_LUT != 1
+#error "PGL_COLOR4UB_LUT must be 0 or 1"
+#endif
+
+/* Caller-ordered 2D quad corners copied into existing immediate buffers.
+ * Keeps the stock GL_QUADS renderer, diagonal and final current UV. */
+#ifndef PGL_BULK_QUAD_CORNERS
+#define PGL_BULK_QUAD_CORNERS 1
+#endif
+#if PGL_BULK_QUAD_CORNERS != 0 && PGL_BULK_QUAD_CORNERS != 1
+#error "PGL_BULK_QUAD_CORNERS must be 0 or 1"
+#endif
+
 /* Defer immediate glLoadMatrixf inversion until an inverse is consumed.
  * Concat retains the original inverse multiplication order; display-list
  * recording remains eager. Independent library-build A/B, no matrix rounding
@@ -39,6 +137,18 @@
 #endif
 #if PGL_LAZY_MATRIX_INVERSE != 0 && PGL_LAZY_MATRIX_INVERSE != 1
 #error "PGL_LAZY_MATRIX_INVERSE must be 0 or 1"
+#endif
+
+/* Defer immediate inverse concatenation until GetInvTop consumes it. Store
+ * the original ordered operands, never invert the composed forward matrix.
+ * A fixed journal falls back eagerly when full; display-list recording stays
+ * eager. Independent of lazy glLoadMatrixf, no VU changes. Rebuild every EE
+ * consumer of internal ps2gl headers after changing this class-layout gate. */
+#ifndef PGL_DEFER_MATRIX_CONCAT_INVERSE
+#define PGL_DEFER_MATRIX_CONCAT_INVERSE 1
+#endif
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE != 0 && PGL_DEFER_MATRIX_CONCAT_INVERSE != 1
+#error "PGL_DEFER_MATRIX_CONCAT_INVERSE must be 0 or 1"
 #endif
 
 /********************************************
@@ -57,6 +167,40 @@ extern "C" {
 // vertex, normal, tex coord, and color buffers.
 extern int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize);
 extern int pglHasLibraryBeenInitted(void);
+/* Same four glTexCoord2f/glVertex2f pairs, BL/TL/TR/BR, z=0 and w=1.
+ * Current normal/color and all draw state are retained; current UV ends at
+ * (u1,v1). Returns false WITHOUT changes outside immediate GL_QUADS, during
+ * display-list recording, or if the complete append cannot fit. */
+extern GLboolean pglTryTexturedQuad2D(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1,
+    GLfloat u0, GLfloat v0, GLfloat u1, GLfloat v1);
+/* Complete uniform-color quad run, OUTSIDE glBegin/glEnd. Eight floats per
+ * quad: x0,y0,x1,y1,u0,v0,u1,v1. Copies into the existing frame-owned immediate
+ * buffers; uses the same GL_QUADS renderer and BL/TL/TR/BR order. Requires
+ * texture enabled, lighting/color-material disabled. No client-array mutation.
+ * Rejection leaves all state/cursors unchanged; success leaves current UV at
+ * the last quad's (u1,v1), with current normal/color untouched. */
+extern GLboolean pglTryDrawTexturedQuads2D(const GLfloat* quads, GLsizei count);
+/* Same admission/lifetime contract as the rectangle run above, but each
+ * quad is four caller-ordered {x,y,u,v} corners (16 floats). No sorting or
+ * rectangle reconstruction; z=0,w=1 and the original diagonal are retained.
+ * The final current UV is the fourth corner of the last quad. Gate OFF
+ * returns false without modifying anything so callers use immediate mode. */
+extern GLboolean pglTryDrawTexturedQuadCorners2D(const GLfloat* quads, GLsizei count);
+/* Internal frame/renderer ownership fence for the context-delta proof. */
+extern void pglInvalidateUnlitContextDelta(void);
+/* Actual linked library setting, not the caller's header default. */
+extern GLboolean pglUsesCachedImmediateGeometry(void);
+/* Linked-library context A/B settings: bit0=unchanged draw-state suppression,
+ * bit1=stock unlit sparse context, bit2=unlit PGL_CLIP_TRIANGLES context,
+ * bit3=deferred inverse concat, bit4=scalar matrix kernel, bit5=EE matrix
+ * kernel (takes precedence over bit4), bit6=lazy glLoadMatrixf inverse,
+ * bit7=VU0 matrix kernel (takes precedence over bits4/5),
+ * bit8=unchanged color/material suppression, bit9=unchanged blend/alpha test,
+ * bit10=identical resident managed texture synchronization reuse,
+ * bit11=stock unlit context delta, bit12=exact byte-color lookup,
+ * bit13=caller-ordered immediate quad-corner runs.
+ * Query once per report, not per vertex. */
+extern unsigned int pglGetContextOptimizationFlags(void);
 extern void pglFinish(void);
 
 extern void pglWaitForVU1(void);

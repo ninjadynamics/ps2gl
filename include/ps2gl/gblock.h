@@ -138,6 +138,7 @@ public:
     inline void SetColors(const void* colors) { NewColors = colors; }
 
     GLenum GetPrimType() const { return PrimType; }
+    GLenum GetNewPrimType() const { return NewPrimType; }
     void SetPrimType(GLenum type) { NewPrimType = type; }
 
     inline int GetNumNewVertices() const { return NumNewVertices; }

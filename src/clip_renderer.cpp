@@ -12,6 +12,7 @@
 #include "ps2gl/drawcontext.h"
 #include "ps2gl/glcontext.h"
 #include "ps2gl/immgmanager.h"
+#include "ps2gl/lighting.h"
 #include "ps2gl/metrics.h"
 #include "ps2gl/texture.h"
 
@@ -79,6 +80,16 @@ void CClipTriRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool use
     // microcode consumes plain tri lists (tri-strip prim + ADC on the first
     // two verts of each tri, like general_nospec_tri), which is exactly what
     // GL_TRIANGLES builds.
+#if PGL_SPARSE_CLIP_CONTEXT
+    if (!pGLContext->GetImmLighting().GetLightingEnabled()) {
+        // The original GeneralClipTri VU program reads q0,57..60,62..65,
+        // 75..77. The generic unlit spans retain every one plus guard q78.
+        // Keep its existing transform, near-plane math, fan emission and
+        // uniform color/fog. Do not substitute X2's vertex-alpha semantics.
+        InitLinearContext(GL_TRIANGLES, true);
+        return;
+    }
+#endif
     CLinearRenderer::InitContext(GL_TRIANGLES, rcChanges, userRcChanged);
 }
 
@@ -388,6 +399,14 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
         // the old architecture did.
         rq[14] = testBase & ~(uint64_t)1;
         rq[15] = GS::RegAddrs::test_1;
+        // An unchanged depth/mask setter may deliberately restore the whole
+        // environment after this raw ATE pin. Preserve that reassertion even
+        // after switching back to an ordinary renderer; CPU equality alone
+        // does not prove that the queued GS state matches its shadow.
+        pGLContext->GetImmDrawContext().NoteDrawEnvOverride();
+        // Context2 has private TEX0 but shares TEXA and the CLUT temporary
+        // buffer. Its raw settings bypass CTexEnv::SendSettings.
+        GS::CTexEnv::InvalidateTextureSync();
 
         // DIRECT-send the block down GIF path 2 (same qword-alignment nop
         // trick as CTexEnv::SendSettings).

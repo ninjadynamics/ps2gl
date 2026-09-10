@@ -43,6 +43,11 @@ public:
     virtual void Pop()  = 0;
     virtual void Push() = 0;
     virtual void Concat(const cpu_mat_44& xform, const cpu_mat_44& inverse) = 0;
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+    // Immediate stacks may defer Invert2; display-list recording uses the
+    // default eager implementation and stores the same inverse as before.
+    virtual void ConcatFromMatrix(const cpu_mat_44& xform);
+#endif
     virtual void SetTop(const cpu_mat_44& newMat, const cpu_mat_44& newInv) = 0;
 #if PGL_LAZY_MATRIX_INVERSE
     // The default path computes eagerly, including display-list recording.
@@ -59,7 +64,31 @@ class CImmMatrixStack : public CMatrixStack {
     // A pending inverse slot holds its original glLoadMatrixf operand. Never
     // invert the later composed forward matrix: that changes rounding/order.
     mutable bool InversePending[MaxStackDepth];
+#endif
+#if PGL_LAZY_MATRIX_INVERSE || PGL_DEFER_MATRIX_CONCAT_INVERSE
     void EnsureInverse() const;
+#endif
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+    // Parent histories are shared by index across Push; only two matrices
+    // and constant-sized metadata are copied. Child append storage is freed
+    // on Pop/SetTop/materialization, never while an ancestor still owns it.
+    static const int MaxPendingInverseOps = 32;
+    struct PendingInverseOp {
+        cpu_mat_44 Operand;
+        int Previous;
+        bool NeedsInverse;
+    };
+    PendingInverseOp InverseOps[MaxPendingInverseOps];
+    mutable int NumInverseOps;
+    mutable int InverseHead[MaxStackDepth];
+    int InverseCheckpoint[MaxStackDepth];
+
+    bool DeferInverse(const cpu_mat_44& operand, bool needsInverse);
+    void DiscardInverseOps() const
+    {
+        NumInverseOps = InverseCheckpoint[CurStackDepth];
+        InverseHead[CurStackDepth] = -1;
+    }
 #endif
 public:
     CImmMatrixStack(CGLContext& context)
@@ -67,12 +96,22 @@ public:
 #if PGL_LAZY_MATRIX_INVERSE
         , InversePending{}
 #endif
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+        , NumInverseOps(0)
+#endif
     {
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+        InverseHead[0] = -1;
+        InverseCheckpoint[0] = 0;
+#endif
     }
 
     void Pop()
     {
         mErrorIf(CurStackDepth == 0, "No matrices to pop!");
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+        DiscardInverseOps();
+#endif
         --CurStackDepth;
         GLContext.GetImmDrawContext().SetVertexXformValid(false);
     }
@@ -86,20 +125,31 @@ public:
 #if PGL_LAZY_MATRIX_INVERSE
         InversePending[CurStackDepth + 1] = InversePending[CurStackDepth];
 #endif
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+        InverseHead[CurStackDepth + 1] = InverseHead[CurStackDepth];
+        InverseCheckpoint[CurStackDepth + 1] = NumInverseOps;
+#endif
         ++CurStackDepth;
     }
 
     void Concat(const cpu_mat_44& xform, const cpu_mat_44& inverse)
     {
-#if PGL_LAZY_MATRIX_INVERSE
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+        if (!DeferInverse(inverse, false)) {
+            cpu_mat_44& curInv = InverseMatrices[CurStackDepth];
+            curInv = inverse * curInv;
+        }
+#elif PGL_LAZY_MATRIX_INVERSE
         // Preserve inverse * curInv exactly, including analytic inverses from
         // glTranslate/Rotate/Scale and eagerly inverted glMultMatrixf input.
         EnsureInverse();
 #endif
         cpu_mat_44& curMat = Matrices[CurStackDepth];
-        cpu_mat_44& curInv = InverseMatrices[CurStackDepth];
         curMat             = curMat * xform;
+#if !PGL_DEFER_MATRIX_CONCAT_INVERSE
+        cpu_mat_44& curInv = InverseMatrices[CurStackDepth];
         curInv             = inverse * curInv;
+#endif
         GLContext.GetImmDrawContext().SetVertexXformValid(false);
     }
 
@@ -110,19 +160,25 @@ public:
 #if PGL_LAZY_MATRIX_INVERSE
         InversePending[CurStackDepth] = false;
 #endif
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+        DiscardInverseOps();
+#endif
         GLContext.GetImmDrawContext().SetVertexXformValid(false);
     }
 
     const cpu_mat_44& GetTop() const { return Matrices[CurStackDepth]; }
     const cpu_mat_44& GetInvTop() const
     {
-#if PGL_LAZY_MATRIX_INVERSE
+#if PGL_LAZY_MATRIX_INVERSE || PGL_DEFER_MATRIX_CONCAT_INVERSE
         EnsureInverse();
 #endif
         return InverseMatrices[CurStackDepth];
     }
 #if PGL_LAZY_MATRIX_INVERSE
     void SetTopFromMatrix(const cpu_mat_44& newMat);
+#endif
+#if PGL_DEFER_MATRIX_CONCAT_INVERSE
+    void ConcatFromMatrix(const cpu_mat_44& xform);
 #endif
 };
 

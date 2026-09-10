@@ -20,7 +20,99 @@
 #include "ps2gl/metrics.h"
 #include "ps2gl/texture.h"
 
+// All context offsets in this translation unit use the zero-based layout.
+// Define its base before either the full writer or the delta writer uses it.
+#define kContextStart 0
 #include "vu1_context.h"
+
+extern "C" unsigned int pglGetContextOptimizationFlags(void)
+{
+    return PGL_SKIP_REDUNDANT_DRAW_STATE | (PGL_SPARSE_UNLIT_CONTEXT << 1)
+        | (PGL_SPARSE_CLIP_CONTEXT << 2) | (PGL_DEFER_MATRIX_CONCAT_INVERSE << 3)
+        | (PS2S_MATRIX_SCALAR_KERNEL << 4) | (PS2S_MATRIX_EE_COP1 << 5)
+        | (PGL_LAZY_MATRIX_INVERSE << 6) | (PS2S_MATRIX_VU0 << 7)
+        | (PGL_SKIP_REDUNDANT_COLOR << 8) | (PGL_SKIP_REDUNDANT_BLEND_ALPHA << 9)
+        | (PGL_SKIP_REDUNDANT_TEXTURE_SYNC << 10) | (PGL_UNLIT_CONTEXT_DELTA << 11)
+        | (PGL_COLOR4UB_LUT << 12) | (PGL_BULK_QUAD_CORNERS << 13);
+}
+
+#if PGL_UNLIT_CONTEXT_DELTA
+// A proof about the last context written to this ordered VIF chain, not a
+// cross-frame cache of VU RAM. Frame/reset/program transitions invalidate it.
+static const CBaseRenderer* unlitContextOwner;
+static const CVifSCDmaPacket* unlitContextPacket;
+static GLenum unlitContextPrim;
+#endif
+
+extern "C" void pglInvalidateUnlitContextDelta(void)
+{
+#if PGL_UNLIT_CONTEXT_DELTA
+    unlitContextOwner = NULL;
+    unlitContextPacket = NULL;
+#endif
+}
+
+#if PGL_UNLIT_CONTEXT_DELTA
+bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
+    GLenum primType, uint32_t changes, bool userChanged) const
+{
+    const uint32_t allowed = RendererCtxtFlags::Xform | RendererCtxtFlags::CurMaterial;
+    CGLContext& context = *pGLContext;
+    // Unknown/general invalidations (including the legacy 0xff full marker)
+    // are never interpreted as a partial update. Any GS change also falls
+    // back: draw-buffer/layout transitions can change clip/depth fields.
+    return changes != 0 && (changes & ~allowed) == 0 && !userChanged
+        && unlitContextOwner == this && unlitContextPacket == &packet
+        && unlitContextPrim == primType && !context.InDListDef()
+        && context.GetGsContextChanged() == 0
+        && !context.GetImmLighting().GetLightingEnabled()
+        && !context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom();
+}
+
+void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
+{
+#if !defined(kContextStart) || kMaterialEmission != 58 || kMaterialAmbient != 59 || kMaterialDiffuse != 60 || \
+    kMaterialSpecular != 61 || kVertexXfrm != 62
+#error "Review the stock unlit delta spans against the VU context ABI"
+#endif
+    CGLContext& context = *pGLContext;
+    const bool materialChanged = (changes & RendererCtxtFlags::CurMaterial) != 0;
+    const bool xformChanged = (changes & RendererCtxtFlags::Xform) != 0;
+    packet.Stcycl(1, 1);
+    packet.Flush();
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+        materialChanged ? kMaterialEmission : kVertexXfrm, Packet::kSingleBuff);
+    if (materialChanged) {
+        // Same operations/operand order as the full unlit context. Keep all
+        // material words, including alpha and currently unread specular.
+        CImmMaterial& material = context.GetMaterialManager().GetImmMaterial();
+        const float maxColorValue = GetMaxColorValue(context.GetTexManager().GetTexEnabled());
+        cpu_vec_4 emission = context.GetMaterialManager().GetCurColor() * maxColorValue;
+        packet += emission;
+        packet += material.GetAmbient();
+        cpu_vec_4 matDiffuse = material.GetDiffuse();
+        matDiffuse[3] = context.GetMaterialManager().GetCurColor()[3];
+        packet += matDiffuse;
+        packet += material.GetSpecular();
+    }
+    if (xformChanged) packet += context.GetImmDrawContext().GetVertexXform();
+    packet.CloseUnpack();
+}
+
+void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType)
+{
+    CGLContext& context = *pGLContext;
+    if (context.InDListDef() || context.GetImmLighting().GetLightingEnabled()
+        || context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom()) {
+        pglInvalidateUnlitContextDelta();
+        return;
+    }
+    unlitContextOwner = this;
+    unlitContextPacket = &packet;
+    unlitContextPrim = primType;
+}
+#endif
 
 void CBaseRenderer::GetUnpackAttribs(int numWords, unsigned int& mode, Vifs::tMask& mask)
 {
@@ -205,11 +297,19 @@ void CBaseRenderer::XferBlock(CVifSCDmaPacket& packet,
     }
 }
 
-#define kContextStart 0 // for the kLightBase stuff below
-
-void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset)
+void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset,
+    bool sparseUnlit)
 {
+#if PGL_UNLIT_CONTEXT_DELTA
+    pglInvalidateUnlitContextDelta();
+#endif
     CGLContext& glContext = *pGLContext;
+    CImmLighting& lighting = glContext.GetImmLighting();
+    const bool doLighting = lighting.GetLightingEnabled();
+    sparseUnlit = sparseUnlit && !doLighting;
+#if kNumLights != 0 || kGlobalAmbient != 57 || kVertexXfrm != 62 || kGifTag != 75
+#error "Review the stock unlit context spans against the VU context ABI"
+#endif
 
     packet.Stcycl(1, 1);
     packet.Flush();
@@ -217,13 +317,12 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
     packet.OpenUnpack(Vifs::UnpackModes::v4_32, vu1Offset, Packet::kSingleBuff);
     {
         // find light pointers
-        CImmLighting& lighting = glContext.GetImmLighting();
         tLightPtrs lightPtrs[8];
         tLightPtrs *nextDir, *nextPt, *nextSpot;
         nextDir = nextPt = nextSpot = &lightPtrs[0];
         int numDirs, numPts, numSpots;
         numDirs = numPts = numSpots = 0;
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; !sparseUnlit && i < 8; i++) {
             CImmLight& light = lighting.GetImmLight(i);
             if (light.IsEnabled()) {
                 int lightBase = kLight0Base + vu1Offset;
@@ -243,25 +342,26 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
             }
         }
 
-        bool doLighting = glContext.GetImmLighting().GetLightingEnabled();
-
         // transpose of object to world space xfrm (for light directions)
-        cpu_mat_44 objToWorldXfrmTrans = glContext.GetModelViewStack().GetTop();
-        // clear any translations.. should be doing a 3x3 transpose..
-        objToWorldXfrmTrans.set_col3(cpu_vec_xyzw(0, 0, 0, 1));
-        objToWorldXfrmTrans = objToWorldXfrmTrans.transpose();
-        // do we need to rescale normals?
-        cpu_mat_44 normalRescale;
-        normalRescale.set_identity();
-        float normalScale            = 1.0f;
+        cpu_mat_44 objToWorldXfrmTrans;
+        float normalScale = 1.0f;
         CImmDrawContext& drawContext = glContext.GetImmDrawContext();
-        if (drawContext.GetRescaleNormals()) {
-            cpu_vec_xyzw fake_normal(1, 0, 0, 0);
-            fake_normal = objToWorldXfrmTrans * fake_normal;
-            normalScale = 1.0f / fake_normal.length();
-            normalRescale.set_scale(cpu_vec_xyz(normalScale, normalScale, normalScale));
+        if (!sparseUnlit) {
+            objToWorldXfrmTrans = glContext.GetModelViewStack().GetTop();
+            // clear any translations.. should be doing a 3x3 transpose..
+            objToWorldXfrmTrans.set_col3(cpu_vec_xyzw(0, 0, 0, 1));
+            objToWorldXfrmTrans = objToWorldXfrmTrans.transpose();
+            // do we need to rescale normals?
+            cpu_mat_44 normalRescale;
+            normalRescale.set_identity();
+            if (drawContext.GetRescaleNormals()) {
+                cpu_vec_xyzw fake_normal(1, 0, 0, 0);
+                fake_normal = objToWorldXfrmTrans * fake_normal;
+                normalScale = 1.0f / fake_normal.length();
+                normalRescale.set_scale(cpu_vec_xyz(normalScale, normalScale, normalScale));
+            }
+            objToWorldXfrmTrans = normalRescale * objToWorldXfrmTrans;
         }
-        objToWorldXfrmTrans = normalRescale * objToWorldXfrmTrans;
 
         // num lights
         if (doLighting) {
@@ -283,34 +383,44 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         bool do_culling = drawContext.GetDoCullFace() && (primType > GL_LINE_STRIP);
         packet += bfc_word | (unsigned int)do_culling << 5;
 
-        // light pointers
-        packet.Add(&lightPtrs[0], 8);
-
         float maxColorValue = GetMaxColorValue(glContext.GetTexManager().GetTexEnabled());
 
-        // add light info
-        for (int i = 0; i < 8; i++) {
-            CImmLight& light = lighting.GetImmLight(i);
-            packet += light.GetAmbient() * maxColorValue;
-            packet += light.GetDiffuse() * maxColorValue;
-            packet += light.GetSpecular() * maxColorValue;
+        if (sparseUnlit) {
+            // All stock linear programs branch around lighting with q0.xyz=0.
+            // Keep their exact material/fog/primitive fields; X2's smaller
+            // custom context is NOT sufficient for these programs.
+            packet.CloseUnpack();
+            packet.Pad96();
+            packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+                vu1Offset + kGlobalAmbient, Packet::kSingleBuff);
+        } else {
+            // light pointers
+            packet.Add(&lightPtrs[0], 8);
 
-            if (light.IsDirectional())
-                packet += light.GetPosition();
-            else {
-                packet += light.GetPosition();
+            // add light info
+            for (int i = 0; i < 8; i++) {
+                CImmLight& light = lighting.GetImmLight(i);
+                packet += light.GetAmbient() * maxColorValue;
+                packet += light.GetDiffuse() * maxColorValue;
+                packet += light.GetSpecular() * maxColorValue;
+
+                if (light.IsDirectional())
+                    packet += light.GetPosition();
+                else {
+                    packet += light.GetPosition();
+                }
+
+                packet += light.GetSpotDir();
+
+                // attenuation coeffs for positional light sources
+                // because we're doing lighting calculations in object space,
+                // we need to adjust the attenuation of positional light sources
+                // and all lighting directions to take into account scaling
+                packet += light.GetConstantAtten();
+                packet += light.GetLinearAtten() * 1.0f / normalScale;
+                packet += light.GetQuadAtten() * 1.0f / normalScale;
+                packet += 0; // padding
             }
-
-            packet += light.GetSpotDir();
-
-            // attenuation coeffs for positional light sources
-            // because we're doing lighting calculations in object space,
-            // we need to adjust the attenuation of positional light sources
-            // and all lighting directions to take into account scaling
-            packet += light.GetConstantAtten();
-            packet += light.GetLinearAtten() * 1.0f / normalScale;
-            packet += light.GetQuadAtten() * 1.0f / normalScale;
-            packet += 0; // padding
         }
 
         // global ambient
@@ -319,7 +429,12 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
             globalAmb = lighting.GetGlobalAmbient() * maxColorValue;
         else
             globalAmb = cpu_vec_4(0, 0, 0, 0);
-        packet.Add((uint32_t*)&globalAmb, 3);
+        // Read the float object as floats. The old uint32_t* cast violates
+        // strict aliasing: optimized EE code discarded the initialization and
+        // uploaded stale stack bytes as ambient RGB, tinting unlit geometry.
+        packet += globalAmb.x;
+        packet += globalAmb.y;
+        packet += globalAmb.z;
 
         // stick in the offset to convert clip space depth value to GS
         float depthClipToGs = (float)((1 << drawContext.GetDepthBits()) - 1) / 2.0f;
@@ -356,16 +471,25 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         // vertex xform
         packet += drawContext.GetVertexXform();
 
-        // fixed vertToEye vector for non-local specular
-        cpu_vec_xyzw vertToEye(0.0f, 0.0f, 1.0f, 0.0f);
-        packet += objToWorldXfrmTrans * vertToEye;
+        if (sparseUnlit) {
+            // No zero-light output uses q66..74. Preserve the VIF FLUSH above
+            // and the final giftag write, so old buffers finish before reuse.
+            packet.CloseUnpack();
+            packet.Pad96();
+            packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+                vu1Offset + kGifTag, Packet::kSingleBuff);
+        } else {
+            // fixed vertToEye vector for non-local specular
+            cpu_vec_xyzw vertToEye(0.0f, 0.0f, 1.0f, 0.0f);
+            packet += objToWorldXfrmTrans * vertToEye;
 
-        // transpose of object to world space transform
-        packet += objToWorldXfrmTrans;
+            // transpose of object to world space transform
+            packet += objToWorldXfrmTrans;
 
-        // world to object space xfrm (for light positions)
-        cpu_mat_44 worldToObjXfrm = glContext.GetModelViewStack().GetInvTop();
-        packet += worldToObjXfrm;
+            // world to object space xfrm (for light positions)
+            cpu_mat_44 worldToObjXfrm = glContext.GetModelViewStack().GetInvTop();
+            packet += worldToObjXfrm;
+        }
 
         // giftag - this is down at the bottom to make sure that when switching
         // primitives the last buffer will have a chance to copy the giftag before
@@ -446,6 +570,9 @@ void CBaseRenderer::CacheRendererState()
 
 void CBaseRenderer::Load()
 {
+#if PGL_UNLIT_CONTEXT_DELTA
+    pglInvalidateUnlitContextDelta();
+#endif
     unsigned int size64     = MicrocodePacketSize / 8;
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     const u64* code         = (const u64*)MicrocodePacket;

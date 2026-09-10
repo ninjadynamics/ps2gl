@@ -35,6 +35,15 @@ class CTexManager {
     CMMClut* CurClut;
     GS::tTexMode TexMode;
 
+    // Snapshot of the last synchronization recorded in this exact VIF chain.
+    // Kept by value: texture mutation/deletion must never alter queued proof.
+    CMMClut* LastClutSent;
+    const CVifSCDmaPacket* LastTexturePacket;
+    uint32_t LastTextureSerial;
+    GS::tTexMode LastTexModeSent;
+    unsigned char LastTextureSettings[8 * 16];
+    bool CanReuseTextureSync(const CVifSCDmaPacket& packet, CMMClut* clut);
+
     void IncCursor() { Cursor = (Cursor + 1) & (NumTexNames - 1); }
 
 public:
@@ -90,6 +99,8 @@ public:
     ~CMMClut() {}
 
     void Load(CVifSCDmaPacket& packet);
+    // Match Load's successful residency/MRU touch without admitting an upload.
+    bool TouchIfResident() { return GsMem.IsAllocated(); }
 };
 
 /********************************************
@@ -132,6 +143,11 @@ public:
     CMMClut* GetOwnClut() const { return OwnClut; }
 
     void ChangePsm(GS::tPSM psm);
+
+    // External GS areas may be render targets, and packed mip storage has a
+    // separate owner. Reuse only ordinary manager-owned immutable texels.
+    bool HasManagedResidentImage() const { return XferImage && pImageMem && IsResident; }
+    bool TouchImageIfResident() { return HasManagedResidentImage() && pImageMem->IsAllocated(); }
 
     // the following Load methods will check to see if a texture is resident and
     // transfer it if necessary.  The Use methods invoke the corresponding Load but
