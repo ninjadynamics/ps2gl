@@ -109,6 +109,63 @@
 #error "PGL_UNLIT_CONTEXT_DELTA must be 0 or 1"
 #endif
 
+/* Same stock lit renderer: update only q58..61 for material-only changes.
+ * Lighting/texture ownership, transforms, lights, GS and renderer changes
+ * retain a full context upload and the original microprogram restart. */
+#ifndef PGL_LIT_MATERIAL_DELTA
+#define PGL_LIT_MATERIAL_DELTA 1
+#endif
+#if PGL_LIT_MATERIAL_DELTA != 0 && PGL_LIT_MATERIAL_DELTA != 1
+#error "PGL_LIT_MATERIAL_DELTA must be 0 or 1"
+#endif
+
+/* Keep the established unlit delta writer specialized and reject invalid
+ * reuse before touching lighting state. Same context words and restarts. */
+#ifndef PGL_UNLIT_DELTA_SPECIALIZE
+#define PGL_UNLIT_DELTA_SPECIALIZE 1
+#endif
+#if PGL_UNLIT_DELTA_SPECIALIZE != 0 && PGL_UNLIT_DELTA_SPECIALIZE != 1
+#error "PGL_UNLIT_DELTA_SPECIALIZE must be 0 or 1"
+#endif
+
+/* Skip arbitrary-strip bookkeeping for one stock, uniform textured quad
+ * array. Same VU chunk boundaries, REF transfers and microprogram. */
+#ifndef PGL_FLAT_QUAD_PACKETS
+#define PGL_FLAT_QUAD_PACKETS 1
+#endif
+/* Independent primitives have an immutable no-restart ADC header. */
+#ifndef PGL_INDEPENDENT_PRIM_HEADER
+#define PGL_INDEPENDENT_PRIM_HEADER 1
+#endif
+/* Recompute VIF unpack masks only when that renderer's input width changes.
+ * Existing format fields own the cache; row/fallback values stay live. */
+#ifndef PGL_TRANSFER_FORMAT_CACHE
+#define PGL_TRANSFER_FORMAT_CACHE 1
+#endif
+/* Pure GS texture/draw-environment changes need not replace a compatible
+ * stock unlit VU context. GS synchronization itself remains mandatory. */
+#ifndef PGL_UNLIT_GS_CONTEXT_DELTA
+#define PGL_UNLIT_GS_CONTEXT_DELTA 1
+#endif
+/* Borrow caller-owned, immutable uniform quad arrays through packet finish.
+ * Eligibility failures leave state unchanged and retain the copying API. */
+#ifndef PGL_BORROWED_QUAD_ARRAYS
+#define PGL_BORROWED_QUAD_ARRAYS 1
+#endif
+/* Optional scoped CPU submission counters; no clocks, waits or per-vertex
+ * hooks. The application explicitly samples a small subset of frames. */
+#ifndef PGL_SUBMISSION_METRICS
+#define PGL_SUBMISSION_METRICS 1
+#endif
+#if (PGL_FLAT_QUAD_PACKETS != 0 && PGL_FLAT_QUAD_PACKETS != 1) || \
+    (PGL_INDEPENDENT_PRIM_HEADER != 0 && PGL_INDEPENDENT_PRIM_HEADER != 1) || \
+    (PGL_TRANSFER_FORMAT_CACHE != 0 && PGL_TRANSFER_FORMAT_CACHE != 1) || \
+    (PGL_UNLIT_GS_CONTEXT_DELTA != 0 && PGL_UNLIT_GS_CONTEXT_DELTA != 1) || \
+    (PGL_BORROWED_QUAD_ARRAYS != 0 && PGL_BORROWED_QUAD_ARRAYS != 1) || \
+    (PGL_SUBMISSION_METRICS != 0 && PGL_SUBMISSION_METRICS != 1)
+#error "Packet optimization/metrics switches must be 0 or 1"
+#endif
+
 /* Extend the proven context-delta spans to the original GeneralClipTri
  * renderer only. Other custom VU programs retain their existing contracts. */
 #ifndef PGL_CLIP_CONTEXT_DELTA
@@ -156,6 +213,24 @@
 #error "PGL_BULK_QUAD_XYZ3 must be 0 or 1"
 #endif
 
+/* Three glVertex3f submissions with identical current attributes, appended
+ * transactionally to the existing immediate GL_TRIANGLES stream. */
+#ifndef PGL_FUSED_TRIANGLE3D
+#define PGL_FUSED_TRIANGLE3D 1
+#endif
+#if PGL_FUSED_TRIANGLE3D != 0 && PGL_FUSED_TRIANGLE3D != 1
+#error "PGL_FUSED_TRIANGLE3D must be 0 or 1"
+#endif
+
+/* Stock lit programs upload light records through the highest enabled slot,
+ * then resume at global ambient. Custom programs retain complete records. */
+#ifndef PGL_SPARSE_LIGHT_CONTEXT
+#define PGL_SPARSE_LIGHT_CONTEXT 1
+#endif
+#if PGL_SPARSE_LIGHT_CONTEXT != 0 && PGL_SPARSE_LIGHT_CONTEXT != 1
+#error "PGL_SPARSE_LIGHT_CONTEXT must be 0 or 1"
+#endif
+
 /* Defer immediate glLoadMatrixf inversion until an inverse is consumed.
  * Concat retains the original inverse multiplication order; display-list
  * recording remains eager. Independent library-build A/B, no matrix rounding
@@ -201,6 +276,13 @@ extern int pglHasLibraryBeenInitted(void);
  * display-list recording, or if the complete append cannot fit. */
 extern GLboolean pglTryTexturedQuad2D(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1,
     GLfloat u0, GLfloat v0, GLfloat u1, GLfloat v1);
+/* Three ordered XYZ positions (nine floats) inside immediate GL_TRIANGLES.
+ * Copies the current normal/UV for every vertex and supplies W=1, exactly
+ * like three glVertex3f calls; current attributes/color stream are untouched.
+ * No draw or flush is added. Returns false without changes outside this
+ * primitive, during display-list recording, or when any complete span fails
+ * capacity preflight. The caller retains its original three-call fallback. */
+extern GLboolean pglTryTriangle3D(const GLfloat* xyz);
 /* Complete uniform-color quad run, OUTSIDE glBegin/glEnd. Eight floats per
  * quad: x0,y0,x1,y1,u0,v0,u1,v1. Copies into the existing frame-owned immediate
  * buffers; uses the same GL_QUADS renderer and BL/TL/TR/BR order. Requires
@@ -208,6 +290,15 @@ extern GLboolean pglTryTexturedQuad2D(GLfloat x0, GLfloat y0, GLfloat x1, GLfloa
  * Rejection leaves all state/cursors unchanged; success leaves current UV at
  * the last quad's (u1,v1), with current normal/color untouched. */
 extern GLboolean pglTryDrawTexturedQuads2D(const GLfloat* quads, GLsizei count);
+/* Same uniform quad draw, borrowing ordered XYZ/XYZW and UV arrays instead
+ * of expanding/copying descriptors. Count is QUADS. Arrays must be4-byte
+ * aligned and remain immutable through DMA completion, with caller cache
+ * writeback before submission of the frame. No client-array state mutation.
+ * Requires the already-selected stable stock unlit quad renderer and its
+ * linked bulk vertex width (XYZ3 gate ON:3, OFF:4). Rejection is untouched.
+ * The final current UV is read from the last input vertex. */
+extern GLboolean pglTryDrawTexturedQuads2DArrays(const GLfloat* vertices,
+    const GLfloat* texcoords, GLsizei count, GLint wordsPerVertex);
 /* Same admission/lifetime contract as the rectangle run above, but each
  * quad is four caller-ordered {x,y,u,v} corners (16 floats). No sorting or
  * rectangle reconstruction; z=0,w=1 and the original diagonal are retained.
@@ -229,9 +320,37 @@ extern GLboolean pglUsesCachedImmediateGeometry(void);
  * bit13=caller-ordered immediate quad-corner runs,
  * bit14=original GeneralClipTri context delta,
  * bit15=state-owned scalar context coefficients,
- * bit16=XYZ source packing for stable stock unlit quad runs.
+ * bit16=XYZ source packing for stable stock unlit quad runs,
+ * bit17=fused immediate triangle position/current-attribute appends,
+ * bit18=stock lit context prefix ending at the highest enabled light slot,
+ * bit19=stock lit material-only context update,
+ * bit20=separate unlit/lit delta writers and early common rejection,
+ * bit21=single-array uniform textured quad packet builder,
+ * bit22=immutable independent-primitive ADC header,
+ * bit23=scoped CPU submission metrics available,
+ * bit24=renderer-owned VIF transfer-format reuse,
+ * bit25=stock unlit context reuse across compatible GS state changes,
+ * bit26=caller-owned immutable uniform quad arrays.
  * Query once per report, not per vertex. */
 extern unsigned int pglGetContextOptimizationFlags(void);
+/* Cumulative unsigned counters within one explicit, non-nestable sample.
+ * Read does not flush or mutate rendering. Packet bytes refer to the normal
+ * VIF chain, excluding REF payload; context bytes are a subset of that chain.
+ * Cached dlist replay is not counted as fresh packet construction. Keep a
+ * sample within one frame/packet; Read returns false if its owner changed. */
+enum {
+    PGL_SUBMIT_XYZ3, PGL_SUBMIT_XYZ4, PGL_SUBMIT_BLOCKS,
+    PGL_SUBMIT_FLAT_BLOCKS, PGL_SUBMIT_BUFFERS,
+    PGL_SUBMIT_FULL_CONTEXTS, PGL_SUBMIT_DELTA_CONTEXTS,
+    PGL_SUBMIT_REF_BYTES, PGL_SUBMIT_EDGE_BYTES,
+    PGL_SUBMIT_TEXTURE_SYNCS, PGL_SUBMIT_TEXTURE_REUSES,
+    PGL_SUBMIT_TEXTURE_UPLOADS, PGL_SUBMIT_CLUT_UPLOADS,
+    PGL_SUBMIT_PROGRAM_LOADS,
+    PGL_SUBMIT_CONTEXT_BYTES, PGL_SUBMIT_PACKET_BYTES, PGL_SUBMIT_COUNT
+};
+extern GLboolean pglBeginSubmissionSample(void);
+extern GLboolean pglReadSubmissionSample(unsigned int values[PGL_SUBMIT_COUNT]);
+extern void pglEndSubmissionSample(void);
 extern void pglFinish(void);
 
 extern void pglWaitForVU1(void);
@@ -437,6 +556,32 @@ void pglSetClipNear(float near_z);
   #define PGL_UNLIT_TEX_TRIANGLES ((GLenum)0x80000000 | 3)
   #define PGL_UNLIT_TEX_TRI_PROP ((pglU64_t)1 << 35)
   void pglRegisterUnlitTexTriRenderer(void);
+  /* Admission for replacing ordinary uniform-color z=0 HUD quads with the
+     existing colored triangle primitive. Call outside Begin/End and display
+     list recording, after binding/enabling the intended texture and 2D state.
+     Client-array descriptors/enables are irrelevant to this direct-array API.
+     Requires the registered builtin renderer,
+     no other custom state, lighting/color-material/fog/cull/clipping/edge-AA
+     off, polygon FILL, and finite affine modelview/projection/raster transform
+     with exact homogeneous W=1. No packet/GL state changes or drain; the pure
+     vertex-transform cache may be materialized. The caller still owns finite,
+     GS-safe input coordinates, 0..1 RGBA (identical at all vertices of each
+     quad), original quad triangles 0,1,3 / 1,3,2, and array DMA lifetime.
+     A game-side gate must also be honored by the caller. Recheck after any
+     relevant state/matrix change; do not retain the result across HUD passes. */
+  GLboolean pglCanDrawColoredHud2D(void);
+  /* Submit an admitted HUD span as borrowed XYZ3/UV2/RGBA4 float arrays, each
+     at least 4-byte aligned. vertexCount is positive and divisible by six.
+     Requires a successful pglCanDrawColoredHud2D in this pass and unchanged
+     matrices/material/2D admission state; texture and depth-write changes are
+     allowed between drained spans. The cheap state guards are repeated, but
+     matrices/vertex contents are not rescanned. FALSE consumes nothing, so the
+     caller may use its existing fallback. TRUE keeps inputs borrowed through
+     normal frame/DMA completion: preserve them and normal cache writeback.
+     Client descriptors/enables and current color/normal/UV stay unchanged.
+     Flush pending construction before foreign state or texture teardown. */
+  GLboolean pglTryDrawColoredHud2DArrays(const GLfloat* vertices,
+      const GLfloat* texcoords, const GLfloat* colors, GLsizei vertexCount);
 
 /* P3 DESCRIPTOR variant of the x2 renderer: walls travel as compact
    parametric descriptors and VU1 reconstructs the vertices, then the same

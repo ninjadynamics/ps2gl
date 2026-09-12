@@ -27,6 +27,9 @@ class CImmGeomManager : public CGeomManager {
     CGeometryBlock Geometry;
 
     void CommitNewGeom();
+    void CommitTexturedQuadArrays(const float* vertices, const float* texcoords,
+        int count, int wordsPerVertex);
+    bool CanDrawColoredHud2DState() const;
 
 public:
     CImmGeomManager(CGLContext& context, int immBufferQwordSize);
@@ -71,9 +74,15 @@ public:
 
     void BeginGeom(GLenum mode);
     void Vertex(cpu_vec_xyzw newVert);
+    bool TryTriangle3D(const float* xyz);
     bool TryTexturedQuad2D(float x0, float y0, float x1, float y1,
         float u0, float v0, float u1, float v1);
     bool TryDrawTexturedQuads2D(const float* quads, int count, bool corners = false);
+    bool TryDrawTexturedQuads2DArrays(const float* vertices, const float* texcoords,
+        int count, int wordsPerVertex);
+    bool CanDrawColoredHud2D() const;
+    bool TryDrawColoredHud2DArrays(const float* vertices, const float* texcoords,
+        const float* colors, int vertexCount);
     void Normal(cpu_vec_xyz normal);
     void TexCoord(float u, float v);
     void Color(cpu_vec_xyzw color);

@@ -106,7 +106,15 @@ protected:
         bool sparseUnlit = false);
     bool CanUseUnlitContextDelta(const CVifSCDmaPacket& packet, GLenum primType,
         uint32_t changes, bool userChanged, bool originalClip) const;
+    // Keep declarations independent of GL/ps2gl.h include order. Only the
+    // definitions and call sites are gated, as with the other delta helpers.
+    bool CanUseUnlitGsContextDelta(const CVifSCDmaPacket& packet, GLenum primType,
+        uint32_t changes, bool userChanged) const;
+    void CacheUnlitGsContext();
     void AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes);
+    template <bool Lighting>
+    void AddSpecializedContextDelta(CVifSCDmaPacket& packet, uint32_t changes);
+    void AddLitMaterialContextDelta(CVifSCDmaPacket& packet, uint32_t changes);
     void NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType,
         bool originalClip = false);
     tGifTag BuildGiftag(GLenum primType);

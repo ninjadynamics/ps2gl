@@ -15,6 +15,7 @@
 
 #include "ps2gl/indexed_renderer.h"
 #include "ps2gl/linear_renderer.h"
+#include "ps2gl/unlit_renderer.h"
 
 #include "vu1_mem_linear.h"
 #include "vu1renderers.h"
@@ -34,6 +35,7 @@ CRendererManager::CRendererManager(CGLContext& context)
     , NumUserRenderers(0)
     , CurrentRenderer(NULL)
     , NewRenderer(NULL)
+    , ColoredHudRendererRegistered(false)
 {
     // Zero the WHOLE bitfield first: the field-by-field init below never
     // touched `unused:12`, which therefore carried whatever heap garbage the
@@ -349,6 +351,24 @@ void CRendererManager::RegisterUserRenderer(CRenderer* renderer)
     UserRenderers[NumUserRenderers++] = newEntry;
 }
 
+void CRendererManager::RegisterUnlitTexTriRenderer(CUnlitTexTriRenderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    // Resolve the first match once, at registration, using UpdateNewRenderer's
+    // exact predicate. Later entries cannot displace this earlier match. Keep
+    // the proof in this context's manager; a new context starts unregistered.
+    const uint64_t reqs = PGL_UNLIT_TEX_TRI_PROP;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            ColoredHudRendererRegistered = entry.renderer == renderer;
+            return;
+        }
+    }
+    ColoredHudRendererRegistered = false;
+}
+
 // state updates
 
 void CRendererManager::EnableCustom(uint64_t flag)
@@ -646,7 +666,7 @@ bool CRendererManager::UpdateNewRenderer()
 
 void CRendererManager::MakeNewRendererCurrent()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     mAssert(NewRenderer != NULL);
@@ -672,6 +692,7 @@ void CRendererManager::LoadRenderer(CVifSCDmaPacket& packet)
 
     CurrentRenderer->renderer->Load();
 
+    pglCountSubmission(PGL_SUBMIT_PROGRAM_LOADS);
     pglAddToMetric(kMetricsRendererUpload);
 }
 

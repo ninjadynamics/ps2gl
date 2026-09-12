@@ -27,6 +27,7 @@ class CImmGeomManager;
 class CVifSCDmaPacket;
 class CGeometryBlock;
 class CRenderer;
+class CUnlitTexTriRenderer;
 
 typedef enum { kDirectional,
     kPoint,
@@ -51,6 +52,7 @@ class CRendererManager {
     tRenderer UserRenderers[kMaxUserRenderers];
     int NumDefaultRenderers, NumUserRenderers;
     const tRenderer *CurrentRenderer, *NewRenderer;
+    bool ColoredHudRendererRegistered;
 
     void RegisterDefaultRenderer(CRenderer* renderer);
 
@@ -58,6 +60,15 @@ public:
     CRendererManager(CGLContext& context);
 
     void RegisterUserRenderer(CRenderer* renderer);
+    void RegisterUnlitTexTriRenderer(CUnlitTexTriRenderer* renderer);
+    bool CanSelectColoredHudRenderer() const
+    {
+        // PrimChanged removes the previous primitive's requirements before
+        // adding the new ones. Other custom state must stay out of this path.
+        return ColoredHudRendererRegistered
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
 
     bool UpdateNewRenderer();
     void MakeNewRendererCurrent();

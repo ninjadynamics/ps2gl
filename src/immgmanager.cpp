@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <limits.h>
+#include <string.h>
 
 #include "ps2s/cpu_matrix.h"
 #include "ps2s/displayenv.h"
@@ -129,6 +130,47 @@ void CImmGeomManager::Vertex(cpu_vec_xyzw newVert)
     Geometry.AddTexCoords();
 }
 
+bool CImmGeomManager::TryTriangle3D(const float* xyz)
+{
+    if (!InsideBeginEnd || !xyz || Geometry.GetNewPrimType() != GL_TRIANGLES ||
+        !CurVertexBuf->CanReserveWords(12) ||
+        !CurNormalBuf->CanReserveWords(9) ||
+        !CurTexCoordBuf->CanReserveWords(6))
+        return false;
+
+    float* const p = (float*)CurVertexBuf->ReserveWords(12);
+    float* const n = (float*)CurNormalBuf->ReserveWords(9);
+    float* const t = (float*)CurTexCoordBuf->ReserveWords(6);
+    const cpu_vec_xyz normal = GetCurNormal();
+    const float* const uv = GetCurTexCoord();
+    // Keep all normal/UV words even when this particular renderer does not
+    // consume them. The surrounding EndGeom owns format, colors and draws.
+    p[0] = xyz[0]; p[1] = xyz[1]; p[2] = xyz[2]; p[3] = 1.0f;
+    p[4] = xyz[3]; p[5] = xyz[4]; p[6] = xyz[5]; p[7] = 1.0f;
+    p[8] = xyz[6]; p[9] = xyz[7]; p[10] = xyz[8]; p[11] = 1.0f;
+    for (int i = 0; i < 9; i += 3) {
+        n[i] = normal.x; n[i + 1] = normal.y; n[i + 2] = normal.z;
+    }
+    for (int i = 0; i < 6; i += 2) {
+        t[i] = uv[0]; t[i + 1] = uv[1];
+    }
+    Geometry.AddVertices(3);
+    Geometry.AddNormals(3);
+    Geometry.AddTexCoords(3);
+    return true;
+}
+
+GLboolean pglTryTriangle3D(const GLfloat* xyz)
+{
+#if PGL_FUSED_TRIANGLE3D
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().TryTriangle3D(xyz) ? GL_TRUE : GL_FALSE;
+#else
+    (void)xyz;
+    return GL_FALSE;
+#endif
+}
+
 bool CImmGeomManager::TryTexturedQuad2D(float x0, float y0, float x1, float y1,
     float u0, float v0, float u1, float v1)
 {
@@ -212,6 +254,35 @@ static inline const float* WriteTexturedQuads2D(const float* quads, int count,
     return q;
 }
 
+inline __attribute__((always_inline))
+void CImmGeomManager::CommitTexturedQuadArrays(const float* vertices, const float* texcoords,
+    int count, int wordsPerVertex)
+{
+    // Only the NEW block is described here. CommitNewGeom must still drain
+    // any OLD block with its cached renderer state before syncing this one.
+    if (Prim != GL_QUADS) PrimChanged(GL_QUADS);
+    Geometry.SetPrimType(GL_QUADS);
+    Geometry.SetArrayType(kLinear);
+    Geometry.SetVertices(vertices);
+    Geometry.SetTexCoords(texcoords);
+    Geometry.SetNormals(NULL);
+    Geometry.SetColors(NULL);
+    Geometry.SetVerticesAreValid(true);
+    Geometry.SetTexCoordsAreValid(true);
+    Geometry.SetNormalsAreValid(false);
+    Geometry.SetColorsAreValid(false);
+    Geometry.SetWordsPerVertex(wordsPerVertex);
+    Geometry.SetWordsPerNormal(3);
+    Geometry.SetWordsPerTexCoord(2);
+    Geometry.SetWordsPerColor(4);
+    Geometry.AddVertices(count * 4);
+    Geometry.AddNormals(count * 4);
+    Geometry.AddTexCoords(count * 4);
+    Geometry.AddColors(count * 4);
+    SyncColorMaterial(false);
+    CommitNewGeom();
+}
+
 bool CImmGeomManager::TryDrawTexturedQuads2D(const float* quads, int count, bool corners)
 {
     // Validate the ENTIRE run before reserving or changing renderer state.
@@ -241,30 +312,185 @@ bool CImmGeomManager::TryDrawTexturedQuads2D(const float* quads, int count, bool
 #endif
         q = WriteTexturedQuads2D<4>(quads, count, corners, vertices, texcoords);
 
-    if (Prim != GL_QUADS) PrimChanged(GL_QUADS);
-    Geometry.SetPrimType(GL_QUADS);
-    Geometry.SetArrayType(kLinear);
-    Geometry.SetVertices(vertices);
-    Geometry.SetTexCoords(texcoords);
-    Geometry.SetNormals(NULL);
-    Geometry.SetColors(NULL);
-    Geometry.SetVerticesAreValid(true);
-    Geometry.SetTexCoordsAreValid(true);
-    Geometry.SetNormalsAreValid(false);
-    Geometry.SetColorsAreValid(false);
-    Geometry.SetWordsPerVertex(wordsPerVertex);
-    Geometry.SetWordsPerNormal(3);
-    Geometry.SetWordsPerTexCoord(2);
-    Geometry.SetWordsPerColor(4);
-    Geometry.AddVertices(count * 4);
-    Geometry.AddNormals(count * 4);
-    Geometry.AddTexCoords(count * 4);
-    Geometry.AddColors(count * 4);
-    SyncColorMaterial(false);
-    CommitNewGeom();
+    CommitTexturedQuadArrays(vertices, texcoords, count, wordsPerVertex);
     CurTexCoord[0] = q[-2];
     CurTexCoord[1] = q[-1];
     return true;
+}
+
+static bool HudFiniteFloat(float value)
+{
+    unsigned int bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return (bits & 0x7f800000u) != 0x7f800000u;
+}
+
+static bool HudAffineColumn(cpu_vec_4 column, float w)
+{
+    return column.w == w && HudFiniteFloat(column.x)
+        && HudFiniteFloat(column.y) && HudFiniteFloat(column.z)
+        && HudFiniteFloat(column.w);
+}
+
+static bool HudAffineMatrix(const cpu_mat_44& matrix)
+{
+    return HudAffineColumn(matrix.get_col0(), 0.0f)
+        && HudAffineColumn(matrix.get_col1(), 0.0f)
+        && HudAffineColumn(matrix.get_col2(), 0.0f)
+        && HudAffineColumn(matrix.get_col3(), 1.0f);
+}
+
+bool CImmGeomManager::CanDrawColoredHud2DState() const
+{
+    const GLenum prim = PGL_UNLIT_TEX_TRIANGLES;
+    if (InsideBeginEnd || !RendererManager.CanSelectColoredHudRenderer()
+        || (prim & 0x7fffffffu) >= kMaxUserPrimTypes
+        || GetUserPrimRequirements(prim) != PGL_UNLIT_TEX_TRI_PROP
+        || GetUserPrimReqMask(prim) != ~(uint64_t)0xffffffff
+        || GLContext.GetImmLighting().GetLightingEnabled()
+        || GLContext.GetMaterialManager().GetColorMaterialEnabled()
+        || !GLContext.GetTexManager().GetTexEnabled())
+        return false;
+
+    CImmDrawContext& draw = GLContext.GetImmDrawContext();
+    if (draw.GetFogEnabled() || draw.GetDoCullFace() || draw.GetDoClipping()
+        || draw.GetEdgeAAEnabled() || draw.GetPolygonMode() != GL_FILL
+        || !HudFiniteFloat(draw.GetDepthOffset()))
+        return false;
+    return true;
+}
+
+bool CImmGeomManager::CanDrawColoredHud2D() const
+{
+    if (!CanDrawColoredHud2DState()) return false;
+    CImmDrawContext& draw = GLContext.GetImmDrawContext();
+    // The stock unlit shader still multiplies zero global ambient by the
+    // material ambient. Non-finite material RGB cannot share the RGBA path.
+    const cpu_vec_4 ambient = GLContext.GetMaterialManager().GetImmMaterial().GetAmbient();
+    if (!HudFiniteFloat(ambient.x) || !HudFiniteFloat(ambient.y)
+        || !HudFiniteFloat(ambient.z)) return false;
+
+    // Exact affine rows make W=1 under BOTH programs, including the stock
+    // quad's shared Q path. Read the forward stacks, never their lazy inverses.
+    // The last check also rejects overflow in their GS-scaled product. This
+    // only materializes the existing pure transform cache, as drawing would;
+    // it changes no GL state, packet, renderer selection or geometry lifetime.
+    return HudAffineMatrix(GLContext.GetModelViewStack().GetTop())
+        && HudAffineMatrix(GLContext.GetProjectionStack().GetTop())
+        && HudAffineMatrix(draw.GetVertexXform());
+}
+
+GLboolean pglCanDrawColoredHud2D(void)
+{
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().CanDrawColoredHud2D() ? GL_TRUE : GL_FALSE;
+}
+
+bool CImmGeomManager::TryDrawColoredHud2DArrays(const float* vertices,
+    const float* texcoords, const float* colors, int vertexCount)
+{
+    // All rejection precedes PrimChanged/Geometry writes. The pass owner has
+    // already admitted its unchanged matrices; do not rescan them per span.
+    if (!vertices || !texcoords || !colors || vertexCount <= 0
+        || vertexCount > INT_MAX / 16 || vertexCount % 6 != 0
+        || (((uintptr_t)vertices | (uintptr_t)texcoords | (uintptr_t)colors) & 3u)
+        || Geometry.GetTotalVertices() > INT_MAX - vertexCount
+        || !CanDrawColoredHud2DState()) return false;
+    const uintptr_t count = (uintptr_t)vertexCount;
+    if ((uintptr_t)vertices > ~(uintptr_t)0 - count * 3u * sizeof(float)
+        || (uintptr_t)texcoords > ~(uintptr_t)0 - count * 2u * sizeof(float)
+        || (uintptr_t)colors > ~(uintptr_t)0 - count * 4u * sizeof(float))
+        return false;
+
+    // Describe only the NEXT block, exactly as DrawArrays does. Existing client
+    // descriptors/enables are neither consumed nor changed, even if raylib's
+    // initial NORMAL_ARRAY enable survived preceding unlit draws. Current
+    // color/normal/UV and immediate buffer cursors are unchanged too.
+    const GLenum prim = PGL_UNLIT_TEX_TRIANGLES;
+    if (Prim != prim) PrimChanged(prim);
+    Geometry.SetPrimType(prim);
+    Geometry.SetArrayType(kLinear);
+    Geometry.SetVertices(vertices);
+    Geometry.SetTexCoords(texcoords);
+    Geometry.SetColors(colors);
+    Geometry.SetNormals(NULL);
+    Geometry.SetVerticesAreValid(true);
+    Geometry.SetTexCoordsAreValid(true);
+    Geometry.SetColorsAreValid(true);
+    Geometry.SetNormalsAreValid(false);
+    Geometry.SetWordsPerVertex(3);
+    Geometry.SetWordsPerNormal(3);
+    Geometry.SetWordsPerTexCoord(2);
+    Geometry.SetWordsPerColor(4);
+    Geometry.AddVertices(vertexCount);
+    Geometry.AddNormals(vertexCount);
+    Geometry.AddTexCoords(vertexCount);
+    Geometry.AddColors(vertexCount);
+    SyncColorMaterial(true);
+    CommitNewGeom();
+    return true;
+}
+
+GLboolean pglTryDrawColoredHud2DArrays(const GLfloat* vertices,
+    const GLfloat* texcoords, const GLfloat* colors, GLsizei vertexCount)
+{
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().TryDrawColoredHud2DArrays(
+        vertices, texcoords, colors, vertexCount) ? GL_TRUE : GL_FALSE;
+}
+
+bool CImmGeomManager::TryDrawTexturedQuads2DArrays(const float* vertices, const float* texcoords,
+    int count, int wordsPerVertex)
+{
+#if PGL_BORROWED_QUAD_ARRAYS
+    // Borrow only the already-selected stock uniform-color quad route. Do
+    // not predict or select a NEXT renderer while OLD geometry is pending.
+    // Match the copied API's linked input width on every accepted call.
+    if (InsideBeginEnd || !vertices || !texcoords || count <= 0 || count > INT_MAX / 64 ||
+        (((uintptr_t)vertices | (uintptr_t)texcoords) & 3u) != 0 ||
+        wordsPerVertex != (PGL_BULK_QUAD_XYZ3 ? 3 : 4) ||
+        Prim != GL_QUADS || !RendererManager.CanReuseUnlitQuadRenderer() ||
+        GLContext.GetImmLighting().GetLightingEnabled() ||
+        GLContext.GetMaterialManager().GetColorMaterialEnabled() ||
+        !GLContext.GetTexManager().GetTexEnabled())
+        return false;
+
+    const uintptr_t vertexBytes = (uintptr_t)count * 4u * wordsPerVertex * sizeof(float);
+    const uintptr_t texcoordBytes = (uintptr_t)count * 8u * sizeof(float);
+    if ((uintptr_t)vertices > ~(uintptr_t)0 - vertexBytes ||
+        (uintptr_t)texcoords > ~(uintptr_t)0 - texcoordBytes)
+        return false;
+
+    // No client-array state or immediate buffer cursor changes. These spans
+    // can be referenced later by VIF DMA; the caller owns their full lifetime
+    // and cache writeback, including when they remain pending past this call.
+    CommitTexturedQuadArrays(vertices, texcoords, count, wordsPerVertex);
+    CurTexCoord[0] = texcoords[count * 8 - 2];
+    CurTexCoord[1] = texcoords[count * 8 - 1];
+    return true;
+#else
+    (void)vertices;
+    (void)texcoords;
+    (void)count;
+    (void)wordsPerVertex;
+    return false;
+#endif
+}
+
+GLboolean pglTryDrawTexturedQuads2DArrays(const GLfloat* vertices, const GLfloat* texcoords,
+    GLsizei count, GLint wordsPerVertex)
+{
+#if PGL_BORROWED_QUAD_ARRAYS
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().TryDrawTexturedQuads2DArrays(
+        vertices, texcoords, count, wordsPerVertex) ? GL_TRUE : GL_FALSE;
+#else
+    (void)vertices;
+    (void)texcoords;
+    (void)count;
+    (void)wordsPerVertex;
+    return GL_FALSE;
+#endif
 }
 
 GLboolean pglTryDrawTexturedQuads2D(const GLfloat* quads, GLsizei count)

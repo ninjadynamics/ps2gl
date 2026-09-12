@@ -10,6 +10,7 @@
 #include "ps2s/packet.h"
 
 #include "GL/gl.h"
+#include "GL/ps2gl.h"
 #include "ps2gl/base_renderer.h"
 #include "ps2gl/immgmanager.h"
 #include "ps2gl/renderer.h"
@@ -26,6 +27,9 @@ protected:
 
     // called by DrawArrays
     void DrawBlock(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
+#if PGL_FLAT_QUAD_PACKETS
+    bool TryDrawFlatQuads(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
+#endif
 
     // used by DrawBlock
     void FindNumBuffers(int numToAdd, int numVertsToRestart,

@@ -174,6 +174,7 @@ bool CTexManager::CanReuseTextureSync(const CVifSCDmaPacket& packet, CMMClut* cl
 void CTexManager::UseCurTexture(CVifSCDmaPacket& renderPacket)
 {
     if (IsTexEnabled) {
+        pglCountSubmission(PGL_SUBMIT_TEXTURE_SYNCS);
         GS::tPSM psm = CurTexture->GetPSM();
         CMMClut* clut = NULL;
         if (psm == GS::kPsm8 || psm == GS::kPsm8h) {
@@ -181,7 +182,10 @@ void CTexManager::UseCurTexture(CVifSCDmaPacket& renderPacket)
             if (clut == NULL) clut = CurClut;
         }
 #if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
-        if (CanReuseTextureSync(renderPacket, clut)) return;
+        if (CanReuseTextureSync(renderPacket, clut)) {
+            pglCountSubmission(PGL_SUBMIT_TEXTURE_REUSES);
+            return;
+        }
 #endif
         // do we need to send the clut?
         if (psm == GS::kPsm8 || psm == GS::kPsm8h) {

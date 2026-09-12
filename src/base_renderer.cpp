@@ -9,6 +9,7 @@
 #include "ps2s/packet.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "ps2gl/base_renderer.h"
 #include "ps2gl/drawcontext.h"
@@ -35,45 +36,152 @@ extern "C" unsigned int pglGetContextOptimizationFlags(void)
         | (PGL_SKIP_REDUNDANT_TEXTURE_SYNC << 10) | (PGL_UNLIT_CONTEXT_DELTA << 11)
         | (PGL_COLOR4UB_LUT << 12) | (PGL_BULK_QUAD_CORNERS << 13)
         | (PGL_CLIP_CONTEXT_DELTA << 14) | (PGL_CONTEXT_COEFFICIENT_CACHE << 15)
-        | (PGL_BULK_QUAD_XYZ3 << 16);
+        | (PGL_BULK_QUAD_XYZ3 << 16) | (PGL_FUSED_TRIANGLE3D << 17)
+        | (PGL_SPARSE_LIGHT_CONTEXT << 18) | (PGL_LIT_MATERIAL_DELTA << 19)
+        | (PGL_UNLIT_DELTA_SPECIALIZE << 20) | (PGL_FLAT_QUAD_PACKETS << 21)
+        | (PGL_INDEPENDENT_PRIM_HEADER << 22) | (PGL_SUBMISSION_METRICS << 23)
+        | (PGL_TRANSFER_FORMAT_CACHE << 24) | (PGL_UNLIT_GS_CONTEXT_DELTA << 25)
+        | (PGL_BORROWED_QUAD_ARRAYS << 26);
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
 // A proof about the last context written to this ordered VIF chain, not a
 // cross-frame cache of VU RAM. Frame/reset/program transitions invalidate it.
 static const CBaseRenderer* unlitContextOwner;
 static const CVifSCDmaPacket* unlitContextPacket;
 static GLenum unlitContextPrim;
 static bool unlitContextOriginalClip;
+static bool unlitContextLightingEnabled;
+static bool unlitContextTexEnabled;
+#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
+// The GS can need fresh texture/draw settings while these VU context inputs
+// remain unchanged. Capture only after a full stock unlit context, not after
+// the established material/transform deltas. All words are explicitly set;
+// raw float bits also distinguish signed zero without struct padding.
+static const unsigned int kUnlitGsContextKeyWords = 15;
+static uint32_t unlitGsContextKey[kUnlitGsContextKeyWords];
+static bool unlitGsContextValid;
+
+static void GetUnlitGsContextKey(const CImmDrawContext& draw, uint32_t* key)
+{
+    key[0] = draw.GetFBWidth();
+    key[1] = draw.GetFBHeight();
+    key[2] = draw.GetDepthBits();
+    key[3] = draw.GetDoCullFace();
+    key[4] = draw.GetCullFaceDir();
+    key[5] = draw.GetPolygonMode();
+    key[6] = draw.GetDoSmoothShading();
+    key[7] = draw.GetBlendEnabled();
+    key[8] = draw.GetEdgeAAEnabled();
+    key[9] = draw.GetFogEnabled();
+    key[10] = draw.GetDoClipping();
+    const float params[4] = { draw.GetDepthOffset(), draw.GetFogStart(),
+        draw.GetFogEnd(), draw.GetClipNear() };
+    memcpy(key + 11, params, sizeof(params));
+}
+#endif
 #endif
 
 extern "C" void pglInvalidateUnlitContextDelta(void)
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     unlitContextOwner = NULL;
     unlitContextPacket = NULL;
+#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
+    unlitGsContextValid = false;
+#endif
 #endif
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
 bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
     GLenum primType, uint32_t changes, bool userChanged, bool originalClip) const
 {
     const uint32_t allowed = RendererCtxtFlags::Xform | RendererCtxtFlags::CurMaterial;
+#if PGL_UNLIT_DELTA_SPECIALIZE
+    // These checks need no GL-state pointer chasing. In particular, a full
+    // context or a new owner cannot reuse anything regardless of lighting.
+    if (changes == 0 || (changes & ~allowed) != 0 || userChanged
+        || unlitContextOwner != this || unlitContextPacket != &packet
+        || unlitContextOriginalClip != originalClip || unlitContextPrim != primType)
+        return false;
+#endif
     CGLContext& context = *pGLContext;
+    const bool doLighting = context.GetImmLighting().GetLightingEnabled();
+    if (doLighting) {
+        // A modelview change also changes normal/light transforms. Only the
+        // exact material span is independent of the previously lit context.
+        if (!PGL_LIT_MATERIAL_DELTA || originalClip
+            || changes != RendererCtxtFlags::CurMaterial)
+            return false;
+    } else if (originalClip ? !PGL_CLIP_CONTEXT_DELTA : !PGL_UNLIT_CONTEXT_DELTA) {
+        return false;
+    }
     // Unknown/general invalidations (including the legacy 0xff full marker)
     // are never interpreted as a partial update. Any GS change also falls
     // back: draw-buffer/layout transitions can change clip/depth fields.
-    return changes != 0 && (changes & ~allowed) == 0 && !userChanged
+    return
+#if !PGL_UNLIT_DELTA_SPECIALIZE
+        changes != 0 && (changes & ~allowed) == 0 && !userChanged
         && unlitContextOwner == this && unlitContextPacket == &packet
         && unlitContextOriginalClip == originalClip
-        && unlitContextPrim == primType && !context.InDListDef()
+        && unlitContextPrim == primType &&
+#endif
+        !context.InDListDef()
         && context.GetGsContextChanged() == 0
-        && !context.GetImmLighting().GetLightingEnabled()
+        && unlitContextLightingEnabled == doLighting
+        && unlitContextTexEnabled == context.GetTexManager().GetTexEnabled()
         && context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() == originalClip;
 }
 
+#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
+void CBaseRenderer::CacheUnlitGsContext()
+{
+    CGLContext& context = *pGLContext;
+    unlitGsContextValid = !context.InDListDef()
+        && !context.GetImmLighting().GetLightingEnabled()
+        && !context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom();
+    if (unlitGsContextValid)
+        GetUnlitGsContextKey(context.GetImmDrawContext(), unlitGsContextKey);
+}
+
+bool CBaseRenderer::CanUseUnlitGsContextDelta(const CVifSCDmaPacket& packet,
+    GLenum primType, uint32_t changes, bool userChanged) const
+{
+    const uint32_t allowed = RendererCtxtFlags::Xform | RendererCtxtFlags::CurMaterial
+        | RendererCtxtFlags::TexEnabled;
+    if (!unlitGsContextValid || changes == 0 || (changes & ~allowed) != 0
+        || userChanged || unlitContextOwner != this || unlitContextPacket != &packet
+        || unlitContextOriginalClip || unlitContextPrim != primType
+        || unlitContextLightingEnabled)
+        return false;
+
+    CGLContext& context = *pGLContext;
+    const uint32_t gsChanges = context.GetGsContextChanged();
+    if ((gsChanges & ~(GsCtxtFlags::Texture | GsCtxtFlags::DrawEnv)) != 0
+        || (gsChanges == 0 && !(changes & RendererCtxtFlags::TexEnabled))
+        || context.InDListDef() || context.GetImmLighting().GetLightingEnabled()
+        || unlitContextTexEnabled != context.GetTexManager().GetTexEnabled()
+        || context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom())
+        return false;
+
+    // q0 culling, q57 depth, q75 PRIM, q76 clip and q77 fog inputs must match.
+    // q58..65 are still updated by the original material/transform writer.
+    // Texture identities/modes and TEST/ALPHA/FRAME/XYOFFSET settings belong
+    // to SyncGsContext, whose packets and ordering remain unconditional.
+    uint32_t key[kUnlitGsContextKeyWords];
+    GetUnlitGsContextKey(context.GetImmDrawContext(), key);
+    return memcmp(key, unlitGsContextKey, sizeof(key)) == 0;
+}
+#endif
+
+#if PGL_UNLIT_DELTA_SPECIALIZE
+template <bool Lighting>
+inline __attribute__((always_inline))
+void CBaseRenderer::AddSpecializedContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
+#else
 void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
+#endif
 {
 #if !defined(kContextStart) || kMaterialEmission != 58 || kMaterialAmbient != 59 || kMaterialDiffuse != 60 || \
     kMaterialSpecular != 61 || kVertexXfrm != 62
@@ -88,15 +196,27 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
     packet.OpenUnpack(Vifs::UnpackModes::v4_32,
         materialChanged ? kMaterialEmission : kVertexXfrm, Packet::kSingleBuff);
     if (materialChanged) {
-        // Same operations/operand order as the full unlit context. Keep all
+        // Same operations/operand order as the full context. Keep all
         // material words, including alpha and currently unread specular.
         CImmMaterial& material = context.GetMaterialManager().GetImmMaterial();
         const float maxColorValue = GetMaxColorValue(context.GetTexManager().GetTexEnabled());
-        cpu_vec_4 emission = context.GetMaterialManager().GetCurColor() * maxColorValue;
+#if PGL_UNLIT_DELTA_SPECIALIZE
+        const bool doLighting = Lighting;
+#elif PGL_LIT_MATERIAL_DELTA
+        const bool doLighting = context.GetImmLighting().GetLightingEnabled();
+#else
+        const bool doLighting = false;
+#endif
+        cpu_vec_4 emission;
+        if (doLighting)
+            emission = material.GetEmission() * maxColorValue;
+        else
+            emission = context.GetMaterialManager().GetCurColor() * maxColorValue;
         packet += emission;
         packet += material.GetAmbient();
         cpu_vec_4 matDiffuse = material.GetDiffuse();
-        matDiffuse[3] = context.GetMaterialManager().GetCurColor()[3];
+        if (!doLighting)
+            matDiffuse[3] = context.GetMaterialManager().GetCurColor()[3];
         packet += matDiffuse;
         packet += material.GetSpecular();
     }
@@ -104,11 +224,39 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
     packet.CloseUnpack();
 }
 
+#if PGL_UNLIT_DELTA_SPECIALIZE
+#if PGL_LIT_MATERIAL_DELTA
+// Keep the lit copy out of the unlit writer's instruction footprint. Both
+// instantiate the same packet source; the restart stays in CLinearRenderer.
+__attribute__((noinline))
+void CBaseRenderer::AddLitMaterialContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
+{
+    AddSpecializedContextDelta<true>(packet, changes);
+}
+#endif
+
+void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
+{
+#if PGL_LIT_MATERIAL_DELTA
+    // CanUse has just matched this proof to the current lighting mode. Use
+    // that validated bit, rather than walking the lighting owner again.
+    if (unlitContextLightingEnabled) {
+        AddLitMaterialContextDelta(packet, changes);
+        return;
+    }
+#endif
+    AddSpecializedContextDelta<false>(packet, changes);
+}
+#endif
+
 void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType,
     bool originalClip)
 {
     CGLContext& context = *pGLContext;
-    if (context.InDListDef() || context.GetImmLighting().GetLightingEnabled()
+    const bool doLighting = context.GetImmLighting().GetLightingEnabled();
+    const bool enabled = doLighting ? (PGL_LIT_MATERIAL_DELTA && !originalClip)
+        : (originalClip ? PGL_CLIP_CONTEXT_DELTA : PGL_UNLIT_CONTEXT_DELTA);
+    if (!enabled || context.InDListDef()
         || context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() != originalClip) {
         pglInvalidateUnlitContextDelta();
         return;
@@ -117,6 +265,8 @@ void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primT
     unlitContextPacket = &packet;
     unlitContextPrim = primType;
     unlitContextOriginalClip = originalClip;
+    unlitContextLightingEnabled = doLighting;
+    unlitContextTexEnabled = context.GetTexManager().GetTexEnabled();
 }
 #endif
 
@@ -188,17 +338,39 @@ void CBaseRenderer::InitXferBlock(CVifSCDmaPacket& packet,
 
     // get unpack modes/masks
 
+    // The format is a pure function of width, independent of GL/VU state.
+    // Constructors initialize every cached width to zero (not a valid VIF
+    // format), forcing first-use setup. Keep all four attributes initialized:
+    // custom renderers can change XferNormals/XferColors AFTER InitXferBlock.
+#if PGL_TRANSFER_FORMAT_CACHE
+    if (WordsPerVertex != wordsPerVertex) {
+#endif
     WordsPerVertex = wordsPerVertex;
     GetUnpackAttribs(WordsPerVertex, VertexUnpackMode, VertexUnpackMask);
+#if PGL_TRANSFER_FORMAT_CACHE
+    }
+    if (WordsPerNormal != ((wordsPerNormal > 0) ? wordsPerNormal : 3)) {
+#endif
 
     WordsPerNormal = (wordsPerNormal > 0) ? wordsPerNormal : 3;
     GetUnpackAttribs(WordsPerNormal, NormalUnpackMode, NormalUnpackMask);
+#if PGL_TRANSFER_FORMAT_CACHE
+    }
+    if (WordsPerTexCoord != ((wordsPerTex > 0) ? wordsPerTex : 2)) {
+#endif
 
     WordsPerTexCoord = (wordsPerTex > 0) ? wordsPerTex : 2;
     GetUnpackAttribs(WordsPerTexCoord, TexCoordUnpackMode, TexCoordUnpackMask);
+#if PGL_TRANSFER_FORMAT_CACHE
+    }
+    if (WordsPerColor != ((wordsPerColor > 0) ? wordsPerColor : 3)) {
+#endif
 
     WordsPerColor = (wordsPerColor > 0) ? wordsPerColor : 3;
     GetUnpackAttribs(WordsPerColor, ColorUnpackMode, ColorUnpackMask);
+#if PGL_TRANSFER_FORMAT_CACHE
+    }
+#endif
 
     // set up the row register to expand vectors with fewer than 4 elements
 
@@ -306,7 +478,7 @@ void CBaseRenderer::XferBlock(CVifSCDmaPacket& packet,
 void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset,
     bool sparseUnlit)
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     CGLContext& glContext = *pGLContext;
@@ -315,6 +487,9 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
     sparseUnlit = sparseUnlit && !doLighting;
 #if kNumLights != 0 || kGlobalAmbient != 57 || kVertexXfrm != 62 || kGifTag != 75
 #error "Review the stock unlit context spans against the VU context ABI"
+#endif
+#if PGL_SPARSE_LIGHT_CONTEXT && (kLight0Base != 9 || kLightStructSize != 6)
+#error "Review the contiguous light-record prefix against the VU context ABI"
 #endif
 
     packet.Stcycl(1, 1);
@@ -328,9 +503,17 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         nextDir = nextPt = nextSpot = &lightPtrs[0];
         int numDirs, numPts, numSpots;
         numDirs = numPts = numSpots = 0;
+#if PGL_SPARSE_LIGHT_CONTEXT
+        int lightRecordCount = 0;
+#else
+        const int lightRecordCount = 8;
+#endif
         for (int i = 0; !sparseUnlit && i < 8; i++) {
             CImmLight& light = lighting.GetImmLight(i);
             if (light.IsEnabled()) {
+#if PGL_SPARSE_LIGHT_CONTEXT
+                lightRecordCount = i + 1;
+#endif
                 int lightBase = kLight0Base + vu1Offset;
                 if (light.IsDirectional()) {
                     nextDir->dir = lightBase + i * kLightStructSize;
@@ -347,6 +530,15 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
                 }
             }
         }
+#if PGL_SPARSE_LIGHT_CONTEXT
+        // Stock light loops dereference only the enabled pointers counted in
+        // q0. Keep the original contiguous prefix (including holes) and omit
+        // just its disabled tail; arbitrary/custom contexts retain all eight
+        // records. This is a fresh upload, not a cross-draw lighting cache.
+        if (!doLighting || glContext.InDListDef()
+            || glContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom())
+            lightRecordCount = 8;
+#endif
 
         // transpose of object to world space xfrm (for light directions)
         cpu_mat_44 objToWorldXfrmTrans;
@@ -404,7 +596,7 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
             packet.Add(&lightPtrs[0], 8);
 
             // add light info
-            for (int i = 0; i < 8; i++) {
+            for (int i = 0; i < lightRecordCount; i++) {
                 CImmLight& light = lighting.GetImmLight(i);
                 packet += light.GetAmbient() * maxColorValue;
                 packet += light.GetDiffuse() * maxColorValue;
@@ -427,6 +619,17 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
                 packet += light.GetQuadAtten() * 1.0f / normalScale;
                 packet += 0; // padding
             }
+#if PGL_SPARSE_LIGHT_CONTEXT
+            if (lightRecordCount < 8) {
+                // The light pointers and every live record keep their exact
+                // VU addresses. Resume at q57 so ambient/material/xforms/tag
+                // retain their original words, order and synchronization.
+                packet.CloseUnpack();
+                packet.Pad96();
+                packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+                    vu1Offset + kGlobalAmbient, Packet::kSingleBuff);
+            }
+#endif
         }
 
         // global ambient
@@ -591,7 +794,7 @@ void CBaseRenderer::CacheRendererState()
 
 void CBaseRenderer::Load()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     unsigned int size64     = MicrocodePacketSize / 8;
@@ -652,6 +855,7 @@ void CBaseRenderer::XferVectors(CVifSCDmaPacket& packet, unsigned int* dataStart
         packet.OpenUnpack(unpackMode, vu1MemOffset,
             VifDoubleBuffered, Packet::kMasked);
         packet.CloseUnpack(numVectors);
+        pglCountSubmission(PGL_SUBMIT_REF_BYTES, numVectors * wordsPerVec * 4u);
         return;
     }
 #endif
@@ -671,6 +875,8 @@ void CBaseRenderer::XferVectors(CVifSCDmaPacket& packet, unsigned int* dataStart
         refXferEnd--;
     }
     int numQuadsInRefXfer = ((unsigned int)refXferEnd - (unsigned int)refXferStart) / 16;
+    pglCountSubmission(PGL_SUBMIT_REF_BYTES, numQuadsInRefXfer * 16u);
+    pglCountSubmission(PGL_SUBMIT_EDGE_BYTES, (numWordsToPrepend + numWordsToAppend) * 4u);
 
     packet.Cnt();
     {

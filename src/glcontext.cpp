@@ -271,7 +271,7 @@ void CGLContext::BeginImmediateGeometry()
     PushVif1Packet();
     SetVif1Packet(*ImmVif1Packet);
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
 #if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
@@ -311,7 +311,7 @@ void CGLContext::FinishRenderingImmediateGeometry(bool forceImmediateStop)
 
 void CGLContext::BeginGeometry()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     // reset packets that will be drawn to during this frame
@@ -533,7 +533,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.10 12:48]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.12 19:36]\n");
     printf("[PS2-PACKETS] normal=%s\n",
         PGL_CACHED_FRAME_PACKETS ? "cached" : "ucab");
     printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",

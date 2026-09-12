@@ -4,6 +4,10 @@
 //  Original author: Stefan Boberg (boberg@team17.com)
 //
 
+#ifndef PS2GL_METRICS_H
+#define PS2GL_METRICS_H
+#include "GL/ps2gl.h"
+
 #define PS2GL_METRICS_ENABLE 1
 
 enum MetricsEnum {
@@ -56,3 +60,19 @@ inline void pglAddToMetric(MetricsEnum eMetric, Metric_t Value = 1)
     g_Metrics[eMetric] += Value;
 #endif
 }
+
+#if PGL_SUBMISSION_METRICS
+extern bool g_PglSubmissionSampleActive;
+extern unsigned int g_PglSubmissionSample[PGL_SUBMIT_COUNT];
+#endif
+
+inline void pglCountSubmission(unsigned int metric, unsigned int amount = 1)
+{
+#if PGL_SUBMISSION_METRICS
+    if (g_PglSubmissionSampleActive) g_PglSubmissionSample[metric] += amount;
+#else
+    (void)metric;
+    (void)amount;
+#endif
+}
+#endif

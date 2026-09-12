@@ -58,6 +58,12 @@ void CImmLight::SetEnabled(bool enabled)
 {
     if (bIsEnabled != enabled) {
         bIsEnabled = enabled;
+#if PGL_LIT_MATERIAL_DELTA
+        // Renderer light-count capabilities are buckets (e.g. 1..3), so
+        // changing an active light need not switch the renderer. Its q0
+        // counts/pointers still changed: do not reuse a material-only delta.
+        GLContext.NumLightsChanged();
+#endif
         if (enabled)
             NumLights[Type]++;
         else

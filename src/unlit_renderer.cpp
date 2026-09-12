@@ -30,7 +30,8 @@ CUnlitTexTriRenderer::CUnlitTexTriRenderer()
 
 void CUnlitTexTriRenderer::Register()
 {
-    pglRegisterRenderer(new CUnlitTexTriRenderer);
+    pGLContext->GetImmGeomManager().GetRendererManager().RegisterUnlitTexTriRenderer(
+        new CUnlitTexTriRenderer);
     pglRegisterCustomPrimType(PGL_UNLIT_TEX_TRIANGLES, PGL_UNLIT_TEX_TRI_PROP,
         ~(pglU64_t)0xffffffff, PGL_MERGE_CONTIGUOUS);
 }

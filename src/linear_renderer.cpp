@@ -46,12 +46,59 @@ void CLinearRenderer::DrawLinearArrays(CGeometryBlock& block)
 
     // draw
 
+    pglCountSubmission(PGL_SUBMIT_BLOCKS);
+    if (block.GetWordsPerVertex() == 3)
+        pglCountSubmission(PGL_SUBMIT_XYZ3, block.GetTotalVertices());
+    else if (block.GetWordsPerVertex() == 4)
+        pglCountSubmission(PGL_SUBMIT_XYZ4, block.GetTotalVertices());
+#if PGL_FLAT_QUAD_PACKETS
+    if (block.GetPrimType() == GL_QUADS && TryDrawFlatQuads(packet, block, maxVertsPerBuffer)) return;
+#endif
     DrawBlock(packet, block, maxVertsPerBuffer);
 }
 
+#if PGL_FLAT_QUAD_PACKETS
+bool CLinearRenderer::TryDrawFlatQuads(CVifSCDmaPacket& packet,
+    CGeometryBlock& block, int maxVertsPerBuffer)
+{
+    // Use the OLD block and cached renderer transfer contract: while old
+    // geometry drains, live GL requirements may already describe the NEXT
+    // block. Never infer old geometry's lighting from the live GL flag.
+    if (block.GetPrimType() != GL_QUADS || block.GetArrayType() != ArrayType::kLinear
+        || block.GetNumStrips() != 1 || block.GetNumVertsToRestartStrip() != 0
+        || block.GetNumVertsPerPrim() != 4
+        || block.StripIsContinued(0) || maxVertsPerBuffer <= 0 || (maxVertsPerBuffer & 3)
+        || !XferVertices || !XferTexCoords || XferNormals || XferColors
+        || !block.GetVerticesAreValid() || !block.GetTexCoordsAreValid()
+        || block.GetNormalsAreValid() || block.GetColorsAreValid()
+        || (WordsPerVertex != 3 && WordsPerVertex != 4) || WordsPerTexCoord != 2)
+        return false;
+    const int total = block.GetStripLength(0);
+    if (total <= 0 || (total & 3) || total != block.GetTotalVertices()) return false;
+    CRendererManager& manager = pGLContext->GetImmGeomManager().GetRendererManager();
+    if (manager.IsCurRendererCustom() || &manager.GetCurRenderer() != this) return false;
+
+    pglCountSubmission(PGL_SUBMIT_FLAT_BLOCKS);
+    packet.Cnt();
+    packet.Stcycl(1, InputQuadsPerVert);
+    packet.Pad128();
+    packet.CloseTag();
+    const void* vertices = block.GetVertices(0);
+    const void* texCoords = block.GetTexCoords(0);
+    unsigned short stripOffset = 0;
+    for (int first = 0; first < total;) {
+        const int count = Math::Min(total - first, maxVertsPerBuffer);
+        XferBlock(packet, vertices, NULL, texCoords, NULL, InputGeomOffset, first, count);
+        FinishBuffer(packet, 0, count, InputQuadsPerVert, 1, &stripOffset);
+        first += count;
+    }
+    return true;
+}
+#endif
+
 void CLinearRenderer::InitUnlitContext()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
 #endif
     // X2 is unlit even when the application's fixed-function LIGHTING flag
@@ -69,6 +116,9 @@ void CLinearRenderer::InitUnlitContext()
 #endif
     CImmDrawContext& drawContext = pGLContext->GetImmDrawContext();
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+#if PGL_SUBMISSION_METRICS
+    const unsigned int contextStart = packet.GetByteLength();
+#endif
 #if PGL_CONTEXT_COEFFICIENT_CACHE
     const float depthClipToGs = drawContext.GetContextDepthScale();
 #else
@@ -141,14 +191,36 @@ void CLinearRenderer::InitUnlitContext()
     packet.Offset(kDoubleBufOffset);
     packet.CloseTag();
     CacheRendererState();
+    pglCountSubmission(PGL_SUBMIT_FULL_CONTEXTS);
+#if PGL_SUBMISSION_METRICS
+    pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - contextStart);
+#endif
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
 bool CLinearRenderer::TryUnlitContextDelta(GLenum primType, uint32_t changes,
     bool userChanged, bool originalClip)
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
-    if (CanUseUnlitContextDelta(packet, primType, changes, userChanged, originalClip)) {
+#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
+    bool canUse = CanUseUnlitContextDelta(packet, primType, changes, userChanged, originalClip);
+    if (!canUse && !originalClip
+        && CanUseUnlitGsContextDelta(packet, primType, changes, userChanged)) {
+        canUse = true;
+        changes &= RendererCtxtFlags::Xform | RendererCtxtFlags::CurMaterial;
+        // A disable/enable round trip can leave only TexEnabled dirty. Keep
+        // a real, nonempty delta and the existing restart by resending the
+        // same four material qwords; no zero-length UNPACK or fence shortcut.
+        if (changes == 0) changes = RendererCtxtFlags::CurMaterial;
+    }
+    if (canUse)
+#else
+    if (CanUseUnlitContextDelta(packet, primType, changes, userChanged, originalClip))
+#endif
+    {
+#if PGL_SUBMISSION_METRICS
+        const unsigned int contextStart = packet.GetByteLength();
+#endif
         packet.Cnt();
         AddUnlitContextDelta(packet, changes);
         // The programs latch transforms/fog (and some latch constant color)
@@ -160,6 +232,10 @@ bool CLinearRenderer::TryUnlitContextDelta(GLenum primType, uint32_t changes,
         packet.CloseTag();
         CacheRendererState();
         NoteUnlitContext(packet, primType, originalClip);
+        pglCountSubmission(PGL_SUBMIT_DELTA_CONTEXTS);
+#if PGL_SUBMISSION_METRICS
+        pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - contextStart);
+#endif
         return true;
     }
     return false;
@@ -168,7 +244,7 @@ bool CLinearRenderer::TryUnlitContextDelta(GLenum primType, uint32_t changes,
 
 void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
 {
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     if (TryUnlitContextDelta(primType, rcChanges, userRcChanged)) return;
 #endif
     bool sparseUnlit = false;
@@ -177,8 +253,11 @@ void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool user
         && !pGLContext->GetImmGeomManager().GetRendererManager().IsCurRendererCustom();
 #endif
     InitLinearContext(primType, sparseUnlit);
-#if PGL_UNLIT_CONTEXT_DELTA
+#if PGL_UNLIT_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     NoteUnlitContext(pGLContext->GetVif1Packet(), primType);
+#endif
+#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
+    CacheUnlitGsContext();
 #endif
 }
 
@@ -186,6 +265,9 @@ void CLinearRenderer::InitLinearContext(GLenum primType, bool sparseUnlit)
 {
     CGLContext& glContext   = *pGLContext;
     CVifSCDmaPacket& packet = glContext.GetVif1Packet();
+#if PGL_SUBMISSION_METRICS
+    const unsigned int contextStart = packet.GetByteLength();
+#endif
 
     packet.Cnt();
     {
@@ -200,6 +282,10 @@ void CLinearRenderer::InitLinearContext(GLenum primType, bool sparseUnlit)
     packet.CloseTag();
 
     CacheRendererState();
+    pglCountSubmission(PGL_SUBMIT_FULL_CONTEXTS);
+#if PGL_SUBMISSION_METRICS
+    pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - contextStart);
+#endif
 }
 
 // Coefficients for the cached-dlist packet estimate below. Library defaults,
@@ -395,6 +481,7 @@ void CLinearRenderer::FinishBuffer(CVifSCDmaPacket& packet, int numVertsToBreakS
     int numVertsInBuffer, int vu1QuadsPerVert,
     int numStripsInBuffer, unsigned short* stripOffsets)
 {
+    pglCountSubmission(PGL_SUBMIT_BUFFERS);
     packet.Cnt();
     {
         // going to start a new buffer, so finish this one
@@ -463,22 +550,32 @@ void CLinearRenderer::XferBufferHeader(CVifSCDmaPacket& packet,
         //   bit 10	: stop bit
         //   bit 11	: ADC bit of second vertex starting at offset
         // these are converted to floats to do a right shift with a fp add on vu1
-        unsigned int adcBits = 0;
-        if (numVertsToBreakStrip == 0)
-            numStripsInBuffer = 0;
-        else if (numVertsToBreakStrip == 2)
-            adcBits = 0x800;
+#if PGL_INDEPENDENT_PRIM_HEADER
+        if (numVertsToBreakStrip == 0) {
+            // Float copy keeps 4-byte alignment valid with either TTE mode.
+            // 1024 is exactly representable; all other words are positive 0.
+            static const float independentAdc[16] = { 1024.0f };
+            packet.Add(independentAdc, 16);
+        } else
+#endif
+        {
+            unsigned int adcBits = 0;
+            if (numVertsToBreakStrip == 0)
+                numStripsInBuffer = 0;
+            else if (numVertsToBreakStrip == 2)
+                adcBits = 0x800;
 
-        float adc;
-        unsigned int stopBit = 0x400;
-        for (int i = 0; i < 16; i++) {
-            if (i < numStripsInBuffer)
-                adc = (float)(adcBits | (unsigned int)stripOffsets[i] * vu1OutQuadsPerVert);
-            else if (i == numStripsInBuffer)
-                adc = (float)stopBit;
-            else
-                adc = (float)0;
-            packet += adc;
+            float adc;
+            unsigned int stopBit = 0x400;
+            for (int i = 0; i < 16; i++) {
+                if (i < numStripsInBuffer)
+                    adc = (float)(adcBits | (unsigned int)stripOffsets[i] * vu1OutQuadsPerVert);
+                else if (i == numStripsInBuffer)
+                    adc = (float)stopBit;
+                else
+                    adc = (float)0;
+                packet += adc;
+            }
         }
     }
     packet.CloseUnpack();
