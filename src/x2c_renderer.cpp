@@ -16,6 +16,7 @@ CClipTriX2CRenderer::CClipTriX2CRenderer()
               (const u8*)vsmGeneralClipTriX2CDecode_CodeStart,
           "clip x2c, exact paired wall colors", PGL_CLIP_TRI_X2C_PROP, 4, 4, 2)
 {
+    ContextDeltaEligible = true;
 }
 
 static CClipTriX2CRenderer* pX2CRenderer = NULL;
@@ -41,7 +42,10 @@ unsigned int pglGetWallSubmissionOptions(void)
 {
     unsigned int options = (PGL_WALL_PACKET_DIRECT ? 2u : 0u) |
         (PGL_X2_PREFIX_SETUP ? 4u : 0u) |
-        (PGL_X2_WINDOW_CONTEXT_REUSE ? 8u : 0u);
+        (PGL_X2_WINDOW_CONTEXT_REUSE ? 8u : 0u) |
+        (PGL_X2_WINDOW_KEY_REUSE ? 16u : 0u) |
+        (PGL_WALL_DESCRIPTOR_ARRAYS ? 32u : 0u) |
+        (PGL_X2_CONTEXT_DELTA ? 64u : 0u);
 #if PGL_WALL_COLOR_COMPACT
     if (pX2CRenderer) options |= 1u;
 #endif

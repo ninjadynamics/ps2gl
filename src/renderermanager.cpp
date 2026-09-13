@@ -41,6 +41,8 @@ CRendererManager::CRendererManager(CGLContext& context)
     , CurrentRenderer(NULL)
     , NewRenderer(NULL)
     , ColoredHudRendererRegistered(false)
+    , WallQuadRendererRegistered(false)
+    , WallColorRendererRegistered(false)
     , RoadRenderer(NULL)
     , PoolRenderer(NULL)
     , BillboardRenderer(NULL)
@@ -385,6 +387,21 @@ void CRendererManager::RegisterX2Renderer(CClipTriX2Renderer* renderer)
     // Only the builtin family's audited Load methods preserve this prefix.
     // Ordinary custom registrations remain false, regardless of their flags.
     UserRenderers[NumUserRenderers - 1].preservesX2Base = true;
+    const uint64_t reqs = renderer->GetRequirements();
+    if (reqs != PGL_CLIP_TRI_X2Q_PROP && reqs != PGL_CLIP_TRI_X2C_PROP) return;
+    // Exact first-match proof, as for the colored HUD builtin. An earlier
+    // custom renderer must not acquire a descriptor format by coincidence.
+    bool selected = false;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            selected = entry.renderer == renderer;
+            break;
+        }
+    }
+    if (reqs == PGL_CLIP_TRI_X2Q_PROP) WallQuadRendererRegistered = selected;
+    else WallColorRendererRegistered = selected;
 }
 
 void CRendererManager::RegisterRoadRenderer(CClipRoadX2RRenderer* renderer)

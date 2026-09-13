@@ -60,6 +60,8 @@ class CRendererManager {
     int NumDefaultRenderers, NumUserRenderers;
     const tRenderer *CurrentRenderer, *NewRenderer;
     bool ColoredHudRendererRegistered;
+    bool WallQuadRendererRegistered;
+    bool WallColorRendererRegistered;
     CClipRoadX2RRenderer* RoadRenderer;
     CClipPoolX2PRenderer* PoolRenderer;
     CClipBillboardX2BRenderer* BillboardRenderer;
@@ -74,6 +76,12 @@ public:
     void RegisterUserRenderer(CRenderer* renderer);
     void RegisterUnlitTexTriRenderer(CUnlitTexTriRenderer* renderer);
     void RegisterX2Renderer(CClipTriX2Renderer* renderer);
+    bool CanSelectWallDescriptorRenderer(bool pairedColors) const
+    {
+        return (pairedColors ? WallColorRendererRegistered : WallQuadRendererRegistered)
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
     void RegisterRoadRenderer(CClipRoadX2RRenderer* renderer);
     CClipRoadX2RRenderer* GetRoadRenderer() const { return RoadRenderer; }
     bool CanSelectRoadRenderer() const

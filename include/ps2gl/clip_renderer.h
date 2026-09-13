@@ -79,6 +79,27 @@ protected:
     // Same transfer-count sizing rule as Pfx (packet.Add(Ctx2, 16)).
     uint128_t Ctx2[16] __attribute__((aligned(16)));
 
+    // This cache owns CPU bytes only. It may survive a frame or foreign GS
+    // writer because BuildPrefixes still performs all original synchronization.
+    // Its source key includes every byte/field read to construct Ctx2.
+    uint128_t Ctx2SourceTexture[8] __attribute__((aligned(16)));
+    uint64_t Ctx2SourceDraw[6];
+    unsigned int Ctx2SourceAlpha;
+    bool Ctx2SourceValid;
+
+    // Only the audited raw X2 and D/Q/C decoders opt in. Their VU stores
+    // remain in XTOP-relative halves >=q79, never in the absolute context.
+    bool ContextDeltaEligible;
+    bool ContextInputsValid;
+    uint128_t ContextInputs[10] __attribute__((aligned(16)));
+    const CVifSCDmaPacket* ContextPacket;
+    const void* ContextPacketBase;
+    const void* ContextPacketEnd;
+    unsigned int ContextFrame;
+    void BuildContextInputs(uint128_t* inputs);
+    void InitRetainedContext();
+    void RememberContextEnd();
+
     void BuildWindowContext2Settings();
 #if PGL_X2_WINDOW_CONTEXT_REUSE
     bool TryReuseWindowContext(CVifSCDmaPacket& packet);

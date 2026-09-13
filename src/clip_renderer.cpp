@@ -61,6 +61,14 @@ extern "C" void pglGetX2BaseReuseStats(unsigned int* uploads, unsigned int* byte
 }
 
 static unsigned int x2WindowAttempts, x2WindowReused, x2WindowFull, x2WindowPins;
+static unsigned int x2WindowTexturePrefixReused, x2WindowDrawTailReused;
+
+extern "C" void pglGetWindowPreparationStats(unsigned int* texturePrefixReused,
+    unsigned int* drawTailReused)
+{
+    if (texturePrefixReused) *texturePrefixReused = x2WindowTexturePrefixReused;
+    if (drawTailReused) *drawTailReused = x2WindowDrawTailReused;
+}
 
 extern "C" void pglGetWindowContextStats(unsigned int* attempts,
     unsigned int* reused, unsigned int* full, unsigned int* globalPins)
@@ -212,6 +220,13 @@ CClipTriX2Renderer::CClipTriX2Renderer(void* mcode, int mcodeSize, const char* n
     : CLinearRenderer(mcode, mcodeSize, 4, 3, kInputStart, 120, name)
     , WinTex(NULL)
     , Ctx2Armed(false)
+    , Ctx2SourceValid(false)
+    , ContextDeltaEligible(false)
+    , ContextInputsValid(false)
+    , ContextPacket(NULL)
+    , ContextPacketBase(NULL)
+    , ContextPacketEnd(NULL)
+    , ContextFrame(0)
 {
     WinColor[0] = WinColor[1] = WinColor[2] = WinColor[3] = 1.0f;
 
@@ -239,6 +254,13 @@ CClipTriX2Renderer::CClipTriX2Renderer()
           "clip x2, city walls+windows")
     , WinTex(NULL)
     , Ctx2Armed(false)
+    , Ctx2SourceValid(false)
+    , ContextDeltaEligible(true)
+    , ContextInputsValid(false)
+    , ContextPacket(NULL)
+    , ContextPacketBase(NULL)
+    , ContextPacketEnd(NULL)
+    , ContextFrame(0)
 {
     // 120 quads = 30 verts of 4q input (pos, [normal unused], stq, color);
     // the microcode owns the rest of its buffer layout (planes + 3q-vert
@@ -325,10 +347,127 @@ void CClipTriX2Renderer::InitContext(GLenum primType, uint32_t rcChanges, bool u
     (void)primType;
     (void)rcChanges;
     (void)userRcChanged;
+#if PGL_X2_CONTEXT_DELTA
+    if (ContextDeltaEligible) {
+        InitRetainedContext();
+        return;
+    }
+#endif
     InitUnlitContext();
 }
 
-#if PGL_X2_PREFIX_SETUP || PGL_X2_WINDOW_CONTEXT_REUSE
+void CClipTriX2Renderer::BuildContextInputs(uint128_t* inputs)
+{
+    typedef char X2ContextTypes[sizeof(uint128_t) == 16u && sizeof(tGifTag) == 16u ? 1 : -1];
+    (void)sizeof(X2ContextTypes);
+    CImmDrawContext& draw = pGLContext->GetImmDrawContext();
+    const float cull = (float)draw.GetCullFaceDir();
+    unsigned int cullWord;
+    memcpy(&cullWord, &cull, sizeof(cullWord));
+    const uint32_t cullQuad[4] = {
+        0, 0, 0, cullWord | ((unsigned int)draw.GetDoCullFace() << 5)
+    };
+    const float depth[4] = { 0.0f, 0.0f, 0.0f,
+        draw.GetContextDepthScale() + draw.GetDepthOffset() };
+    memcpy(inputs, cullQuad, sizeof(cullQuad));
+    memcpy(inputs + 1, depth, sizeof(depth));
+    typedef char X2ContextMatrixSize[sizeof(cpu_mat_44) == 64u ? 1 : -1];
+    (void)sizeof(X2ContextMatrixSize);
+    memcpy(inputs + 2, &draw.GetVertexXform(), sizeof(cpu_mat_44));
+    GLenum primitive = draw.GetPolygonMode();
+    if (primitive == GL_FILL) primitive = GL_TRIANGLES;
+    // Build a real tag, then copy its representation: never mutate a GIF
+    // bitfield through integer/float staging storage (the short-tag crash).
+    const tGifTag tag = BuildGiftag(primitive & 0xff);
+    memcpy(inputs + 6, &tag, sizeof(tag));
+    const cpu_vec_xyz& scale = draw.GetContextClipScales();
+    const struct {
+        float x, y, z;
+        uint32_t clipping;
+    } clip = { scale.x, scale.y, scale.z, draw.GetDoClipping() ? 1u : 0u };
+    typedef char X2ContextClipSize[sizeof(clip) == 16u ? 1 : -1];
+    (void)sizeof(X2ContextClipSize);
+    memcpy(inputs + 7, &clip, sizeof(clip));
+    const float near[4] = { draw.GetClipNear(), 0.0f, 0.0f, 0.0f };
+    memcpy(inputs + 8, near, sizeof(near));
+    inputs[9] = 0;
+}
+
+void CClipTriX2Renderer::InitRetainedContext()
+{
+    // q0,57,62..65,75..78 are read-only to X2 and the opted-in decoders.
+    // The checked generated programs have no absolute stores; all scratch
+    // stores are bounded within their XTOP-derived halves starting at q79.
+#if kBackFaceCullMult != 0 || kClipToGsDepthOffset != 57 || \
+    kVertexXfrm != 62 || kGifTag != 75 || kClipInfo != 76 || \
+    kFogParams != 77 || kFogPad != 78 || kDoubleBufBase != 79
+#error "Review retained X2 context against its VU read/write ABI"
+#endif
+    pglInvalidateUnlitContextDelta();
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+    uint128_t inputs[10] __attribute__((aligned(16)));
+    BuildContextInputs(inputs);
+    const bool retained = ContextInputsValid && !pGLContext->InDListDef()
+        && pGLContext->UsesNormalFramePacket()
+        && ContextPacket == &packet && ContextPacketBase == packet.GetBase()
+        && ContextPacketEnd == packet.GetNextPtr()
+        && ContextFrame == pGLContext->GetFrameNumber()
+        && &pGLContext->GetImmGeomManager().GetRendererManager().GetCurRenderer() == this;
+#if PGL_SUBMISSION_METRICS
+    const unsigned int start = packet.GetByteLength();
+#endif
+    // Even an unchanged context retains FLUSH and the complete restart. X2
+    // latches matrix/near in its PC0 prologue; no timing shortcut is assumed.
+    packet.Cnt();
+    packet.Stcycl(1, 1);
+    packet.Flush();
+    static const unsigned int offsets[4] = { 0, 57, 62, 75 };
+    static const unsigned int first[4] = { 0, 1, 2, 6 };
+    static const unsigned int lengths[4] = { 1, 1, 4, 4 };
+    bool skipped = false;
+    for (unsigned int range = 0; range < 4; ++range) {
+        if (!retained || memcmp(inputs + first[range], ContextInputs + first[range],
+                lengths[range] * sizeof(uint128_t)) != 0) {
+            packet.Pad96();
+            packet.OpenUnpack(Vifs::UnpackModes::v4_32, offsets[range], Packet::kSingleBuff);
+            packet.Add(inputs + first[range], lengths[range]);
+            packet.CloseUnpack();
+        } else {
+            skipped = true;
+        }
+    }
+    packet.Mscal(0);
+    packet.Flushe();
+    packet.Base(kDoubleBufBase);
+    packet.Offset(kDoubleBufOffset);
+    packet.CloseTag();
+    CacheRendererState();
+    memcpy(ContextInputs, inputs, sizeof(ContextInputs));
+    ContextInputsValid = true;
+    // Only the subsequent completed draw can establish an uninterrupted
+    // context-to-draw-to-context chain; InitContext alone grants no reuse.
+    ContextPacketEnd = NULL;
+    pglCountSubmission(skipped ? PGL_SUBMIT_DELTA_CONTEXTS : PGL_SUBMIT_FULL_CONTEXTS);
+#if PGL_SUBMISSION_METRICS
+    pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - start);
+#endif
+}
+
+void CClipTriX2Renderer::RememberContextEnd()
+{
+#if PGL_X2_CONTEXT_DELTA
+    if (ContextDeltaEligible && ContextInputsValid && !pGLContext->InDListDef()
+        && pGLContext->UsesNormalFramePacket()) {
+        CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+        ContextPacket = &packet;
+        ContextPacketBase = packet.GetBase();
+        ContextPacketEnd = packet.GetNextPtr();
+        ContextFrame = pGLContext->GetFrameNumber();
+    }
+#endif
+}
+
+#if PGL_X2_PREFIX_SETUP || PGL_X2_WINDOW_CONTEXT_REUSE || PGL_X2_WINDOW_KEY_REUSE
 typedef char X2TexturePrefixQwordCheck[
     sizeof(uint128_t) == 16 && sizeof(tGifTag) == 16 && sizeof(uint64_t) == 8 ? 1 : -1];
 
@@ -361,94 +500,134 @@ static inline void X2TexturePrefixAddress(uint128_t* settings, int quad, uint64_
 
 void CClipTriX2Renderer::BuildWindowContext2Settings()
 {
-    // Ctx2[0..7]: the window texture's OWN settings block (giftag + 7
-    // A+D regs), register addresses rewritten to context 2 — so
-    // punch-through TEXA + custom mip MIPTBPs ride verbatim. TEXA is
-    // global (safe with the x2 pairing: a PSMT8 wall takes alpha from
-    // its CLUT, only the PSMCT16 window reads TEXA); TEXFLUSH stripped
-    // to NOP (the real upload path above kept its flush — a TEX0
-    // retarget to resident data needs none, GS manual pp. 43/51/63/131).
-    memcpy(&Ctx2[0], WinTex->GetSettingsBlock(), 8 * 16);
-    tGifTag contextTag;
-    memcpy(&contextTag, &Ctx2[0], sizeof(contextTag));
-    contextTag.NLOOP = 15;
-    memcpy(&Ctx2[0], &contextTag, sizeof(contextTag));
-#if PGL_X2_PREFIX_SETUP
-    if (X2TexturePrefixHasFixedLayout(Ctx2)) {
-        // The fixed ABI needs six address stores; TEXA stays global and
-        // every texture value remains the original byte-for-byte copy.
-        X2TexturePrefixAddress(Ctx2, 1, GS::RegAddrs::nop);
-        X2TexturePrefixAddress(Ctx2, 2, GS::RegAddrs::clamp_2);
-        X2TexturePrefixAddress(Ctx2, 3, GS::RegAddrs::tex1_2);
-        X2TexturePrefixAddress(Ctx2, 4, GS::RegAddrs::tex0_2);
-        X2TexturePrefixAddress(Ctx2, 6, GS::RegAddrs::miptbp1_2);
-        X2TexturePrefixAddress(Ctx2, 7, GS::RegAddrs::miptbp2_2);
-    } else
+    const GS::CDrawEnv& de = pGLContext->GetImmDrawContext().GetDrawEnv();
+#if PGL_X2_WINDOW_KEY_REUSE
+    const uint64_t drawSource[6] = {
+        de.GetTestReg(), de.GetFrameReg(), de.GetZBufReg(),
+        de.GetXYOffsetReg(), de.GetScissorReg(), de.GetFBAReg()
+    };
+    unsigned int alphaSource;
+    memcpy(&alphaSource, &WinColor[3], sizeof(alphaSource));
+    // Texture changes and draw-environment changes are independent. In a city
+    // material sweep the window tiles change, while the draw tail usually does
+    // not. Retain either half only while its complete source key still matches.
+    // This is CPU construction reuse, never evidence of resident GS state.
+    const bool reuseTexture = Ctx2SourceValid &&
+        memcmp(Ctx2SourceTexture, WinTex->GetSettingsBlock(), sizeof(Ctx2SourceTexture)) == 0;
+    const bool reuseDraw = Ctx2SourceValid && Ctx2SourceAlpha == alphaSource &&
+        memcmp(Ctx2SourceDraw, drawSource, sizeof(drawSource)) == 0;
+    if (reuseTexture) ++x2WindowTexturePrefixReused;
+    if (reuseDraw) ++x2WindowDrawTailReused;
+#else
+    const bool reuseTexture = false;
+    const bool reuseDraw = false;
 #endif
-    {
-        uint64_t* tq = (uint64_t*)&Ctx2[1];
-        for (int i = 0; i < 7; i++, tq += 2) {
-            switch (tq[1]) {
-            case GS::RegAddrs::texflush: tq[1] = GS::RegAddrs::nop; break;
-            case GS::RegAddrs::clamp_1: tq[1] = GS::RegAddrs::clamp_2; break;
-            case GS::RegAddrs::tex1_1: tq[1] = GS::RegAddrs::tex1_2; break;
-            case GS::RegAddrs::tex0_1: tq[1] = GS::RegAddrs::tex0_2; break;
-            case GS::RegAddrs::texa: break; // global
-            case GS::RegAddrs::miptbp1_1: tq[1] = GS::RegAddrs::miptbp1_2; break;
-            case GS::RegAddrs::miptbp2_1: tq[1] = GS::RegAddrs::miptbp2_2; break;
-            default: mError("unexpected reg in the texture settings block");
+    if (!reuseTexture) {
+        // Ctx2[0..7]: the window texture's OWN settings block (giftag + 7
+        // A+D regs), register addresses rewritten to context 2 — so
+        // punch-through TEXA + custom mip MIPTBPs ride verbatim. TEXA is
+        // global (safe with the x2 pairing: a PSMT8 wall takes alpha from
+        // its CLUT, only the PSMCT16 window reads TEXA); TEXFLUSH stripped
+        // to NOP (the real upload path above kept its flush — a TEX0
+        // retarget to resident data needs none, GS manual pp. 43/51/63/131).
+        memcpy(&Ctx2[0], WinTex->GetSettingsBlock(), 8 * 16);
+        tGifTag contextTag;
+        memcpy(&contextTag, &Ctx2[0], sizeof(contextTag));
+        contextTag.NLOOP = 15;
+        memcpy(&Ctx2[0], &contextTag, sizeof(contextTag));
+#if PGL_X2_PREFIX_SETUP
+        if (X2TexturePrefixHasFixedLayout(Ctx2)) {
+            // The fixed ABI needs six address stores; TEXA stays global and
+            // every texture value remains the original byte-for-byte copy.
+            X2TexturePrefixAddress(Ctx2, 1, GS::RegAddrs::nop);
+            X2TexturePrefixAddress(Ctx2, 2, GS::RegAddrs::clamp_2);
+            X2TexturePrefixAddress(Ctx2, 3, GS::RegAddrs::tex1_2);
+            X2TexturePrefixAddress(Ctx2, 4, GS::RegAddrs::tex0_2);
+            X2TexturePrefixAddress(Ctx2, 6, GS::RegAddrs::miptbp1_2);
+            X2TexturePrefixAddress(Ctx2, 7, GS::RegAddrs::miptbp2_2);
+        } else
+#endif
+        {
+            uint64_t textureRegisters[14];
+            memcpy(textureRegisters, &Ctx2[1], sizeof(textureRegisters));
+            uint64_t* tq = textureRegisters;
+            for (int i = 0; i < 7; i++, tq += 2) {
+                switch (tq[1]) {
+                case GS::RegAddrs::texflush: tq[1] = GS::RegAddrs::nop; break;
+                case GS::RegAddrs::clamp_1: tq[1] = GS::RegAddrs::clamp_2; break;
+                case GS::RegAddrs::tex1_1: tq[1] = GS::RegAddrs::tex1_2; break;
+                case GS::RegAddrs::tex0_1: tq[1] = GS::RegAddrs::tex0_2; break;
+                case GS::RegAddrs::texa: break; // global
+                case GS::RegAddrs::miptbp1_1: tq[1] = GS::RegAddrs::miptbp1_2; break;
+                case GS::RegAddrs::miptbp2_1: tq[1] = GS::RegAddrs::miptbp2_2; break;
+                default: mError("unexpected reg in the texture settings block");
+                }
             }
+            memcpy(&Ctx2[1], textureRegisters, sizeof(textureRegisters));
         }
+
+#if PGL_X2_WINDOW_KEY_REUSE
+        memcpy(Ctx2SourceTexture, WinTex->GetSettingsBlock(), sizeof(Ctx2SourceTexture));
+#endif
     }
 
-    // Ctx2[8..14]: blend/test + live draw-env mirrors. All derived from
-    // ps2gl's LIVE values — never built from scratch (TEST also carries
-    // ZTE/ZTST; FRAME/ZBUF/XYOFFSET/SCISSOR must match ctx1 exactly or
-    // window prims draw shifted / mis-scissored / into the wrong buffer).
-    //   Window alpha test: ATE=1, ATST=GREATER, AREF=0, AFAIL=KEEP.
-    //   Gap texels sample alpha exactly 0 (16-bit 5551 + TEXA ta0=0) and
-    //   an additive blend of As=0 is Cs*0 + Cd = Cd — discarding them is
-    //   bit-identical and skips the RMW. Lit texels give A = At*Ag>>7 =
-    //   Ag (ta1=0x80 identity), so a fading building keeps every lit
-    //   texel while Ag >= 1. Mip levels key alpha at ANY coverage
-    //   (ps2_mip16_cache_build), so distant dimmed windows pass.
-    const GS::CDrawEnv& de = pGLContext->GetImmDrawContext().GetDrawEnv();
-    const uint64_t testBase = de.GetTestReg();
-    const uint64_t winTest = (testBase & ~(uint64_t)0x3fff) // clear ATE/ATST/AREF/AFAIL
-        | (uint64_t)1                                       // ATE  = 1
-        | ((uint64_t)6 << 1);                               // ATST = GREATER (AREF=0, AFAIL=KEEP)
-    uint64_t* rq = (uint64_t*)&Ctx2[8];
-    // (Cs - 0) * FIX + Cd. Wall A may carry the hardware-fog coefficient,
-    // so the paired window's brightness is the explicit constant instead.
-    float af = WinColor[3] * 128.0f;
-    if (af < 0.0f) af = 0.0f;
-    if (af > 128.0f) af = 128.0f;
-    const uint64_t fix = (uint64_t)(af + 0.5f);
-    rq[0] = 0x68 | (fix << 32); // c=FIX(2)
-    rq[1] = GS::RegAddrs::alpha_2;
-    rq[2] = winTest;
-    rq[3] = GS::RegAddrs::test_2;
-    rq[4] = de.GetFrameReg();
-    rq[5] = GS::RegAddrs::frame_2;
-    // ZMSK=1 (bit 32): the window re-writes its wall's identical Z — the
-    // write is pure redundant bandwidth, the z-TEST still occludes.
-    rq[6] = de.GetZBufReg() | ((uint64_t)1 << 32);
-    rq[7] = GS::RegAddrs::zbuf_2;
-    rq[8] = de.GetXYOffsetReg();
-    rq[9] = GS::RegAddrs::xyoffset_2;
-    rq[10] = de.GetScissorReg();
-    rq[11] = GS::RegAddrs::scissor_2;
-    rq[12] = de.GetFBAReg();
-    rq[13] = GS::RegAddrs::fba_2;
-    // TEST_1 pin (proof-grade pixel contract): the wall prims draw with
-    // LIVE ctx1 state, and nothing upstream proves ATE is off at city
-    // entry (the old per-buffer prefixes forced it). Send the live TEST
-    // with ATE cleared — byte-identical to ps2gl's cache whenever ATE
-    // was already off (the game's case today), so no state desync; if a
-    // future path enters with ATE on, this pins the walls opaque like
-    // the old architecture did.
-    rq[14] = testBase & ~(uint64_t)1;
-    rq[15] = GS::RegAddrs::test_1;
+    if (!reuseDraw) {
+        // Ctx2[8..14]: blend/test + live draw-env mirrors. All derived from
+        // ps2gl's LIVE values — never built from scratch (TEST also carries
+        // ZTE/ZTST; FRAME/ZBUF/XYOFFSET/SCISSOR must match ctx1 exactly or
+        // window prims draw shifted / mis-scissored / into the wrong buffer).
+        //   Window alpha test: ATE=1, ATST=GREATER, AREF=0, AFAIL=KEEP.
+        //   Gap texels sample alpha exactly 0 (16-bit 5551 + TEXA ta0=0) and
+        //   an additive blend of As=0 is Cs*0 + Cd = Cd — discarding them is
+        //   bit-identical and skips the RMW. Lit texels give A = At*Ag>>7 =
+        //   Ag (ta1=0x80 identity), so a fading building keeps every lit
+        //   texel while Ag >= 1. Mip levels key alpha at ANY coverage
+        //   (ps2_mip16_cache_build), so distant dimmed windows pass.
+        const uint64_t testBase = de.GetTestReg();
+        const uint64_t winTest = (testBase & ~(uint64_t)0x3fff) // clear ATE/ATST/AREF/AFAIL
+            | (uint64_t)1                                       // ATE  = 1
+            | ((uint64_t)6 << 1);                               // ATST = GREATER (AREF=0, AFAIL=KEEP)
+        uint64_t rq[16];
+        // (Cs - 0) * FIX + Cd. Wall A may carry the hardware-fog coefficient,
+        // so the paired window's brightness is the explicit constant instead.
+        float af = WinColor[3] * 128.0f;
+        if (af < 0.0f) af = 0.0f;
+        if (af > 128.0f) af = 128.0f;
+        const uint64_t fix = (uint64_t)(af + 0.5f);
+        rq[0] = 0x68 | (fix << 32); // c=FIX(2)
+        rq[1] = GS::RegAddrs::alpha_2;
+        rq[2] = winTest;
+        rq[3] = GS::RegAddrs::test_2;
+        rq[4] = de.GetFrameReg();
+        rq[5] = GS::RegAddrs::frame_2;
+        // ZMSK=1 (bit 32): the window re-writes its wall's identical Z — the
+        // write is pure redundant bandwidth, the z-TEST still occludes.
+        rq[6] = de.GetZBufReg() | ((uint64_t)1 << 32);
+        rq[7] = GS::RegAddrs::zbuf_2;
+        rq[8] = de.GetXYOffsetReg();
+        rq[9] = GS::RegAddrs::xyoffset_2;
+        rq[10] = de.GetScissorReg();
+        rq[11] = GS::RegAddrs::scissor_2;
+        rq[12] = de.GetFBAReg();
+        rq[13] = GS::RegAddrs::fba_2;
+        // TEST_1 pin (proof-grade pixel contract): the wall prims draw with
+        // LIVE ctx1 state, and nothing upstream proves ATE is off at city
+        // entry (the old per-buffer prefixes forced it). Send the live TEST
+        // with ATE cleared — byte-identical to ps2gl's cache whenever ATE
+        // was already off (the game's case today), so no state desync; if a
+        // future path enters with ATE on, this pins the walls opaque like
+        // the old architecture did.
+        rq[14] = testBase & ~(uint64_t)1;
+        rq[15] = GS::RegAddrs::test_1;
+        memcpy(&Ctx2[8], rq, sizeof(rq));
+#if PGL_X2_WINDOW_KEY_REUSE
+        memcpy(Ctx2SourceDraw, drawSource, sizeof(drawSource));
+        Ctx2SourceAlpha = alphaSource;
+#endif
+    }
+#if PGL_X2_WINDOW_KEY_REUSE
+    Ctx2SourceValid = true;
+#endif
 }
 
 #if PGL_X2_WINDOW_CONTEXT_REUSE
@@ -717,6 +896,7 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
 #endif
 
     DrawBlockX2(packet, block, maxVertsPerBuffer);
+    RememberContextEnd();
 }
 
 // Copy of CLinearRenderer::DrawBlock with ONE change: the 2q staging block
@@ -845,6 +1025,7 @@ CClipTriX2DRenderer::CClipTriX2DRenderer()
     , DescriptorColorOffset(kX2dColOff)
     , DescriptorColorDivisor(1)
 {
+    ContextDeltaEligible = true;
 }
 
 CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
@@ -916,6 +1097,7 @@ static void LoadX2Base(CVifSCDmaPacket& packet, const void* image, int imageByte
 
 void CClipTriX2Renderer::Load()
 {
+    ContextInputsValid = false;
 #if !PGL_X2_BASE_PREFIX_REUSE
     CBaseRenderer::Load();
 #else
@@ -934,6 +1116,7 @@ void CClipTriX2Renderer::Load()
 
 void CClipTriX2DRenderer::Load()
 {
+    ContextInputsValid = false;
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
 
     // PC 0..DecoderAddr64-1 is literally the checked-in X2 object. The
@@ -986,6 +1169,7 @@ void CClipTriX2DRenderer::DrawLinearArrays(CGeometryBlock& block)
     BuildPrefixes(packet, block);
 
     DrawBlockX2D(packet, block, 4 * DescriptorElements);
+    RememberContextEnd();
 }
 
 void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems,

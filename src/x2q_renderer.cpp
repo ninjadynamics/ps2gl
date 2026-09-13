@@ -16,6 +16,7 @@ CClipTriX2QRenderer::CClipTriX2QRenderer()
               (const u8*)vsmGeneralClipTriX2QDecode_CodeStart,
           "clip x2q, exact wall corners", PGL_CLIP_TRI_X2Q_PROP, 4, 4)
 {
+    ContextDeltaEligible = true;
 }
 
 static CClipTriX2QRenderer* pX2QRenderer = NULL;

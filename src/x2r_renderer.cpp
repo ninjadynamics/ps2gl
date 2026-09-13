@@ -6,6 +6,7 @@
 #include "ps2gl/glcontext.h"
 #include "ps2gl/drawcontext.h"
 #include "ps2gl/metrics.h"
+#include "ps2gl/owned_payload.h"
 #include "vu1_mem_linear.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -205,7 +206,7 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
         packet.OpenUnpack(Vifs::UnpackModes::v4_32,
             ContextFirstQuad + 1u, Packet::kSingleBuff);
     }
-    packet.Add((const float*)&RoadContext + ContextFirstQuad * 4u,
+    pglAddOwnedPayload(packet, (const float*)&RoadContext + ContextFirstQuad * 4u,
         (56u - ContextFirstQuad) * 4u);
     packet.CloseUnpack();
 
@@ -283,7 +284,8 @@ void CClipRoadX2RRenderer::DrawCompactGroundQuads(const float* quads, int count,
 #endif
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
-        packet.Add(quads, (unsigned int)batch * (unsigned int)floatsPerQuad);
+        pglAddOwnedPayload(packet, quads,
+            (unsigned int)batch * (unsigned int)floatsPerQuad);
         packet.CloseUnpack();
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kDoubleBuff);
@@ -337,7 +339,8 @@ extern "C" unsigned int pglGetRoadSubmissionOptions(void)
 {
 #if PGL_CITY_ROADS_VU1
     return (PGL_ROAD_CONTEXT_REUSE ? 1u : 0u)
-        | (PGL_ROAD_HEADER_COMPACT ? 2u : 0u);
+        | (PGL_ROAD_HEADER_COMPACT ? 2u : 0u)
+        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u);
 #else
     return 0;
 #endif

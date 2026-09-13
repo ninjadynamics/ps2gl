@@ -500,6 +500,87 @@ GLboolean pglTryDrawColoredTriangleArrays(const GLfloat* vertices,
         vertices, texcoords, colors, vertexCount) ? GL_TRUE : GL_FALSE;
 }
 
+static unsigned int wallDescriptorArraysAccepted, wallDescriptorArraysRejected;
+
+bool CImmGeomManager::DrawWallDescriptorArrays(GLenum primitive,
+    const float* geometry, const float* colors, int descriptorCount)
+{
+#if PGL_WALL_DESCRIPTOR_ARRAYS
+    const bool pairedColors = primitive == PGL_CLIP_TRIANGLES_X2C;
+    const uint64_t requirements = pairedColors ? PGL_CLIP_TRI_X2C_PROP : PGL_CLIP_TRI_X2Q_PROP;
+    if ((primitive != PGL_CLIP_TRIANGLES_X2Q && !pairedColors) || InsideBeginEnd ||
+        !geometry || !colors || descriptorCount <= 0 || descriptorCount > INT_MAX / 64 ||
+        (((uintptr_t)geometry | (uintptr_t)colors) & 3u) ||
+        !RendererManager.CanSelectWallDescriptorRenderer(pairedColors) ||
+        GetUserPrimRequirements(primitive) != requirements ||
+        GetUserPrimReqMask(primitive) != ~(uint64_t)0xffffffff ||
+        GLContext.GetImmLighting().GetLightingEnabled() ||
+        GLContext.GetMaterialManager().GetColorMaterialEnabled() ||
+        !GLContext.GetTexManager().GetTexEnabled()) return false;
+
+    const int elements = descriptorCount * 4;
+    const uintptr_t geometryBytes = (uintptr_t)descriptorCount * 64u;
+    const uintptr_t colorBytes = (uintptr_t)descriptorCount * (pairedColors ? 32u : 64u);
+    if (Geometry.GetTotalVertices() > INT_MAX - elements ||
+        (uintptr_t)geometry > ~(uintptr_t)0 - geometryBytes ||
+        (uintptr_t)colors > ~(uintptr_t)0 - colorBytes) return false;
+
+    // This is DrawArrays' NEXT-block contract with known descriptor strides.
+    // The original X2Q/C renderer still owns setup, transfer, clipping, fog and
+    // both material kicks. Do not alter client arrays or borrow its incidental
+    // normal/UV descriptors: those streams are unused by this renderer.
+    if (Prim != primitive) PrimChanged(primitive);
+    Geometry.SetPrimType(primitive);
+    Geometry.SetArrayType(kLinear);
+    Geometry.SetVertices(geometry);
+    Geometry.SetColors(colors);
+    Geometry.SetNormals(NULL);
+    Geometry.SetTexCoords(NULL);
+    Geometry.SetVerticesAreValid(true);
+    Geometry.SetColorsAreValid(true);
+    Geometry.SetNormalsAreValid(false);
+    Geometry.SetTexCoordsAreValid(false);
+    Geometry.SetWordsPerVertex(4);
+    Geometry.SetWordsPerColor(4);
+    Geometry.SetWordsPerNormal(3);
+    Geometry.SetWordsPerTexCoord(2);
+    Geometry.AddVertices(elements);
+    Geometry.AddColors(elements);
+    Geometry.AddNormals(elements);
+    Geometry.AddTexCoords(elements);
+    SyncColorMaterial(true);
+    CommitNewGeom();
+    return true;
+#else
+    (void)primitive;
+    (void)geometry;
+    (void)colors;
+    (void)descriptorCount;
+    return false;
+#endif
+}
+
+GLboolean pglDrawWallDescriptorArrays(GLenum primitive, const GLfloat* geometry,
+    const GLfloat* colors, GLsizei descriptorCount)
+{
+    const bool accepted = pGLContext && !pGLContext->InDListDef() &&
+        pGLContext->GetImmGeomManager().DrawWallDescriptorArrays(
+            primitive, geometry, colors, descriptorCount);
+    if (accepted) ++wallDescriptorArraysAccepted;
+    else ++wallDescriptorArraysRejected;
+    return accepted ? GL_TRUE : GL_FALSE;
+}
+
+extern "C" void pglGetWindowPreparationStats(unsigned int*, unsigned int*);
+
+void pglGetWallPreparationStats(unsigned int* texturePrefixReused, unsigned int* drawTailReused,
+    unsigned int* directAccepted, unsigned int* directRejected)
+{
+    pglGetWindowPreparationStats(texturePrefixReused, drawTailReused);
+    if (directAccepted) *directAccepted = wallDescriptorArraysAccepted;
+    if (directRejected) *directRejected = wallDescriptorArraysRejected;
+}
+
 #if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA || PGL_CITY_ENTRANCES_VU1
 static bool DirectIdentityColumn(cpu_vec_4 column, float x, float y, float z, float w)
 {

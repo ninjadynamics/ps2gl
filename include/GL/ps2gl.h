@@ -79,6 +79,18 @@
 #if PGL_DECAL_PAYLOAD_REUSE != 0 && PGL_DECAL_PAYLOAD_REUSE != 1
 #error "PGL_DECAL_PAYLOAD_REUSE must be 0 or 1"
 #endif
+/* X2E reads only q0 of the generic five-qword activation header. */
+#ifndef PGL_DECAL_HEADER_COMPACT
+#define PGL_DECAL_HEADER_COMPACT 1
+#endif
+/* Aligned compact descriptor/context copies use exact qword object bits. */
+#ifndef PGL_COMPACT_QWORD_COPY
+#define PGL_COMPACT_QWORD_COPY 1
+#endif
+#if (PGL_DECAL_HEADER_COMPACT != 0 && PGL_DECAL_HEADER_COMPACT != 1) || \
+    (PGL_COMPACT_QWORD_COPY != 0 && PGL_COMPACT_QWORD_COPY != 1)
+#error "Compact packet copy/header switches must be 0 or 1"
+#endif
 
 /* Independent source-view clipping of compact center/axis cards. */
 #ifndef PGL_CITY_BILLBOARD_CORNER_ALPHA
@@ -107,6 +119,22 @@
 #endif
 #if PGL_X2_WINDOW_CONTEXT_REUSE != 0 && PGL_X2_WINDOW_CONTEXT_REUSE != 1
 #error "PGL_X2_WINDOW_CONTEXT_REUSE must be 0 or 1"
+#endif
+/* Cache pure CPU context construction separately from queued GS ownership. */
+#ifndef PGL_X2_WINDOW_KEY_REUSE
+#define PGL_X2_WINDOW_KEY_REUSE 1
+#endif
+#ifndef PGL_WALL_DESCRIPTOR_ARRAYS
+#define PGL_WALL_DESCRIPTOR_ARRAYS 1
+#endif
+/* Same-program X2 context deltas retain every ordering/restart operation. */
+#ifndef PGL_X2_CONTEXT_DELTA
+#define PGL_X2_CONTEXT_DELTA 1
+#endif
+#if (PGL_X2_WINDOW_KEY_REUSE != 0 && PGL_X2_WINDOW_KEY_REUSE != 1) || \
+    (PGL_WALL_DESCRIPTOR_ARRAYS != 0 && PGL_WALL_DESCRIPTOR_ARRAYS != 1) || \
+    (PGL_X2_CONTEXT_DELTA != 0 && PGL_X2_CONTEXT_DELTA != 1)
+#error "Wall preparation switches must be 0 or 1"
 #endif
 #if (PGL_CITY_BILLBOARDS_VU1 != 0 && PGL_CITY_BILLBOARDS_VU1 != 1) || \
     (PGL_WALL_PACKET_DIRECT != 0 && PGL_WALL_PACKET_DIRECT != 1)
@@ -566,8 +594,19 @@ void pglClipX2QSetWindowTexture(GLuint texId, float r, float g, float b, float a
 void pglRegisterClipTriX2CRenderer(void);
 void pglClipX2CSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 /* bit0 registered X2C colors, bit1 direct float X2Q/C packet specialization,
-   bit2 fixed context-2 texture-prefix preparation, bit3 ordered window reuse. */
+   bit2 fixed context-2 texture-prefix preparation, bit3 ordered window reuse,
+   bit4 pure CPU prefix/tail reuse, bit5 borrowed wall-descriptor arrays,
+   bit6 exact retained X2 VU context deltas. */
 unsigned int pglGetWallSubmissionOptions(void);
+/* Borrow exact X2Q/C descriptors without changing client-array descriptors or
+   current attributes. descriptorCount counts walls (4 GEO qwords each; colors
+   are 4 qwords for X2Q and 2 for X2C). Caller owns immutable source storage through
+   frame DMA completion, sets the window pair/base texture first and glFlushes
+   construction before changing their state. Rejection submits nothing. */
+GLboolean pglDrawWallDescriptorArrays(GLenum primitive, const GLfloat* geometry,
+    const GLfloat* colors, GLsizei descriptorCount);
+void pglGetWallPreparationStats(unsigned int* texturePrefixReused, unsigned int* drawTailReused,
+    unsigned int* directAccepted, unsigned int* directRejected);
 
 /* Compact camera-facing glow quads, independent of the paired-wall state.
    Register once after pglInit; call SetAxes with the source-space U/V axes.
@@ -675,7 +714,8 @@ GLboolean pglDrawBillboardAlphaQuads(const PGLBillboardContext* context,
 #define PGL_CLIP_ROAD_QUADS_X2R ((GLenum)0x80000000 | 6)
 #define PGL_CLIP_ROAD_X2R_PROP ((pglU64_t)1 << 38)
 void pglRegisterRoadRenderer(void);
-/* Linked library choices: bit0 retained context, bit1 compact batch headers. */
+/* Linked choices: bit0 retained context, bit1 compact batch headers,
+   bit2 aligned qword payload copies (also used by pools and cards). */
 unsigned int pglGetRoadSubmissionOptions(void);
 /* Count is complete quads in one material, split internally into <=32.
    Call in the normal frame chain, outside Begin/End/display lists, after
@@ -718,7 +758,8 @@ typedef struct PGLDecalQuad {
 #define PGL_CLIP_DECAL_QUADS_X2E ((GLenum)0x80000000 | 7)
 #define PGL_CLIP_DECAL_X2E_PROP ((pglU64_t)1 << 39)
 void pglRegisterDecalRenderer(void);
-/* Linked effective options: bit 0 = owned base/glow payload reuse. */
+/* Linked effective options: bit 0 = owned base/glow payload reuse,
+   bit 1 = compact header/CNT, bit 2 = aligned qword payload copies. */
 unsigned int pglGetDecalSubmissionOptions(void);
 /* Submit the whole base sweep followed by the optional whole glow sweep.
    Call after draining pending geometry, in the normal frame chain, outside

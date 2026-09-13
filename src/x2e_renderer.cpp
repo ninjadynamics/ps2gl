@@ -6,6 +6,7 @@
 #include "ps2gl/glcontext.h"
 #include "ps2gl/drawcontext.h"
 #include "ps2gl/metrics.h"
+#include "ps2gl/owned_payload.h"
 #include "vu1_mem_linear.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -121,7 +122,8 @@ void CClipDecalX2ERenderer::InitContext(GLenum primType, uint32_t rcChanges,
     packet += cullWord | ((unsigned int)draw.GetDoCullFace() << 5);
     // q1..8 are one contiguous, owned float copy after q0. No REF to the
     // renderer's mutable DecalContext is allowed.
-    packet.Add((const float*)&DecalContext, sizeof(DecalContext) / sizeof(float));
+    pglAddOwnedPayload(packet, (const float*)&DecalContext,
+        sizeof(DecalContext) / sizeof(float));
     packet.CloseUnpack();
 
     packet.Pad96();
@@ -170,7 +172,9 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
     const float** ownedPayloads, bool reusePayload)
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+#if !PGL_DECAL_HEADER_COMPACT
     static const float independentAdc[16] = { 1024.0f };
+#endif
 #if PGL_DECAL_PAYLOAD_REUSE
     unsigned int batchIndex = 0;
 #else
@@ -178,10 +182,18 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
     (void)reusePayload;
 #endif
     pglCountSubmission(PGL_SUBMIT_BLOCKS);
+#if PGL_DECAL_HEADER_COMPACT
+    // Admission reserves the complete material in the <=65000q frame chain.
+    // Keep MSCNT/TOP alternation unchanged; only close CNT for a real REF.
+    packet.Cnt();
+    packet.Stcycl(1, 1);
+#endif
     while (count > 0) {
         const int batch = count > 16 ? 16 : count;
+#if !PGL_DECAL_HEADER_COMPACT
         packet.Cnt();
         packet.Stcycl(1, 1);
+#endif
 #if PGL_DECAL_PAYLOAD_REUSE
         if (reusePayload) {
             packet.Pad128();
@@ -203,10 +215,12 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
             packet.Pad96();
             packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
 #if PGL_DECAL_PAYLOAD_REUSE
-            const float* owned = packet.Add((const float*)quads, (unsigned int)batch * 36u);
+            const float* owned = pglAddOwnedPayload(packet,
+                (const float*)quads, (unsigned int)batch * 36u);
             if (ownedPayloads) ownedPayloads[batchIndex] = owned;
 #else
-            packet.Add((const float*)quads, (unsigned int)batch * 36u);
+            pglAddOwnedPayload(packet, (const float*)quads,
+                (unsigned int)batch * 36u);
 #endif
             packet.CloseUnpack();
             pglCountSubmission(PGL_SUBMIT_EDGE_BYTES,
@@ -217,11 +231,15 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
         packet += batch;
         packet += 0;
         packet += (uint64_t)0;
+#if !PGL_DECAL_HEADER_COMPACT
         packet.Add(independentAdc, 16);
+#endif
         packet.CloseUnpack();
         packet.Mscnt();
         packet.Pad128();
+#if !PGL_DECAL_HEADER_COMPACT
         packet.CloseTag();
+#endif
         pglCountSubmission(PGL_SUBMIT_BUFFERS);
 #if PGL_DECAL_PAYLOAD_REUSE
         ++batchIndex;
@@ -229,6 +247,9 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
         quads += batch;
         count -= batch;
     }
+#if PGL_DECAL_HEADER_COMPACT
+    packet.CloseTag();
+#endif
 }
 
 void CClipDecalX2ERenderer::DrawLinearArrays(CGeometryBlock& block)
@@ -250,8 +271,10 @@ extern "C" void pglRegisterDecalRenderer(void)
 
 extern "C" unsigned int pglGetDecalSubmissionOptions(void)
 {
-#if PGL_CITY_ENTRANCES_VU1 && PGL_DECAL_PAYLOAD_REUSE
-    return 1u;
+#if PGL_CITY_ENTRANCES_VU1
+    return (PGL_DECAL_PAYLOAD_REUSE ? 1u : 0u)
+        | (PGL_DECAL_HEADER_COMPACT ? 2u : 0u)
+        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u);
 #else
     return 0u;
 #endif

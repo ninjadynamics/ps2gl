@@ -88,6 +88,8 @@ public:
     bool CanDrawColoredTriangles() const;
     bool TryDrawColoredTriangleArrays(const float* vertices, const float* texcoords,
         const float* colors, int vertexCount);
+    bool DrawWallDescriptorArrays(GLenum primitive, const float* geometry,
+        const float* colors, int descriptorCount);
     bool DrawRoadQuads(const PGLRoadContext* context,
         const PGLRoadQuad* quads, int count);
     bool DrawPoolQuads(const PGLPoolContext* context,
