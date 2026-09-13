@@ -114,7 +114,6 @@ public:
     // Centered viewport squish (glViewport): 1.0 = full frame. Persisted across
     // SetDrawBuffers so a layout switch keeps the active "screen fit".
     float VpScaleX, VpScaleY;
-#if PGL_CONTEXT_COEFFICIENT_CACHE
     // Pure coefficients of persistent raster/fog state, not a VU-RAM proof.
     // Matrix/material changes do not change any of these divisions.
     mutable bool ClipCoefficientsValid, FogCoefficientValid;
@@ -124,7 +123,6 @@ public:
     mutable cpu_vec_xyz CachedClipScales;
     void UpdateClipCoefficients() const;
     void UpdateFogCoefficient() const;
-#endif
 
 public:
     CImmDrawContext(CGLContext& context);
@@ -160,11 +158,8 @@ public:
     int GetDepthBits() const { return DepthBits; }
     void SetDepthBits(int depth) {
         DepthBits = depth;
-#if PGL_CONTEXT_COEFFICIENT_CACHE
         ClipCoefficientsValid = false;
-#endif
     }
-#if PGL_CONTEXT_COEFFICIENT_CACHE
     float GetContextDepthScale() const {
         if (!ClipCoefficientsValid || CachedDepthBits != DepthBits) UpdateClipCoefficients();
         return CachedDepthClipToGs;
@@ -181,7 +176,6 @@ public:
             UpdateFogCoefficient();
         return CachedFogScale;
     }
-#endif
     float GetDepthOffset() const { return DepthOffset; }
     void SetDepthOffset(float units);
 

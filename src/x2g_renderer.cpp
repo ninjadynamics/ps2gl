@@ -35,7 +35,7 @@ static CClipGlowX2GRenderer* pX2GRenderer = NULL;
 void CClipGlowX2GRenderer::Register()
 {
     pX2GRenderer = new CClipGlowX2GRenderer;
-    pglRegisterRenderer(pX2GRenderer);
+    pGLContext->GetImmGeomManager().GetRendererManager().RegisterX2Renderer(pX2GRenderer);
     pglRegisterCustomPrimType(PGL_CLIP_GLOW_QUADS_X2G,
         PGL_CLIP_GLOW_X2G_PROP, ~(pglU64_t)0xffffffff, PGL_MERGE_CONTIGUOUS);
 }

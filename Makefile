@@ -24,6 +24,7 @@ EE_OBJS = \
 	src/clip_renderer.o \
 	src/x2q_renderer.o \
 	src/x2g_renderer.o \
+	src/x2r_renderer.o \
 	src/displaycontext.o \
 	src/dlgmanager.o \
 	src/dlist.o \
@@ -53,6 +54,7 @@ RENDERERS = \
 	general_clip_tri_x2d_decode \
 	general_clip_tri_x2q_decode \
 	general_clip_glow_x2g_decode \
+	general_clip_road_x2r \
 	general_nospec_quad \
 	general_nospec_tri \
 	general_nospec \
@@ -76,12 +78,19 @@ X2Q_DECODER_VSM = vu1/general_clip_tri_x2q_decode_vcl.vsm
 X2Q_GUARD = vu1/x2q_microcode_guard.py
 X2G_DECODER_VSM = vu1/general_clip_glow_x2g_decode_vcl.vsm
 X2G_GUARD = vu1/x2g_microcode_guard.py
+X2R_VSM = vu1/general_clip_road_x2r_vcl.vsm
+X2R_GUARD = vu1/x2r_microcode_guard.py
 
 all: $(VSM_SOURCES) x2d-microcode-guard $(EE_LIB)
 
 $(EE_LIB): x2d-microcode-guard
 $(EE_LIB): x2q-microcode-guard
 $(EE_LIB): x2g-microcode-guard
+$(EE_LIB): x2r-microcode-guard
+
+.PHONY: x2r-microcode-guard
+x2r-microcode-guard: $(X2R_VSM) $(X2R_GUARD)
+	python3 $(X2R_GUARD) $(X2R_VSM)
 
 .PHONY: x2g-microcode-guard
 x2g-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2G_DECODER_VSM) $(X2D_GUARD) $(X2Q_GUARD) $(X2G_GUARD)
@@ -128,6 +137,10 @@ include $(PS2SDK)/samples/Makefile.eeglobal
 %.vo: %_vcl.vsm
 	dvp-as -o $@ $<
 
+vu1/general_clip_road_x2r.vo: $(X2R_VSM) $(X2R_GUARD)
+	python3 $(X2R_GUARD) $(X2R_VSM)
+	dvp-as -o $@ $(X2R_VSM)
+
 ifeq ($(REBUILD_VU1),1)
 $(X2G_DECODER_VSM): vu1/general_clip_glow_x2g_decode_pp4.vcl $(X2G_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
 	vcl -o$@ $<
@@ -149,6 +162,13 @@ $(X2D_DECODER_VSM): vu1/general_clip_tri_x2d_decode_pp4.vcl $(X2D_GUARD) $(X2_VS
 
 %indexed_pp4.vcl: %indexed_pp3.vcl
 	cat $< | cc -E -P -imacros vu1/vu1_mem_indexed.h -o $@ -
+
+# GASP emits assembly comments containing apostrophes from shared includes.
+# Remove only those comments before the C preprocessor for this new module;
+# the established preprocessing rules and existing VU images stay unchanged.
+.INTERMEDIATE: vu1/general_clip_road_x2r_pp3.vcl vu1/general_clip_road_x2r_pp4.vcl
+vu1/general_clip_road_x2r_pp4.vcl: vu1/general_clip_road_x2r_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
 
 %_pp4.vcl: %_pp3.vcl
 	cat $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -

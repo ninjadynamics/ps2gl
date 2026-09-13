@@ -28,23 +28,24 @@
 
 extern "C" unsigned int pglGetContextOptimizationFlags(void)
 {
-    return PGL_SKIP_REDUNDANT_DRAW_STATE | (PGL_SPARSE_UNLIT_CONTEXT << 1)
-        | (PGL_SPARSE_CLIP_CONTEXT << 2) | (PGL_DEFER_MATRIX_CONCAT_INVERSE << 3)
-        | (PS2S_MATRIX_SCALAR_KERNEL << 4) | (PS2S_MATRIX_EE_COP1 << 5)
-        | (PGL_LAZY_MATRIX_INVERSE << 6) | (PS2S_MATRIX_VU0 << 7)
-        | (PGL_SKIP_REDUNDANT_COLOR << 8) | (PGL_SKIP_REDUNDANT_BLEND_ALPHA << 9)
-        | (PGL_SKIP_REDUNDANT_TEXTURE_SYNC << 10) | (PGL_UNLIT_CONTEXT_DELTA << 11)
-        | (PGL_COLOR4UB_LUT << 12) | (PGL_BULK_QUAD_CORNERS << 13)
-        | (PGL_CLIP_CONTEXT_DELTA << 14) | (PGL_CONTEXT_COEFFICIENT_CACHE << 15)
-        | (PGL_BULK_QUAD_XYZ3 << 16) | (PGL_FUSED_TRIANGLE3D << 17)
-        | (PGL_SPARSE_LIGHT_CONTEXT << 18) | (PGL_LIT_MATERIAL_DELTA << 19)
-        | (PGL_UNLIT_DELTA_SPECIALIZE << 20) | (PGL_FLAT_QUAD_PACKETS << 21)
-        | (PGL_INDEPENDENT_PRIM_HEADER << 22) | (PGL_SUBMISSION_METRICS << 23)
-        | (PGL_TRANSFER_FORMAT_CACHE << 24) | (PGL_UNLIT_GS_CONTEXT_DELTA << 25)
-        | (PGL_BORROWED_QUAD_ARRAYS << 26);
+    return 1 | (1 << 1)
+        | (1 << 2) | (1 << 3)
+        | (1 << 4) | (1 << 5)
+        | (1 << 6) | (1 << 7)
+        | (1 << 8) | (1 << 9)
+        | (1 << 10) | (1 << 11)
+        | (1 << 12) | (1 << 13)
+        | (1 << 14) | (1 << 15)
+        | (1 << 16) | (1 << 17)
+        | (1 << 18) | (1 << 19)
+        | (PGL_UNLIT_DELTA_SPECIALIZE << 20) | (1 << 21)
+        | (1 << 22) | (PGL_SUBMISSION_METRICS << 23)
+        | (1 << 24) | (1 << 25)
+        | (1 << 26) | (PGL_X2_BASE_PREFIX_REUSE << 27)
+        | (PGL_X2_SINGLE_MATERIAL_BATCH << 28)
+        | (PGL_CITY_ROADS_VU1 << 29);
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
 // A proof about the last context written to this ordered VIF chain, not a
 // cross-frame cache of VU RAM. Frame/reset/program transitions invalidate it.
 static const CBaseRenderer* unlitContextOwner;
@@ -53,7 +54,6 @@ static GLenum unlitContextPrim;
 static bool unlitContextOriginalClip;
 static bool unlitContextLightingEnabled;
 static bool unlitContextTexEnabled;
-#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
 // The GS can need fresh texture/draw settings while these VU context inputs
 // remain unchanged. Capture only after a full stock unlit context, not after
 // the established material/transform deltas. All words are explicitly set;
@@ -79,21 +79,14 @@ static void GetUnlitGsContextKey(const CImmDrawContext& draw, uint32_t* key)
         draw.GetFogEnd(), draw.GetClipNear() };
     memcpy(key + 11, params, sizeof(params));
 }
-#endif
-#endif
 
 extern "C" void pglInvalidateUnlitContextDelta(void)
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     unlitContextOwner = NULL;
     unlitContextPacket = NULL;
-#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
     unlitGsContextValid = false;
-#endif
-#endif
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
 bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
     GLenum primType, uint32_t changes, bool userChanged, bool originalClip) const
 {
@@ -111,11 +104,9 @@ bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
     if (doLighting) {
         // A modelview change also changes normal/light transforms. Only the
         // exact material span is independent of the previously lit context.
-        if (!PGL_LIT_MATERIAL_DELTA || originalClip
+        if (originalClip
             || changes != RendererCtxtFlags::CurMaterial)
             return false;
-    } else if (originalClip ? !PGL_CLIP_CONTEXT_DELTA : !PGL_UNLIT_CONTEXT_DELTA) {
-        return false;
     }
     // Unknown/general invalidations (including the legacy 0xff full marker)
     // are never interpreted as a partial update. Any GS change also falls
@@ -134,7 +125,6 @@ bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
         && context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() == originalClip;
 }
 
-#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
 void CBaseRenderer::CacheUnlitGsContext()
 {
     CGLContext& context = *pGLContext;
@@ -173,7 +163,6 @@ bool CBaseRenderer::CanUseUnlitGsContextDelta(const CVifSCDmaPacket& packet,
     GetUnlitGsContextKey(context.GetImmDrawContext(), key);
     return memcmp(key, unlitGsContextKey, sizeof(key)) == 0;
 }
-#endif
 
 #if PGL_UNLIT_DELTA_SPECIALIZE
 template <bool Lighting>
@@ -202,10 +191,8 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
         const float maxColorValue = GetMaxColorValue(context.GetTexManager().GetTexEnabled());
 #if PGL_UNLIT_DELTA_SPECIALIZE
         const bool doLighting = Lighting;
-#elif PGL_LIT_MATERIAL_DELTA
-        const bool doLighting = context.GetImmLighting().GetLightingEnabled();
 #else
-        const bool doLighting = false;
+        const bool doLighting = context.GetImmLighting().GetLightingEnabled();
 #endif
         cpu_vec_4 emission;
         if (doLighting)
@@ -225,7 +212,6 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
 }
 
 #if PGL_UNLIT_DELTA_SPECIALIZE
-#if PGL_LIT_MATERIAL_DELTA
 // Keep the lit copy out of the unlit writer's instruction footprint. Both
 // instantiate the same packet source; the restart stays in CLinearRenderer.
 __attribute__((noinline))
@@ -233,18 +219,15 @@ void CBaseRenderer::AddLitMaterialContextDelta(CVifSCDmaPacket& packet, uint32_t
 {
     AddSpecializedContextDelta<true>(packet, changes);
 }
-#endif
 
 void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
 {
-#if PGL_LIT_MATERIAL_DELTA
     // CanUse has just matched this proof to the current lighting mode. Use
     // that validated bit, rather than walking the lighting owner again.
     if (unlitContextLightingEnabled) {
         AddLitMaterialContextDelta(packet, changes);
         return;
     }
-#endif
     AddSpecializedContextDelta<false>(packet, changes);
 }
 #endif
@@ -254,8 +237,7 @@ void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primT
 {
     CGLContext& context = *pGLContext;
     const bool doLighting = context.GetImmLighting().GetLightingEnabled();
-    const bool enabled = doLighting ? (PGL_LIT_MATERIAL_DELTA && !originalClip)
-        : (originalClip ? PGL_CLIP_CONTEXT_DELTA : PGL_UNLIT_CONTEXT_DELTA);
+    const bool enabled = !doLighting || !originalClip;
     if (!enabled || context.InDListDef()
         || context.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() != originalClip) {
         pglInvalidateUnlitContextDelta();
@@ -268,7 +250,6 @@ void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primT
     unlitContextLightingEnabled = doLighting;
     unlitContextTexEnabled = context.GetTexManager().GetTexEnabled();
 }
-#endif
 
 void CBaseRenderer::GetUnpackAttribs(int numWords, unsigned int& mode, Vifs::tMask& mask)
 {
@@ -342,35 +323,25 @@ void CBaseRenderer::InitXferBlock(CVifSCDmaPacket& packet,
     // Constructors initialize every cached width to zero (not a valid VIF
     // format), forcing first-use setup. Keep all four attributes initialized:
     // custom renderers can change XferNormals/XferColors AFTER InitXferBlock.
-#if PGL_TRANSFER_FORMAT_CACHE
     if (WordsPerVertex != wordsPerVertex) {
-#endif
     WordsPerVertex = wordsPerVertex;
     GetUnpackAttribs(WordsPerVertex, VertexUnpackMode, VertexUnpackMask);
-#if PGL_TRANSFER_FORMAT_CACHE
     }
     if (WordsPerNormal != ((wordsPerNormal > 0) ? wordsPerNormal : 3)) {
-#endif
 
     WordsPerNormal = (wordsPerNormal > 0) ? wordsPerNormal : 3;
     GetUnpackAttribs(WordsPerNormal, NormalUnpackMode, NormalUnpackMask);
-#if PGL_TRANSFER_FORMAT_CACHE
     }
     if (WordsPerTexCoord != ((wordsPerTex > 0) ? wordsPerTex : 2)) {
-#endif
 
     WordsPerTexCoord = (wordsPerTex > 0) ? wordsPerTex : 2;
     GetUnpackAttribs(WordsPerTexCoord, TexCoordUnpackMode, TexCoordUnpackMask);
-#if PGL_TRANSFER_FORMAT_CACHE
     }
     if (WordsPerColor != ((wordsPerColor > 0) ? wordsPerColor : 3)) {
-#endif
 
     WordsPerColor = (wordsPerColor > 0) ? wordsPerColor : 3;
     GetUnpackAttribs(WordsPerColor, ColorUnpackMode, ColorUnpackMask);
-#if PGL_TRANSFER_FORMAT_CACHE
     }
-#endif
 
     // set up the row register to expand vectors with fewer than 4 elements
 
@@ -478,9 +449,7 @@ void CBaseRenderer::XferBlock(CVifSCDmaPacket& packet,
 void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primType, int vu1Offset,
     bool sparseUnlit)
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
-#endif
     CGLContext& glContext = *pGLContext;
     CImmLighting& lighting = glContext.GetImmLighting();
     const bool doLighting = lighting.GetLightingEnabled();
@@ -488,7 +457,7 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
 #if kNumLights != 0 || kGlobalAmbient != 57 || kVertexXfrm != 62 || kGifTag != 75
 #error "Review the stock unlit context spans against the VU context ABI"
 #endif
-#if PGL_SPARSE_LIGHT_CONTEXT && (kLight0Base != 9 || kLightStructSize != 6)
+#if kLight0Base != 9 || kLightStructSize != 6
 #error "Review the contiguous light-record prefix against the VU context ABI"
 #endif
 
@@ -503,17 +472,11 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         nextDir = nextPt = nextSpot = &lightPtrs[0];
         int numDirs, numPts, numSpots;
         numDirs = numPts = numSpots = 0;
-#if PGL_SPARSE_LIGHT_CONTEXT
         int lightRecordCount = 0;
-#else
-        const int lightRecordCount = 8;
-#endif
         for (int i = 0; !sparseUnlit && i < 8; i++) {
             CImmLight& light = lighting.GetImmLight(i);
             if (light.IsEnabled()) {
-#if PGL_SPARSE_LIGHT_CONTEXT
                 lightRecordCount = i + 1;
-#endif
                 int lightBase = kLight0Base + vu1Offset;
                 if (light.IsDirectional()) {
                     nextDir->dir = lightBase + i * kLightStructSize;
@@ -530,7 +493,6 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
                 }
             }
         }
-#if PGL_SPARSE_LIGHT_CONTEXT
         // Stock light loops dereference only the enabled pointers counted in
         // q0. Keep the original contiguous prefix (including holes) and omit
         // just its disabled tail; arbitrary/custom contexts retain all eight
@@ -538,7 +500,6 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         if (!doLighting || glContext.InDListDef()
             || glContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom())
             lightRecordCount = 8;
-#endif
 
         // transpose of object to world space xfrm (for light directions)
         cpu_mat_44 objToWorldXfrmTrans;
@@ -619,7 +580,6 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
                 packet += light.GetQuadAtten() * 1.0f / normalScale;
                 packet += 0; // padding
             }
-#if PGL_SPARSE_LIGHT_CONTEXT
             if (lightRecordCount < 8) {
                 // The light pointers and every live record keep their exact
                 // VU addresses. Resume at q57 so ambient/material/xforms/tag
@@ -629,7 +589,6 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
                 packet.OpenUnpack(Vifs::UnpackModes::v4_32,
                     vu1Offset + kGlobalAmbient, Packet::kSingleBuff);
             }
-#endif
         }
 
         // global ambient
@@ -646,11 +605,7 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
         packet += globalAmb.z;
 
         // stick in the offset to convert clip space depth value to GS
-#if PGL_CONTEXT_COEFFICIENT_CACHE
         float depthClipToGs = drawContext.GetContextDepthScale();
-#else
-        float depthClipToGs = (float)((1 << drawContext.GetDepthBits()) - 1) / 2.0f;
-#endif
         // Both classic and X2 add this AFTER perspective division. Bias only
         // the output depth; depthClipToGs below still describes clipping.
         packet += depthClipToGs + drawContext.GetDepthOffset();
@@ -716,33 +671,17 @@ void CBaseRenderer::AddVu1RendererContext(CVifSCDmaPacket& packet, GLenum primTy
 
         // add info used by clipping code
         // first the dimensions of the framebuffer
-#if PGL_CONTEXT_COEFFICIENT_CACHE
         const cpu_vec_xyz& clipScales = drawContext.GetContextClipScales();
         packet += clipScales.x;
         packet += clipScales.y;
         packet += clipScales.z;
-#else
-        float xClip = (float)2048.0f / (drawContext.GetFBWidth() * 0.5f * 2.0f);
-        packet += Math::Max(xClip, 1.0f);
-        float yClip = (float)2048.0f / (drawContext.GetFBHeight() * 0.5f * 2.0f);
-        packet += Math::Max(yClip, 1.0f);
-        float depthClip = 2048.0f / depthClipToGs;
-        // FIXME: maybe these 2048's should be 2047.5s...
-        depthClip *= 1.003f; // round up a bit for fp error (????)
-        packet += depthClip;
-#endif
         // enable/disable clipping
         packet += (drawContext.GetDoClipping()) ? 1 : 0;
 
         // GS hardware fog params (kFogParams, see vu1/geometry.i fog_coef):
         // x unused, y = F clamp max, z = 255/(far - near), w = eye far Z
         float fogEnd   = drawContext.GetFogEnd();
-#if PGL_CONTEXT_COEFFICIENT_CACHE
         float fogScale = drawContext.GetContextFogScale();
-#else
-        float fogStart = drawContext.GetFogStart();
-        float fogScale = (fogEnd > fogStart) ? 255.0f / (fogEnd - fogStart) : 0.0f;
-#endif
         // x rides the eye-space near plane for the VU1 clip renderer
         // (pglSetClipNear); the stock renderers never read it
         packet += drawContext.GetClipNear();
@@ -794,9 +733,9 @@ void CBaseRenderer::CacheRendererState()
 
 void CBaseRenderer::Load()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
+    // The generic uploader may replace any or all of the shared X2 prefix.
+    pglInvalidateX2BasePrefix();
     pglInvalidateUnlitContextDelta();
-#endif
     unsigned int size64     = MicrocodePacketSize / 8;
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     const u64* code         = (const u64*)MicrocodePacket;

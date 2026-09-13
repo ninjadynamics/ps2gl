@@ -90,6 +90,7 @@ public:
 
     void SetWindowTexture(unsigned int texId, float r, float g, float b, float a);
 
+    virtual void Load();
     virtual void InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged);
     virtual void DrawLinearArrays(CGeometryBlock& block);
 };

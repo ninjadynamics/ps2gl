@@ -399,7 +399,6 @@ void glColor4f(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
     gmanager.Color(cpu_vec_xyzw(red, green, blue, alpha));
 }
 
-#if PGL_COLOR4UB_LUT
 // Exact float results of the original (float)byte / 255.0 expression.
 // Unsuffixed 255.0 made each channel execute a software double division and
 // two conversions on the EE. These constants retain all 256 rounded values;
@@ -470,22 +469,13 @@ static const float pglColorByteToFloat[256] = {
     0.97254902124404907f, 0.97647058963775635f, 0.98039215803146362f, 0.98431372642517090f,
     0.98823529481887817f, 0.99215686321258545f, 0.99607843160629272f, 1.0000000000000000f,
 };
-#endif
 
 //raylib need this function
 void glColor4ub(GLubyte red, GLubyte green, GLubyte blue, GLubyte alpha)
 {
     GL_FUNC_DEBUG("%s\n", __FUNCTION__);
-#if PGL_COLOR4UB_LUT
     glColor4f(pglColorByteToFloat[red], pglColorByteToFloat[green],
         pglColorByteToFloat[blue], pglColorByteToFloat[alpha]);
-#else
-    float r = (float)red/255.0;
-    float b = (float)blue/255.0;
-    float g = (float)green/255.0;
-    float a = (float)alpha/255.0;
-    glColor4f(r,g,b,a);
-#endif
 }
 
 void glColor4fv(const GLfloat* color)

@@ -15,6 +15,7 @@
 #include "ps2s/packet.h"
 
 #include "GL/gl.h"
+#include "GL/ps2gl.h"
 
 /********************************************
  * state change flags
@@ -143,12 +144,9 @@ class CGLContext {
         *Vif1Packet, *SavedVif1Packet,
         *ImmVif1Packet;
 
-    // double-buffered list of draw environment ptrs so that
-    // the dma chains can be reused in different draw buffers,
-    // depth buffers, pixel formats, etc.
-    // If only they didn't pack so many logically distinct
-    // properties into the same registers I wouldn't have to
-    // do this!!  Damn!
+    // Double-buffered draw-environment pointer lists for clients that patch
+    // a completed chain. The embedded storage is the allocation-free case;
+    // each bank grows before it fills, independently of the last-frame bank.
     static const int kMaxDrawEnvChanges = 100;
     void* DrawEnvPtrs0[kMaxDrawEnvChanges];
     void* DrawEnvPtrs1[kMaxDrawEnvChanges];
@@ -222,8 +220,8 @@ public:
 
     void AddingDrawEnvToPacket(void* de)
     {
-        mErrorIf(NumCurDrawEnvPtrs == kMaxDrawEnvChanges,
-            "Too many draw environment changes.  Need to increase kMaxDrawEnvChanges");
+        if (NumCurDrawEnvPtrs >= CurDrawEnvCapacity)
+            GrowDrawEnvPtrBank();
         CurDrawEnvPtrs[NumCurDrawEnvPtrs++] = de;
     }
     void** GetDrawEnvPtrs() { return LastDrawEnvPtrs; }
@@ -298,6 +296,9 @@ public:
     inline void BlendEnabledChanged()
     {
         RendererContextChanged |= RendererCtxtFlags::AlphaBlending;
+        // RGB16 transparent-write protection changes the emitted TEST when
+        // blending changes, including state commands inside display lists.
+        GsContextChanged |= GsCtxtFlags::DrawEnv;
     }
     inline void EdgeAAChanged()
     {
@@ -405,14 +406,29 @@ public:
     inline void PopVif1Packet()
     {
         mAssert(SavedVif1Packet != NULL);
+        pglInvalidateX2BasePrefix();
         Vif1Packet      = SavedVif1Packet;
         SavedVif1Packet = NULL;
     }
-    inline void SetVif1Packet(CVifSCDmaPacket& packet) { Vif1Packet = &packet; }
+    inline void SetVif1Packet(CVifSCDmaPacket& packet)
+    {
+        pglInvalidateX2BasePrefix();
+        Vif1Packet = &packet;
+    }
     inline CVifSCDmaPacket& GetVif1Packet() { return *Vif1Packet; }
+    inline bool UsesNormalFramePacket() const
+    {
+        return Vif1Packet == CurPacket && SavedVif1Packet == NULL;
+    }
 
     void WaitForVSync();
     void SwapBuffers();
+
+private:
+    // Keep the earlier member offsets intact for header consumers. Consumers
+    // must still rebuild because CGLContext's size and inline append changed.
+    int CurDrawEnvCapacity, LastDrawEnvCapacity;
+    void GrowDrawEnvPtrBank();
 };
 
 // global pointer to the GLContext

@@ -6,6 +6,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <limits.h>
 
 #include "dma.h"
 #include "graph.h"
@@ -62,6 +64,62 @@ CGLContext::tRenderingFinishedCallback CGLContext::RenderingFinishedCallback = N
 static volatile unsigned int NormalChainsSubmitted = 0, NormalChainsCompleted = 0;
 static volatile unsigned int ImmediateChainsSubmitted = 0, ImmediateChainsCompleted = 0;
 
+static unsigned int DrawEnvLastFrame, DrawEnvHighWater, DrawEnvOver100Frames;
+static unsigned int DrawEnvGrowths, DrawEnvHeapBytes;
+static void (*DrawEnvHeapObserver)(unsigned int, unsigned int);
+
+extern "C" void pglSetDrawEnvHeapObserver(void (*observer)(unsigned int, unsigned int))
+{
+    if (DrawEnvHeapObserver == observer) return;
+    DrawEnvHeapObserver = observer;
+    if (observer && DrawEnvHeapBytes) observer(0, DrawEnvHeapBytes);
+}
+
+extern "C" void pglGetDrawEnvStats(unsigned int* lastFrame, unsigned int* highWater,
+    unsigned int* over100Frames, unsigned int* growths, unsigned int* heapBytes)
+{
+    if (lastFrame) *lastFrame = DrawEnvLastFrame;
+    if (highWater) *highWater = DrawEnvHighWater;
+    if (over100Frames) *over100Frames = DrawEnvOver100Frames;
+    if (growths) *growths = DrawEnvGrowths;
+    if (heapBytes) *heapBytes = DrawEnvHeapBytes;
+}
+
+void CGLContext::GrowDrawEnvPtrBank()
+{
+    // The old debug-only assertion allowed entry101 to overwrite the next
+    // bank, or CurDrawEnvPtrs itself. Failure must stop before any write even
+    // in release builds. Limit both signed counts and allocation arithmetic.
+    if (NumCurDrawEnvPtrs < 0 || NumCurDrawEnvPtrs != CurDrawEnvCapacity
+        || CurDrawEnvCapacity <= 0 || CurDrawEnvCapacity > INT_MAX / 2
+        || (size_t)CurDrawEnvCapacity > ((size_t)-1) / (2 * sizeof(void*))) {
+        fputs("ps2gl: invalid draw-environment pointer capacity\n", stderr);
+        abort();
+    }
+    const int newCapacity = CurDrawEnvCapacity * 2;
+    const bool oldIsHeap = CurDrawEnvPtrs != DrawEnvPtrs0 && CurDrawEnvPtrs != DrawEnvPtrs1;
+    const size_t oldBankBytes = oldIsHeap ? (size_t)CurDrawEnvCapacity * sizeof(void*) : 0;
+    const size_t newBankBytes = (size_t)newCapacity * sizeof(void*);
+    if (oldBankBytes > DrawEnvHeapBytes
+        || newBankBytes > UINT_MAX - (DrawEnvHeapBytes - oldBankBytes)) {
+        fputs("ps2gl: draw-environment heap accounting overflow\n", stderr);
+        abort();
+    }
+    void** grown = (void**)malloc(newBankBytes);
+    if (!grown) {
+        fputs("ps2gl: draw-environment pointer allocation failed\n", stderr);
+        abort();
+    }
+    memcpy(grown, CurDrawEnvPtrs, (size_t)NumCurDrawEnvPtrs * sizeof(void*));
+    if (oldIsHeap) free(CurDrawEnvPtrs);
+    CurDrawEnvPtrs = grown;
+    CurDrawEnvCapacity = newCapacity;
+    const unsigned int oldHeapBytes = DrawEnvHeapBytes;
+    DrawEnvHeapBytes = (unsigned int)(DrawEnvHeapBytes - oldBankBytes + newBankBytes);
+    ++DrawEnvGrowths;
+    if (DrawEnvHeapObserver) DrawEnvHeapObserver(oldHeapBytes, DrawEnvHeapBytes);
+}
+
 CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
     : StateChangesArePushed(false)
     , IsCurrentFieldEven(true)
@@ -70,12 +128,12 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
 {
     NormalChainsSubmitted = NormalChainsCompleted = 0;
     ImmediateChainsSubmitted = ImmediateChainsCompleted = 0;
-    // Tag/UNPACK backpatches read packet memory after stores. UCAB has one
-    // read-only cache line invalidated by stores; test cached construction
-    // without changing geometry or the asynchronous frame-buffer ownership.
+    pglInvalidateX2BasePrefix();
+    // Cached construction avoids UCAB's single read-only cache line being
+    // invalidated by every store before tag/UNPACK backpatches read it again.
+    // The asynchronous frame-buffer ownership remains unchanged.
     // RenderGeometry must retain Send()'s full cache writeback before DMA.
-    const unsigned int framePacketMapping = PGL_CACHED_FRAME_PACKETS
-        ? Core::MemMappings::Normal : Core::MemMappings::UncachedAccl;
+    const unsigned int framePacketMapping = Core::MemMappings::Normal;
     CurPacket = new CVifSCDmaPacket(kDmaPacketMaxQwordLength, DMAC::Channels::vif1,
         Packet::kXferTags, framePacketMapping);
     LastPacket = new CVifSCDmaPacket(kDmaPacketMaxQwordLength, DMAC::Channels::vif1,
@@ -89,6 +147,9 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
     LastDrawEnvPtrs    = DrawEnvPtrs1;
     NumCurDrawEnvPtrs  = 0;
     NumLastDrawEnvPtrs = 0;
+    CurDrawEnvCapacity = LastDrawEnvCapacity = kMaxDrawEnvChanges;
+    DrawEnvLastFrame = DrawEnvHighWater = DrawEnvOver100Frames = 0;
+    DrawEnvGrowths = DrawEnvHeapBytes = 0;
 
     ImmGManager   = new CImmGeomManager(*this, immBufferQwordSize);
     DListGManager = new CDListGeomManager(*this);
@@ -153,6 +214,14 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
 
 CGLContext::~CGLContext()
 {
+    if (CurDrawEnvPtrs != DrawEnvPtrs0 && CurDrawEnvPtrs != DrawEnvPtrs1)
+        free(CurDrawEnvPtrs);
+    if (LastDrawEnvPtrs != DrawEnvPtrs0 && LastDrawEnvPtrs != DrawEnvPtrs1)
+        free(LastDrawEnvPtrs);
+    const unsigned int oldHeapBytes = DrawEnvHeapBytes;
+    DrawEnvHeapBytes = 0;
+    if (DrawEnvHeapObserver && oldHeapBytes) DrawEnvHeapObserver(oldHeapBytes, 0);
+
     delete CurPacket;
     delete LastPacket;
 
@@ -271,12 +340,8 @@ void CGLContext::BeginImmediateGeometry()
     PushVif1Packet();
     SetVif1Packet(*ImmVif1Packet);
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
-#endif
-#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
     GS::CTexEnv::InvalidateTextureSync(); // a reset chain contains no prior texture proof
-#endif
     ImmVif1Packet->Reset();
 }
 
@@ -311,14 +376,11 @@ void CGLContext::FinishRenderingImmediateGeometry(bool forceImmediateStop)
 
 void CGLContext::BeginGeometry()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
+    pglInvalidateX2BasePrefix();
     pglInvalidateUnlitContextDelta();
-#endif
     // reset packets that will be drawn to during this frame
 
-#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
     GS::CTexEnv::InvalidateTextureSync();
-#endif
     CurPacket->Reset();
 }
 
@@ -454,6 +516,7 @@ void CGLContext::WaitForVSync()
 
 void CGLContext::SwapBuffers()
 {
+    pglInvalidateX2BasePrefix();
     //printf("%s\n", __FUNCTION__);
 
     // switch packet ptrs
@@ -465,9 +528,15 @@ void CGLContext::SwapBuffers()
 
     // switch drawenv ptrs
 
+    DrawEnvLastFrame = (unsigned int)NumCurDrawEnvPtrs;
+    if (DrawEnvLastFrame > DrawEnvHighWater) DrawEnvHighWater = DrawEnvLastFrame;
+    if (NumCurDrawEnvPtrs > kMaxDrawEnvChanges) ++DrawEnvOver100Frames;
     void** tempDEPtrs  = CurDrawEnvPtrs;
     CurDrawEnvPtrs     = LastDrawEnvPtrs;
     LastDrawEnvPtrs    = tempDEPtrs;
+    const int tempDECapacity = CurDrawEnvCapacity;
+    CurDrawEnvCapacity = LastDrawEnvCapacity;
+    LastDrawEnvCapacity = tempDECapacity;
     NumLastDrawEnvPtrs = NumCurDrawEnvPtrs;
     NumCurDrawEnvPtrs  = 0;
 
@@ -533,11 +602,10 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.12 19:36]\n");
-    printf("[PS2-PACKETS] normal=%s\n",
-        PGL_CACHED_FRAME_PACKETS ? "cached" : "ucab");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.13 07:51]\n");
+    printf("[PS2-PACKETS] normal=cached\n");
     printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",
-        PGL_LAZY_MATRIX_INVERSE, PGL_ALIGNED_VECTOR_TRANSFER,
+        1, PGL_ALIGNED_VECTOR_TRANSFER,
         PS2S_DIRECT_PACKET_TAGS);
 
     ps2sInit();

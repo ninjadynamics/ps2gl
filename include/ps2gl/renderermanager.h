@@ -28,6 +28,8 @@ class CVifSCDmaPacket;
 class CGeometryBlock;
 class CRenderer;
 class CUnlitTexTriRenderer;
+class CClipTriX2Renderer;
+class CClipRoadX2RRenderer;
 
 typedef enum { kDirectional,
     kPoint,
@@ -37,6 +39,7 @@ typedef struct {
     uint64_t capabilities;
     uint64_t requirements;
     CRenderer* renderer;
+    bool preservesX2Base;
 } tRenderer;
 
 class CRendererManager {
@@ -53,6 +56,7 @@ class CRendererManager {
     int NumDefaultRenderers, NumUserRenderers;
     const tRenderer *CurrentRenderer, *NewRenderer;
     bool ColoredHudRendererRegistered;
+    CClipRoadX2RRenderer* RoadRenderer;
 
     void RegisterDefaultRenderer(CRenderer* renderer);
 
@@ -61,6 +65,15 @@ public:
 
     void RegisterUserRenderer(CRenderer* renderer);
     void RegisterUnlitTexTriRenderer(CUnlitTexTriRenderer* renderer);
+    void RegisterX2Renderer(CClipTriX2Renderer* renderer);
+    void RegisterRoadRenderer(CClipRoadX2RRenderer* renderer);
+    CClipRoadX2RRenderer* GetRoadRenderer() const { return RoadRenderer; }
+    bool CanSelectRoadRenderer() const
+    {
+        return RoadRenderer != NULL
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
     bool CanSelectColoredHudRenderer() const
     {
         // PrimChanged removes the previous primitive's requirements before

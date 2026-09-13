@@ -135,7 +135,6 @@ void glPopMatrix(void)
 // courtesy the lovely folks at Intel
 extern void Invert2(float* mat, float* dst);
 
-#if PGL_LAZY_MATRIX_INVERSE
 void CMatrixStack::SetTopFromMatrix(const cpu_mat_44& newMat)
 {
     cpu_mat_44 invMatrix;
@@ -148,17 +147,12 @@ void CImmMatrixStack::SetTopFromMatrix(const cpu_mat_44& newMat)
     Matrices[CurStackDepth] = newMat;
     InverseMatrices[CurStackDepth] = newMat;
     InversePending[CurStackDepth] = true;
-#if PGL_DEFER_MATRIX_CONCAT_INVERSE
     DiscardInverseOps();
-#endif
     GLContext.GetImmDrawContext().SetVertexXformValid(false);
 }
-#endif
 
-#if PGL_LAZY_MATRIX_INVERSE || PGL_DEFER_MATRIX_CONCAT_INVERSE
 void CImmMatrixStack::EnsureInverse() const
 {
-#if PGL_LAZY_MATRIX_INVERSE
     if (InversePending[CurStackDepth]) {
         float* pending = (float*)&InverseMatrices[CurStackDepth];
         // Invert2 reads/transposes every input before writing any output.
@@ -166,8 +160,6 @@ void CImmMatrixStack::EnsureInverse() const
         Invert2(pending, pending);
         InversePending[CurStackDepth] = false;
     }
-#endif
-#if PGL_DEFER_MATRIX_CONCAT_INVERSE
     if (InverseHead[CurStackDepth] < 0) return;
 
     // Reverse the predecessor chain, then apply the original left-multiplies
@@ -192,11 +184,8 @@ void CImmMatrixStack::EnsureInverse() const
         }
     }
     DiscardInverseOps();
-#endif
 }
-#endif
 
-#if PGL_DEFER_MATRIX_CONCAT_INVERSE
 void CMatrixStack::ConcatFromMatrix(const cpu_mat_44& xform)
 {
     // Recording a display list keeps the established command payload and
@@ -234,7 +223,6 @@ void CImmMatrixStack::ConcatFromMatrix(const cpu_mat_44& xform)
     curMat = curMat * xform;
     GLContext.GetImmDrawContext().SetVertexXformValid(false);
 }
-#endif
 
 void glLoadMatrixf(const GLfloat* m)
 {
@@ -248,13 +236,7 @@ void glLoadMatrixf(const GLfloat* m)
     for (int i = 0; i < 16; i++)
         *dest++ = *m++;
 
-#if PGL_LAZY_MATRIX_INVERSE
     matStack.SetTopFromMatrix(newMat);
-#else
-    cpu_mat_44 invMatrix;
-    Invert2((float*)&newMat, (float*)&invMatrix);
-    matStack.SetTop(newMat, invMatrix);
-#endif
 }
 
 void glFrustum(GLdouble left, GLdouble right,
@@ -414,14 +396,7 @@ void glMultMatrixf(const GLfloat* m)
    */
 
     CMatrixStack& matStack = pGLContext->GetCurMatrixStack();
-#if PGL_DEFER_MATRIX_CONCAT_INVERSE
     matStack.ConcatFromMatrix(newMatrix);
-#else
-    cpu_mat_44 invMatrix;
-    //     invMatrix.set_identity();
-    Invert2((float*)&newMatrix, (float*)&invMatrix);
-    matStack.Concat(newMatrix, invMatrix);
-#endif
 
     //     mWarn( "glMultMatrix is not correct" );
 }

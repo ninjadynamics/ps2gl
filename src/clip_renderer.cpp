@@ -33,6 +33,33 @@ VU_FUNCTIONS(GeneralClipTriX2DDecode);
 
 using namespace RendererProps;
 
+// This is a proof about preceding writes in one ordered VIF packet, not a
+// hardware-completion flag or a cache carried across frames. X2/Q/D/G share
+// the same immutable base image; their decoders start immediately after it.
+#if PGL_X2_BASE_PREFIX_REUSE
+static const CGLContext* x2BaseContext;
+static const CVifSCDmaPacket* x2BasePacket;
+static const void* x2BaseImage;
+static unsigned int x2BaseBytes;
+#endif
+static unsigned int x2BaseSkippedUploads, x2BaseSkippedBytes;
+
+extern "C" void pglInvalidateX2BasePrefix(void)
+{
+#if PGL_X2_BASE_PREFIX_REUSE
+    x2BaseContext = NULL;
+    x2BasePacket = NULL;
+    x2BaseImage = NULL;
+    x2BaseBytes = 0;
+#endif
+}
+
+extern "C" void pglGetX2BaseReuseStats(unsigned int* uploads, unsigned int* bytes)
+{
+    if (uploads) *uploads = x2BaseSkippedUploads;
+    if (bytes) *bytes = x2BaseSkippedBytes;
+}
+
 CClipTriRenderer::CClipTriRenderer()
     : CLinearRenderer(mVsmAddr(GeneralClipTri), mVsmSize(GeneralClipTri), 3, 3,
           kInputStart, 90,
@@ -80,30 +107,22 @@ void CClipTriRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool use
     // microcode consumes plain tri lists (tri-strip prim + ADC on the first
     // two verts of each tri, like general_nospec_tri), which is exactly what
     // GL_TRIANGLES builds.
-#if PGL_CLIP_CONTEXT_DELTA
     // Only the original GeneralClipTri program has this uniform-color layout.
     // Its q58..61 material and q62..65 transform words match the stock unlit
     // writer. Reuse the exact delta/restart path; X2 and arbitrary custom
     // programs remain excluded. A prior full upload establishes ownership.
     if (TryUnlitContextDelta(GL_TRIANGLES, rcChanges, userRcChanged, true)) return;
-#endif
-#if PGL_SPARSE_CLIP_CONTEXT
     if (!pGLContext->GetImmLighting().GetLightingEnabled()) {
         // The original GeneralClipTri VU program reads q0,57..60,62..65,
         // 75..77. The generic unlit spans retain every one plus guard q78.
         // Keep its existing transform, near-plane math, fan emission and
         // uniform color/fog. Do not substitute X2's vertex-alpha semantics.
         InitLinearContext(GL_TRIANGLES, true);
-#if PGL_CLIP_CONTEXT_DELTA
         NoteUnlitContext(pGLContext->GetVif1Packet(), GL_TRIANGLES, true);
-#endif
         return;
     }
-#endif
     CLinearRenderer::InitContext(GL_TRIANGLES, rcChanges, userRcChanged);
-#if PGL_CLIP_CONTEXT_DELTA
     NoteUnlitContext(pGLContext->GetVif1Packet(), GL_TRIANGLES, true);
-#endif
 }
 
 void CClipTriRenderer::DrawLinearArrays(CGeometryBlock& block)
@@ -213,7 +232,7 @@ static CClipTriX2Renderer* pX2Renderer = NULL;
 void CClipTriX2Renderer::Register()
 {
     pX2Renderer = new CClipTriX2Renderer;
-    pglRegisterRenderer(pX2Renderer);
+    pGLContext->GetImmGeomManager().GetRendererManager().RegisterX2Renderer(pX2Renderer);
 
     pglRegisterCustomPrimType(PGL_CLIP_TRIANGLES_X2,
         PGL_CLIP_TRI_X2_PROP,
@@ -498,6 +517,25 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
     maxVertsPerBuffer -= 3;
     maxVertsPerBuffer -= maxVertsPerBuffer % 6;
 
+#if PGL_X2_SINGLE_MATERIAL_BATCH
+    // Raw X2 owns input q5..124 (30 * 4q), followed by planes at q125.
+    // Its existing A=30/B=18 output ping-pong fits every <=18-vertex fan.
+    // With no window section, moving an activation boundary preserves the
+    // entire material/triangle order. Keep paired wall/window interleaving
+    // unchanged, and avoid the generic splitter's odd partial-strip rule.
+    if (!WinTex && !pGLContext->InDListDef()
+        && MicrocodePacket == mVsmAddr(GeneralClipTriX2)
+        && MicrocodePacketSize == mVsmSize(GeneralClipTriX2)
+        && InputGeomOffset == 5 && InputGeomBufSize == 120
+        && InputQuadsPerVert == 4 && OutputQuadsPerVert == 3
+        && kDoubleBufBase == 79 && kDoubleBufSize == 472
+        && VifDoubleBuffered && wordsPerVert == 3
+        && wordsPerTex == 2 && wordsPerColor == 4
+        && block.GetNumStrips() == 1 && !block.StripIsContinued(0)
+        && block.GetStripLength(0) > 0 && block.GetStripLength(0) % 3 == 0)
+        maxVertsPerBuffer = 30;
+#endif
+
     DrawBlockX2(packet, block, maxVertsPerBuffer);
 }
 
@@ -647,6 +685,12 @@ CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
 static void UploadVu1Range(CVifSCDmaPacket& packet, const void* image,
     int imageBytes, unsigned int addr64)
 {
+#if PGL_X2_BASE_PREFIX_REUSE
+    // Any overlapping upload destroys the proof before its first MPG. Decoder
+    // writes at the exact end of the prefix are disjoint and preserve it.
+    if (imageBytes > 0 && addr64 < x2BaseBytes / 8u)
+        pglInvalidateX2BasePrefix();
+#endif
     const u64* code = (const u64*)image;
     unsigned int size64 = imageBytes / 8;
 
@@ -664,6 +708,48 @@ static void UploadVu1Range(CVifSCDmaPacket& packet, const void* image,
     }
 }
 
+static void LoadX2Base(CVifSCDmaPacket& packet, const void* image, int imageBytes)
+{
+#if PGL_X2_BASE_PREFIX_REUSE
+    const bool canonical = image == mVsmAddr(GeneralClipTriX2)
+        && imageBytes == mVsmSize(GeneralClipTriX2) && imageBytes > 0;
+    if (canonical && !pGLContext->InDListDef()
+        && x2BaseContext == pGLContext && x2BasePacket == &packet
+        && x2BaseImage == image && x2BaseBytes == (unsigned int)imageBytes) {
+        ++x2BaseSkippedUploads;
+        x2BaseSkippedBytes += (unsigned int)imageBytes;
+        return;
+    }
+#endif
+    UploadVu1Range(packet, image, imageBytes, 0);
+#if PGL_X2_BASE_PREFIX_REUSE
+    if (canonical && !pGLContext->InDListDef()) {
+        x2BaseContext = pGLContext;
+        x2BasePacket = &packet;
+        x2BaseImage = image;
+        x2BaseBytes = (unsigned int)imageBytes;
+    }
+#endif
+}
+
+void CClipTriX2Renderer::Load()
+{
+#if !PGL_X2_BASE_PREFIX_REUSE
+    CBaseRenderer::Load();
+#else
+    pglInvalidateUnlitContextDelta();
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+    LoadX2Base(packet, MicrocodePacket, MicrocodePacketSize);
+    // MSCAL retains the previous uploader's microprogram-completion wait and
+    // initializes all X2 registers even when its immutable code is resident.
+    packet.Cnt();
+    packet.Mscal(0);
+    packet.Pad128();
+    packet.CloseTag();
+    pglAddToMetric(kMetricsRendererUpload);
+#endif
+}
+
 void CClipTriX2DRenderer::Load()
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
@@ -671,7 +757,7 @@ void CClipTriX2DRenderer::Load()
     // PC 0..DecoderAddr64-1 is literally the checked-in X2 object. The
     // decoder follows it without concatenation or reassembly, so VCL can
     // never perturb the hardware-green transform/S-H/compound-kick body.
-    UploadVu1Range(packet, MicrocodePacket, MicrocodePacketSize, 0);
+    LoadX2Base(packet, MicrocodePacket, MicrocodePacketSize);
     UploadVu1Range(packet, DecoderCode, DecoderCodeSize, DecoderAddr64);
 
     packet.Cnt();
@@ -687,7 +773,7 @@ static CClipTriX2DRenderer* pX2DRenderer = NULL;
 void CClipTriX2DRenderer::Register()
 {
     pX2DRenderer = new CClipTriX2DRenderer;
-    pglRegisterRenderer(pX2DRenderer);
+    pGLContext->GetImmGeomManager().GetRendererManager().RegisterX2Renderer(pX2DRenderer);
 
     pglRegisterCustomPrimType(PGL_CLIP_TRIANGLES_X2D,
         PGL_CLIP_TRI_X2D_PROP,

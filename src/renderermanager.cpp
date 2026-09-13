@@ -16,6 +16,8 @@
 #include "ps2gl/indexed_renderer.h"
 #include "ps2gl/linear_renderer.h"
 #include "ps2gl/unlit_renderer.h"
+#include "ps2gl/clip_renderer.h"
+#include "ps2gl/x2r_renderer.h"
 
 #include "vu1_mem_linear.h"
 #include "vu1renderers.h"
@@ -36,6 +38,7 @@ CRendererManager::CRendererManager(CGLContext& context)
     , CurrentRenderer(NULL)
     , NewRenderer(NULL)
     , ColoredHudRendererRegistered(false)
+    , RoadRenderer(NULL)
 {
     // Zero the WHOLE bitfield first: the field-by-field init below never
     // touched `unused:12`, which therefore carried whatever heap garbage the
@@ -335,7 +338,7 @@ void CRendererManager::RegisterDefaultRenderer(CRenderer* renderer)
     mErrorIf(NumDefaultRenderers == kMaxDefaultRenderers,
         "Trying to register too many renderers; adjust the limit");
 
-    tRenderer newEntry                      = { renderer->GetCapabilities(), renderer->GetRequirements(), renderer };
+    tRenderer newEntry                      = { renderer->GetCapabilities(), renderer->GetRequirements(), renderer, false };
     DefaultRenderers[NumDefaultRenderers++] = newEntry;
 }
 
@@ -347,7 +350,7 @@ void CRendererManager::RegisterUserRenderer(CRenderer* renderer)
     mErrorIf(NumUserRenderers == kMaxUserRenderers,
         "Trying to register too many renderers; adjust the limit");
 
-    tRenderer newEntry                = { renderer->GetCapabilities(), renderer->GetRequirements(), renderer };
+    tRenderer newEntry                = { renderer->GetCapabilities(), renderer->GetRequirements(), renderer, false };
     UserRenderers[NumUserRenderers++] = newEntry;
 }
 
@@ -367,6 +370,31 @@ void CRendererManager::RegisterUnlitTexTriRenderer(CUnlitTexTriRenderer* rendere
         }
     }
     ColoredHudRendererRegistered = false;
+}
+
+void CRendererManager::RegisterX2Renderer(CClipTriX2Renderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    // Only the builtin family's audited Load methods preserve this prefix.
+    // Ordinary custom registrations remain false, regardless of their flags.
+    UserRenderers[NumUserRenderers - 1].preservesX2Base = true;
+}
+
+void CRendererManager::RegisterRoadRenderer(CClipRoadX2RRenderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    // Resolve the exact first-match selection once. Unknown user renderers
+    // cannot displace the builtin while this proof remains installed.
+    const uint64_t reqs = PGL_CLIP_ROAD_X2R_PROP;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            RoadRenderer = entry.renderer == renderer ? renderer : NULL;
+            return;
+        }
+    }
+    RoadRenderer = NULL;
 }
 
 // state updates
@@ -666,18 +694,14 @@ bool CRendererManager::UpdateNewRenderer()
 
 void CRendererManager::MakeNewRendererCurrent()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
-#endif
     mAssert(NewRenderer != NULL);
     CurrentRenderer = NewRenderer;
     NewRenderer     = NULL;
-#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC
     // A cached custom display-list packet can replay raw texture writes
     // without executing its builder again. Never carry an ordinary texture
     // proof through entry to such a renderer, even when no bind occurs.
     if (IsCurRendererCustom()) GS::CTexEnv::InvalidateTextureSync();
-#endif
     // A renderer may upload only the context it consumes (X2 does). A custom
     // requirement-bit change need not change any GL context value, so force
     // the new owner to restore its own context before consuming shared VU RAM.
@@ -687,6 +711,10 @@ void CRendererManager::MakeNewRendererCurrent()
 void CRendererManager::LoadRenderer(CVifSCDmaPacket& packet)
 {
     mAssert(CurrentRenderer != NULL);
+
+    // An arbitrary custom Load override can upload code without passing
+    // through CBaseRenderer. Invalidate before dispatching any unknown loader.
+    if (!CurrentRenderer->preservesX2Base) pglInvalidateX2BasePrefix();
 
     mDebugPrint("Loading renderer: %s\n", CurrentRenderer->renderer->GetName());
 

@@ -108,7 +108,6 @@ void CDListMaterial::SetShininess(float shine)
 
 void CMaterialManager::Color(cpu_vec_xyzw color)
 {
-#if PGL_SKIP_REDUNDANT_COLOR
     // Exact object bytes retain signed zero and avoid a float/int alias cast.
     // Only suppress the manager update: immediate glColor still appends each
     // vertex color, and the display-list manager still records every command.
@@ -150,7 +149,6 @@ void CMaterialManager::Color(cpu_vec_xyzw color)
         // glColor must still reassert it even if CurColor itself is unchanged.
         if (materialMatches) return;
     }
-#endif
     CurColor = color;
 
     if (UseColorMaterial) {

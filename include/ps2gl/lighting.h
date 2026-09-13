@@ -236,9 +236,7 @@ public:
 
     void SetLightingEnabled(bool enabled)
     {
-#if PGL_SKIP_REDUNDANT_DRAW_STATE
         if (IsEnabled == enabled) return;
-#endif
         GLContext.LightingEnabledChanged();
         GLContext.GetImmGeomManager().GetRendererManager().LightingEnabledChanged(enabled);
         IsEnabled = enabled;

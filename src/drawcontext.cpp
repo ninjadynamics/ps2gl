@@ -48,10 +48,8 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , Height(0)
     , VpScaleX(1.0f)
     , VpScaleY(1.0f)
-#if PGL_CONTEXT_COEFFICIENT_CACHE
     , ClipCoefficientsValid(false)
     , FogCoefficientValid(false)
-#endif
 {
     GSScale.set_identity();
 
@@ -96,9 +94,7 @@ void CImmDrawContext::SetDrawBuffers(bool interlaced,
     int width = frame0Mem->GetWidth(), height = frame0Mem->GetHeight();
     Width  = width;
     Height = height;
-#if PGL_CONTEXT_COEFFICIENT_CACHE
     ClipCoefficientsValid = false;
-#endif
 
     // get max depth buffer value
 
@@ -226,7 +222,6 @@ CImmDrawContext::GetVertexXform()
     return VertexXform;
 }
 
-#if PGL_CONTEXT_COEFFICIENT_CACHE
 void CImmDrawContext::UpdateClipCoefficients() const
 {
     // Match AddVu1RendererContext and InitUnlitContext literally. In
@@ -253,7 +248,6 @@ void CImmDrawContext::UpdateFogCoefficient() const
     CachedFogEnd = FogEnd;
     FogCoefficientValid = true;
 }
-#endif
 
 void CImmDrawContext::SetDoSmoothShading(bool yesNo)
 {
@@ -296,9 +290,7 @@ void CImmDrawContext::SetFogRange(float start, float end)
     if (FogStart != start || FogEnd != end) {
         FogStart = start;
         FogEnd   = end;
-#if PGL_CONTEXT_COEFFICIENT_CACHE
         FogCoefficientValid = false;
-#endif
         GLContext.ShadingChanged();
     }
 }
@@ -356,22 +348,18 @@ void CImmDrawContext::SetRescaleNormals(bool rescale)
 
 void CImmDrawContext::SetDepthWriteEnabled(bool enabled)
 {
-#if PGL_SKIP_REDUNDANT_DRAW_STATE
     if (!DrawEnvOverridden &&
         !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
         DrawEnv->GetDepthWriteEnabled() == enabled) return;
-#endif
     DrawEnv->SetDepthWriteEnabled(enabled);
     GLContext.DepthWriteEnabledChanged();
 }
 
 void CImmDrawContext::SetFrameBufferDrawMask(unsigned int mask)
 {
-#if PGL_SKIP_REDUNDANT_DRAW_STATE
     if (!DrawEnvOverridden &&
         !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
         DrawEnv->GetFrameBufferDrawMask() == mask) return;
-#endif
     DrawEnv->SetFrameBufferDrawMask(mask);
     GLContext.FrameBufferDrawMaskChanged();
 }
@@ -436,31 +424,25 @@ void CImmDrawContext::SetBlendMode(GLenum source, GLenum dest)
     switch (blendFactor) {
     case mCombineBlendFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA):
         using namespace GS::ABlend;
-#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
         if (!DrawEnvOverridden &&
             !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
             DrawEnv->HasAlphaBlendFunc(kSourceRGB, kDestRGB, kSourceAlpha, kDestRGB, 0x80)) return;
-#endif
         DrawEnv->SetAlphaBlendFunc(kSourceRGB, kDestRGB, kSourceAlpha, kDestRGB, 0x80);
         GLContext.BlendModeChanged();
         break;
     case mCombineBlendFactors(GL_SRC_ALPHA, GL_ONE):
-#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
         if (!DrawEnvOverridden &&
             !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
             DrawEnv->HasAlphaBlendFunc(kSourceRGB, kZero, kSourceAlpha, kDestRGB, 0x80)) return;
-#endif
         DrawEnv->SetAlphaBlendFunc(kSourceRGB, kZero, kSourceAlpha, kDestRGB, 0x80);
         GLContext.BlendModeChanged();
         break;
     // the following is actually subtractive blending, which
     // should be GL_MINUS_ALPHA, GL_ONE but there is no minus alpha in GL
     case mCombineBlendFactors(GL_ONE_MINUS_SRC_ALPHA, GL_ONE):
-#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
         if (!DrawEnvOverridden &&
             !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
             DrawEnv->HasAlphaBlendFunc(kZero, kSourceRGB, kSourceAlpha, kDestRGB, 0x80)) return;
-#endif
         DrawEnv->SetAlphaBlendFunc(kZero, kSourceRGB, kSourceAlpha, kDestRGB, 0x80);
         GLContext.BlendModeChanged();
         break;
@@ -514,11 +496,9 @@ void CImmDrawContext::SetAlphaFunc(GLenum func, GLclampf ref)
     }
 
     const uint8_t reference = (unsigned int)(ref * 0xff);
-#if PGL_SKIP_REDUNDANT_BLEND_ALPHA
     if (!DrawEnvOverridden &&
         !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
         DrawEnv->HasAlphaTestFunc(reference, ePassMode, GS::ATest::kKeep)) return;
-#endif
     DrawEnv->SetAlphaRefVal(reference);
     DrawEnv->SetAlphaTestPassMode(ePassMode);
     DrawEnv->SetAlphaTestFailAction(GS::ATest::kKeep);
@@ -564,11 +544,9 @@ void CImmDrawContext::SetDepthFunc(GLenum func)
         return;
     }
 
-#if PGL_SKIP_REDUNDANT_DRAW_STATE
     if (!DrawEnvOverridden &&
         !GLContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom() &&
         DrawEnv->HasDepthTestPassMode(ePassMode)) return;
-#endif
     DrawEnv->SetDepthTestPassMode(ePassMode);
 
     GLContext.DepthTestFuncChanged();

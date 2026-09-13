@@ -27,9 +27,7 @@ protected:
 
     // called by DrawArrays
     void DrawBlock(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
-#if PGL_FLAT_QUAD_PACKETS
     bool TryDrawFlatQuads(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
-#endif
 
     // used by DrawBlock
     void FindNumBuffers(int numToAdd, int numVertsToRestart,

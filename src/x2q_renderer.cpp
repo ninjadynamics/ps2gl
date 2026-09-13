@@ -2,6 +2,8 @@
    existing X2 body owns transforms, clipping, depth, fog and compound kicks. */
 #include "GL/ps2gl.h"
 #include "ps2gl/x2q_renderer.h"
+#include "ps2gl/glcontext.h"
+#include "ps2gl/immgmanager.h"
 
 extern "C" {
 void vsmGeneralClipTriX2QDecode_CodeStart();
@@ -21,7 +23,7 @@ static CClipTriX2QRenderer* pX2QRenderer = NULL;
 void CClipTriX2QRenderer::Register()
 {
     pX2QRenderer = new CClipTriX2QRenderer;
-    pglRegisterRenderer(pX2QRenderer);
+    pGLContext->GetImmGeomManager().GetRendererManager().RegisterX2Renderer(pX2QRenderer);
     pglRegisterCustomPrimType(PGL_CLIP_TRIANGLES_X2Q,
         PGL_CLIP_TRI_X2Q_PROP, ~(pglU64_t)0xffffffff, PGL_MERGE_CONTIGUOUS);
 }

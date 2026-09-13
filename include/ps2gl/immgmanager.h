@@ -83,6 +83,8 @@ public:
     bool CanDrawColoredHud2D() const;
     bool TryDrawColoredHud2DArrays(const float* vertices, const float* texcoords,
         const float* colors, int vertexCount);
+    bool DrawRoadQuads(const PGLRoadContext* context,
+        const PGLRoadQuad* quads, int count);
     void Normal(cpu_vec_xyz normal);
     void TexCoord(float u, float v);
     void Color(cpu_vec_xyzw color);

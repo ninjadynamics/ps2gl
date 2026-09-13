@@ -51,13 +51,10 @@ void CLinearRenderer::DrawLinearArrays(CGeometryBlock& block)
         pglCountSubmission(PGL_SUBMIT_XYZ3, block.GetTotalVertices());
     else if (block.GetWordsPerVertex() == 4)
         pglCountSubmission(PGL_SUBMIT_XYZ4, block.GetTotalVertices());
-#if PGL_FLAT_QUAD_PACKETS
     if (block.GetPrimType() == GL_QUADS && TryDrawFlatQuads(packet, block, maxVertsPerBuffer)) return;
-#endif
     DrawBlock(packet, block, maxVertsPerBuffer);
 }
 
-#if PGL_FLAT_QUAD_PACKETS
 bool CLinearRenderer::TryDrawFlatQuads(CVifSCDmaPacket& packet,
     CGeometryBlock& block, int maxVertsPerBuffer)
 {
@@ -94,13 +91,10 @@ bool CLinearRenderer::TryDrawFlatQuads(CVifSCDmaPacket& packet,
     }
     return true;
 }
-#endif
 
 void CLinearRenderer::InitUnlitContext()
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     pglInvalidateUnlitContextDelta();
-#endif
     // X2 is unlit even when the application's fixed-function LIGHTING flag
     // selects it. Its generated program reads only these context qwords:
     // 0.w, 57.w, 62..65, 75, 76 and 77.x. X2D uses the same context; the
@@ -119,11 +113,7 @@ void CLinearRenderer::InitUnlitContext()
 #if PGL_SUBMISSION_METRICS
     const unsigned int contextStart = packet.GetByteLength();
 #endif
-#if PGL_CONTEXT_COEFFICIENT_CACHE
     const float depthClipToGs = drawContext.GetContextDepthScale();
-#else
-    const float depthClipToGs = (float)((1 << drawContext.GetDepthBits()) - 1) / 2.0f;
-#endif
 
     packet.Cnt();
     packet.Stcycl(1, 1);
@@ -158,20 +148,10 @@ void CLinearRenderer::InitUnlitContext()
     GLenum newPrimType = drawContext.GetPolygonMode();
     if (newPrimType == GL_FILL) newPrimType = GL_TRIANGLES;
     packet += BuildGiftag(newPrimType & 0xff);
-#if PGL_CONTEXT_COEFFICIENT_CACHE
     const cpu_vec_xyz& clipScales = drawContext.GetContextClipScales();
     packet += clipScales.x;
     packet += clipScales.y;
     packet += clipScales.z;
-#else
-    const float xClip = 2048.0f / (drawContext.GetFBWidth() * 0.5f * 2.0f);
-    const float yClip = 2048.0f / (drawContext.GetFBHeight() * 0.5f * 2.0f);
-    packet += Math::Max(xClip, 1.0f);
-    packet += Math::Max(yClip, 1.0f);
-    float depthClip = 2048.0f / depthClipToGs;
-    depthClip *= 1.003f;
-    packet += depthClip;
-#endif
     packet += (drawContext.GetDoClipping()) ? 1 : 0;
     // X2 reads only near (.x): F comes from vertex alpha, not these legacy
     // depth-fog coefficients. Leave the unread components deterministic.
@@ -197,12 +177,10 @@ void CLinearRenderer::InitUnlitContext()
 #endif
 }
 
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_CLIP_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
 bool CLinearRenderer::TryUnlitContextDelta(GLenum primType, uint32_t changes,
     bool userChanged, bool originalClip)
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
-#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
     bool canUse = CanUseUnlitContextDelta(packet, primType, changes, userChanged, originalClip);
     if (!canUse && !originalClip
         && CanUseUnlitGsContextDelta(packet, primType, changes, userChanged)) {
@@ -214,9 +192,6 @@ bool CLinearRenderer::TryUnlitContextDelta(GLenum primType, uint32_t changes,
         if (changes == 0) changes = RendererCtxtFlags::CurMaterial;
     }
     if (canUse)
-#else
-    if (CanUseUnlitContextDelta(packet, primType, changes, userChanged, originalClip))
-#endif
     {
 #if PGL_SUBMISSION_METRICS
         const unsigned int contextStart = packet.GetByteLength();
@@ -240,25 +215,16 @@ bool CLinearRenderer::TryUnlitContextDelta(GLenum primType, uint32_t changes,
     }
     return false;
 }
-#endif
 
 void CLinearRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
 {
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     if (TryUnlitContextDelta(primType, rcChanges, userRcChanged)) return;
-#endif
     bool sparseUnlit = false;
-#if PGL_SPARSE_UNLIT_CONTEXT
     sparseUnlit = !pGLContext->GetImmLighting().GetLightingEnabled()
         && !pGLContext->GetImmGeomManager().GetRendererManager().IsCurRendererCustom();
-#endif
     InitLinearContext(primType, sparseUnlit);
-#if PGL_UNLIT_CONTEXT_DELTA || PGL_LIT_MATERIAL_DELTA
     NoteUnlitContext(pGLContext->GetVif1Packet(), primType);
-#endif
-#if PGL_UNLIT_GS_CONTEXT_DELTA && PGL_UNLIT_CONTEXT_DELTA
     CacheUnlitGsContext();
-#endif
 }
 
 void CLinearRenderer::InitLinearContext(GLenum primType, bool sparseUnlit)
@@ -550,14 +516,12 @@ void CLinearRenderer::XferBufferHeader(CVifSCDmaPacket& packet,
         //   bit 10	: stop bit
         //   bit 11	: ADC bit of second vertex starting at offset
         // these are converted to floats to do a right shift with a fp add on vu1
-#if PGL_INDEPENDENT_PRIM_HEADER
         if (numVertsToBreakStrip == 0) {
             // Float copy keeps 4-byte alignment valid with either TTE mode.
             // 1024 is exactly representable; all other words are positive 0.
             static const float independentAdc[16] = { 1024.0f };
             packet.Add(independentAdc, 16);
         } else
-#endif
         {
             unsigned int adcBits = 0;
             if (numVertsToBreakStrip == 0)

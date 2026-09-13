@@ -24,11 +24,11 @@
 #include "ps2gl/matrix.h"
 #include "ps2gl/renderer.h"
 #include "ps2gl/texture.h"
+#include "ps2gl/x2r_renderer.h"
 
 using namespace ArrayType;
 
-static const unsigned int immediateMapping = PGL_CACHED_IMMEDIATE_GEOMETRY
-    ? Core::MemMappings::Normal : Core::MemMappings::UncachedAccl;
+static const unsigned int immediateMapping = Core::MemMappings::Normal;
 
 /********************************************
  * CImmGeomManager
@@ -162,13 +162,8 @@ bool CImmGeomManager::TryTriangle3D(const float* xyz)
 
 GLboolean pglTryTriangle3D(const GLfloat* xyz)
 {
-#if PGL_FUSED_TRIANGLE3D
     if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
     return pGLContext->GetImmGeomManager().TryTriangle3D(xyz) ? GL_TRUE : GL_FALSE;
-#else
-    (void)xyz;
-    return GL_FALSE;
-#endif
 }
 
 bool CImmGeomManager::TryTexturedQuad2D(float x0, float y0, float x1, float y1,
@@ -216,7 +211,7 @@ GLboolean pglTryTexturedQuad2D(GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1,
 
 GLboolean pglUsesCachedImmediateGeometry(void)
 {
-    return PGL_CACHED_IMMEDIATE_GEOMETRY ? GL_TRUE : GL_FALSE;
+    return GL_TRUE;
 }
 
 template <int WordsPerVertex>
@@ -296,20 +291,16 @@ bool CImmGeomManager::TryDrawTexturedQuads2D(const float* quads, int count, bool
         return false;
 
     int wordsPerVertex = 4;
-#if PGL_BULK_QUAD_XYZ3
     // The stock quad programs read XYZ and supply homogeneous W themselves.
     // Do not infer the next renderer from flags while a change is pending.
     if (Prim == GL_QUADS && RendererManager.CanReuseUnlitQuadRenderer())
         wordsPerVertex = 3;
-#endif
     float* const vertices = (float*)CurVertexBuf->ReserveWords(count * 4 * wordsPerVertex);
     float* const texcoords = (float*)CurTexCoordBuf->ReserveWords(count * 8);
     const float* q;
-#if PGL_BULK_QUAD_XYZ3
     if (wordsPerVertex == 3)
         q = WriteTexturedQuads2D<3>(quads, count, corners, vertices, texcoords);
     else
-#endif
         q = WriteTexturedQuads2D<4>(quads, count, corners, vertices, texcoords);
 
     CommitTexturedQuadArrays(vertices, texcoords, count, wordsPerVertex);
@@ -439,16 +430,133 @@ GLboolean pglTryDrawColoredHud2DArrays(const GLfloat* vertices,
         vertices, texcoords, colors, vertexCount) ? GL_TRUE : GL_FALSE;
 }
 
+#if PGL_CITY_ROADS_VU1
+static bool RoadIdentityColumn(cpu_vec_4 column, float x, float y, float z, float w)
+{
+    return column.x == x && column.y == y && column.z == z && column.w == w;
+}
+
+static bool RoadFiniteColumn(cpu_vec_4 column)
+{
+    return HudFiniteFloat(column.x) && HudFiniteFloat(column.y)
+        && HudFiniteFloat(column.z) && HudFiniteFloat(column.w);
+}
+
+static bool RoadContextValid(const PGLRoadContext& context)
+{
+    const float* values = (const float*)&context;
+    for (unsigned int i = 0; i < sizeof(context) / sizeof(float); ++i)
+        if (!HudFiniteFloat(values[i])) return false;
+    if (context.eyeIncircle[3] <= 0.0f
+        || context.skyCenterScale[2] <= 0.0f || context.skyCenterScale[3] <= 0.0f
+        || context.clipParams[0] <= 0.0f || context.clipParams[1] <= 0.0f
+        || context.clipParams[2] != 1.0e-6f || context.clipParams[3] != 0.0f
+        || context.right[3] != 0.0f || context.up[3] != 0.0f
+        || context.forward[3] != 0.0f || context.sourceY[1] != 0.0f
+        || context.sourceY[2] != 0.0f || context.sourceY[3] != 0.0f)
+        return false;
+    for (int i = 0; i < 4; ++i)
+        if (context.color[i] < 0.0f || context.color[i] > 1.0f) return false;
+    for (int i = 0; i < 24; ++i)
+        if (context.sourcePlanes[i][3] != 0.0f) return false;
+    return true;
+}
+#endif
+
+bool CImmGeomManager::DrawRoadQuads(const PGLRoadContext* context,
+    const PGLRoadQuad* quads, int count)
+{
+#if PGL_CITY_ROADS_VU1
+    // No old block may be flushed after reservation: its packet footprint and
+    // borrowed state belong to the preceding material. The caller drains it
+    // before this API, exactly as it does before changing X2 window pairs.
+    if (!context || !quads || count <= 0 || count > INT_MAX / 48
+        || (((uintptr_t)context | (uintptr_t)quads) & 3u)
+        || (uintptr_t)quads > ~(uintptr_t)0 - (uintptr_t)count * sizeof(*quads)
+        || (uintptr_t)context > ~(uintptr_t)0 - sizeof(*context)
+        || InsideBeginEnd || Geometry.IsPending() || GLContext.InDListDef()
+        || !GLContext.UsesNormalFramePacket()
+        || !RendererManager.CanSelectRoadRenderer()
+        || GetUserPrimRequirements(PGL_CLIP_ROAD_QUADS_X2R) != PGL_CLIP_ROAD_X2R_PROP
+        || GetUserPrimReqMask(PGL_CLIP_ROAD_QUADS_X2R) != ~(uint64_t)0xffffffff
+        || GLContext.GetImmLighting().GetLightingEnabled()
+        || !GLContext.GetTexManager().GetTexEnabled()) return false;
+
+    CClipRoadX2RRenderer* renderer = RendererManager.GetRoadRenderer();
+    CImmDrawContext& draw = GLContext.GetImmDrawContext();
+    if (!renderer->IsCodeValid() || !RoadContextValid(*context)
+        || draw.GetFogEnabled() || draw.GetDoCullFace() || draw.GetEdgeAAEnabled()
+        || draw.GetPolygonMode() != GL_FILL || !HudFiniteFloat(draw.GetDepthOffset())
+        || context->clipParams[0] != draw.GetClipNear()) return false;
+
+    const cpu_mat_44& model = GLContext.GetModelViewStack().GetTop();
+    if (!RoadIdentityColumn(model.get_col0(), 1, 0, 0, 0)
+        || !RoadIdentityColumn(model.get_col1(), 0, 1, 0, 0)
+        || !RoadIdentityColumn(model.get_col2(), 0, 0, 1, 0)
+        || !RoadIdentityColumn(model.get_col3(), 0, 0, 0, 1)) return false;
+    const cpu_mat_44& xform = draw.GetVertexXform();
+    if (!RoadFiniteColumn(xform.get_col0()) || !RoadFiniteColumn(xform.get_col1())
+        || !RoadFiniteColumn(xform.get_col2()) || !RoadFiniteColumn(xform.get_col3()))
+        return false;
+
+    // At <=1024x1024 and <=32bpp an image has <=9 IMAGE chunks: <=34
+    // chain qwords, plus one <=256-entry CLUT, 8 texture and 14 draw settings.
+    // 256q covers these, both GS fences, <=8 MPG tags, full 72q context and
+    // command padding. Each activation needs <=16q overhead beyond its 3q
+    // descriptors. Keep another 16q for the ordinary EndGeometry trailer.
+    CMMTexture& texture = GLContext.GetTexManager().GetCurTexture();
+    const GS::tPSM psm = texture.GetPSM();
+    if (psm != GS::kPsm32 && psm != GS::kPsm24 && psm != GS::kPsm16
+        && psm != GS::kPsm16s && psm != GS::kPsm8 && psm != GS::kPsm8h)
+        return false;
+    if (!texture.GetW() || !texture.GetH()
+        || texture.GetW() > 1024u || texture.GetH() > 1024u
+        || ((psm == GS::kPsm8 || psm == GS::kPsm8h) && !texture.GetOwnClut()))
+        return false;
+    const uint64_t batches = ((uint64_t)count + 31u) / 32u;
+    const uint64_t words = ((uint64_t)count * 3u + batches * 16u + 272u) * 4u;
+    CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
+    if (words > UINT_MAX || !packet.GetTTE() || packet.HasOpenTag()
+        || !packet.CanReserveWords((unsigned int)words)) return false;
+
+    // Admission is complete. All following operations append this material
+    // without a fallible partial publication or a pending borrowed block.
+    renderer->SetRoadContext(*context);
+    PrimChanged(PGL_CLIP_ROAD_QUADS_X2R);
+    DrawingLinearArray();
+    // The road program reads q55, not fixed-function material/light slots.
+    // Preserve an inherited COLOR_MATERIAL enable; no color array is supplied.
+    SyncColorMaterial(false);
+    SyncRenderer();
+    SyncRendererContext(PGL_CLIP_ROAD_QUADS_X2R);
+    SyncGsContext();
+    renderer->DrawRoadQuads(quads, count);
+    return true;
+#else
+    (void)context;
+    (void)quads;
+    (void)count;
+    return false;
+#endif
+}
+
+GLboolean pglDrawRoadQuads(const PGLRoadContext* context,
+    const PGLRoadQuad* quads, GLsizei count)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawRoadQuads(context, quads, count)
+        ? GL_TRUE : GL_FALSE;
+}
+
 bool CImmGeomManager::TryDrawTexturedQuads2DArrays(const float* vertices, const float* texcoords,
     int count, int wordsPerVertex)
 {
-#if PGL_BORROWED_QUAD_ARRAYS
     // Borrow only the already-selected stock uniform-color quad route. Do
     // not predict or select a NEXT renderer while OLD geometry is pending.
     // Match the copied API's linked input width on every accepted call.
     if (InsideBeginEnd || !vertices || !texcoords || count <= 0 || count > INT_MAX / 64 ||
         (((uintptr_t)vertices | (uintptr_t)texcoords) & 3u) != 0 ||
-        wordsPerVertex != (PGL_BULK_QUAD_XYZ3 ? 3 : 4) ||
+        wordsPerVertex != 3 ||
         Prim != GL_QUADS || !RendererManager.CanReuseUnlitQuadRenderer() ||
         GLContext.GetImmLighting().GetLightingEnabled() ||
         GLContext.GetMaterialManager().GetColorMaterialEnabled() ||
@@ -468,29 +576,14 @@ bool CImmGeomManager::TryDrawTexturedQuads2DArrays(const float* vertices, const 
     CurTexCoord[0] = texcoords[count * 8 - 2];
     CurTexCoord[1] = texcoords[count * 8 - 1];
     return true;
-#else
-    (void)vertices;
-    (void)texcoords;
-    (void)count;
-    (void)wordsPerVertex;
-    return false;
-#endif
 }
 
 GLboolean pglTryDrawTexturedQuads2DArrays(const GLfloat* vertices, const GLfloat* texcoords,
     GLsizei count, GLint wordsPerVertex)
 {
-#if PGL_BORROWED_QUAD_ARRAYS
     if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
     return pGLContext->GetImmGeomManager().TryDrawTexturedQuads2DArrays(
         vertices, texcoords, count, wordsPerVertex) ? GL_TRUE : GL_FALSE;
-#else
-    (void)vertices;
-    (void)texcoords;
-    (void)count;
-    (void)wordsPerVertex;
-    return GL_FALSE;
-#endif
 }
 
 GLboolean pglTryDrawTexturedQuads2D(const GLfloat* quads, GLsizei count)
@@ -502,15 +595,9 @@ GLboolean pglTryDrawTexturedQuads2D(const GLfloat* quads, GLsizei count)
 
 GLboolean pglTryDrawTexturedQuadCorners2D(const GLfloat* quads, GLsizei count)
 {
-#if PGL_BULK_QUAD_CORNERS
     if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
     return pGLContext->GetImmGeomManager().TryDrawTexturedQuads2D(quads, count, true)
         ? GL_TRUE : GL_FALSE;
-#else
-    (void)quads;
-    (void)count;
-    return GL_FALSE;
-#endif
 }
 
 void CImmGeomManager::Normal(cpu_vec_xyz normal)
@@ -795,7 +882,8 @@ void CImmGeomManager::SyncGsContext()
             packet.CloseTag();
             // FIXME
             GLContext.AddingDrawEnvToPacket((uint128_t*)GLContext.GetVif1Packet().GetNextPtr() + 1);
-            GLContext.GetImmDrawContext().GetDrawEnv().SendSettings(GLContext.GetVif1Packet());
+            CImmDrawContext& draw = GLContext.GetImmDrawContext();
+            draw.GetDrawEnv().SendSettingsForBlend(packet, draw.GetBlendEnabled());
             GLContext.GetImmDrawContext().NoteDrawEnvSubmission();
         }
 

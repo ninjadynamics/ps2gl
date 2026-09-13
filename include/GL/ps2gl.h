@@ -18,107 +18,6 @@
 #error "PGL_ALIGNED_VECTOR_TRANSFER must be 0 or 1"
 #endif
 
-/* Whole-renderer A/B: CPU construction of the two normal frame DMA chains.
- * 0 preserves UCAB; 1 uses cached memory with the existing Send() writeback.
- * Geometry, immediate packets, display lists and VU programs are unchanged.
- * This is a library build setting: rebuild ps2gl EE objects after changing it.
- */
-#ifndef PGL_CACHED_FRAME_PACKETS
-#define PGL_CACHED_FRAME_PACKETS 1
-#endif
-#if PGL_CACHED_FRAME_PACKETS != 0 && PGL_CACHED_FRAME_PACKETS != 1
-#error "PGL_CACHED_FRAME_PACKETS must be 0 or 1"
-#endif
-
-/* Immediate attribute buffers only; keep the existing full-cache writeback
- * in source-chain Send(), double buffering and append-only frame lifetime.
- * Independent of PGL_CACHED_FRAME_PACKETS. Rebuild ps2gl EE after changing. */
-#ifndef PGL_CACHED_IMMEDIATE_GEOMETRY
-#define PGL_CACHED_IMMEDIATE_GEOMETRY 1
-#endif
-#if PGL_CACHED_IMMEDIATE_GEOMETRY != 0 && PGL_CACHED_IMMEDIATE_GEOMETRY != 1
-#error "PGL_CACHED_IMMEDIATE_GEOMETRY must be 0 or 1"
-#endif
-
-/* Suppress unchanged immediate depth/write-mask and lighting setters.
- * Compare the authoritative draw environment, including depth-disable side
- * effects; never discard a recorded display-list state command. */
-#ifndef PGL_SKIP_REDUNDANT_DRAW_STATE
-#define PGL_SKIP_REDUNDANT_DRAW_STATE 1
-#endif
-#if PGL_SKIP_REDUNDANT_DRAW_STATE != 0 && PGL_SKIP_REDUNDANT_DRAW_STATE != 1
-#error "PGL_SKIP_REDUNDANT_DRAW_STATE must be 0 or 1"
-#endif
-
-/* Keep immediate vertex colors, but avoid rebuilding an unchanged constant
- * color/material context. Display-list recording and custom renderers retain
- * their original invalidation contract. Rebuild ps2gl EE after changing. */
-#ifndef PGL_SKIP_REDUNDANT_COLOR
-#define PGL_SKIP_REDUNDANT_COLOR 1
-#endif
-#if PGL_SKIP_REDUNDANT_COLOR != 0 && PGL_SKIP_REDUNDANT_COLOR != 1
-#error "PGL_SKIP_REDUNDANT_COLOR must be 0 or 1"
-#endif
-
-/* Compare authoritative quantized GS fields before re-sending an unchanged
- * blend/alpha-test setup. Preserve explicit reassertion after custom kicks. */
-#ifndef PGL_SKIP_REDUNDANT_BLEND_ALPHA
-#define PGL_SKIP_REDUNDANT_BLEND_ALPHA 1
-#endif
-#if PGL_SKIP_REDUNDANT_BLEND_ALPHA != 0 && PGL_SKIP_REDUNDANT_BLEND_ALPHA != 1
-#error "PGL_SKIP_REDUNDANT_BLEND_ALPHA must be 0 or 1"
-#endif
-
-/* Reuse an identical managed texture synchronization at its actual draw
- * boundary. Uploads, CLUT/global state writes and custom contexts invalidate
- * the proof. Bind commands and required TEXFLUSH operations are retained.
- * Initial integration needs ps2stuff and all ps2gl EE objects. Later gate
- * changes need all ps2gl EE objects; ps2stuff's write serial remains active. */
-#ifndef PGL_SKIP_REDUNDANT_TEXTURE_SYNC
-#define PGL_SKIP_REDUNDANT_TEXTURE_SYNC 1
-#endif
-#if PGL_SKIP_REDUNDANT_TEXTURE_SYNC != 0 && PGL_SKIP_REDUNDANT_TEXTURE_SYNC != 1
-#error "PGL_SKIP_REDUNDANT_TEXTURE_SYNC must be 0 or 1"
-#endif
-
-/* Stock linear renderers with lighting OFF: upload their live context spans
- * without preparing eight unused lights and lighting-only matrices. Custom
- * and indexed renderers retain their existing context contract. EE-only A/B. */
-#ifndef PGL_SPARSE_UNLIT_CONTEXT
-#define PGL_SPARSE_UNLIT_CONTEXT 1
-#endif
-#if PGL_SPARSE_UNLIT_CONTEXT != 0 && PGL_SPARSE_UNLIT_CONTEXT != 1
-#error "PGL_SPARSE_UNLIT_CONTEXT must be 0 or 1"
-#endif
-
-/* Explicit opt-in for the proven July PGL_CLIP_TRIANGLES VU program only,
- * with GL lighting OFF. Other custom programs keep their own contracts. */
-#ifndef PGL_SPARSE_CLIP_CONTEXT
-#define PGL_SPARSE_CLIP_CONTEXT 1
-#endif
-#if PGL_SPARSE_CLIP_CONTEXT != 0 && PGL_SPARSE_CLIP_CONTEXT != 1
-#error "PGL_SPARSE_CLIP_CONTEXT must be 0 or 1"
-#endif
-
-/* Reuse a verified stock-unlit context; upload only changed material/xform
- * spans. Renderer/frame transitions invalidate the proof. EE-only A/B. */
-#ifndef PGL_UNLIT_CONTEXT_DELTA
-#define PGL_UNLIT_CONTEXT_DELTA 1
-#endif
-#if PGL_UNLIT_CONTEXT_DELTA != 0 && PGL_UNLIT_CONTEXT_DELTA != 1
-#error "PGL_UNLIT_CONTEXT_DELTA must be 0 or 1"
-#endif
-
-/* Same stock lit renderer: update only q58..61 for material-only changes.
- * Lighting/texture ownership, transforms, lights, GS and renderer changes
- * retain a full context upload and the original microprogram restart. */
-#ifndef PGL_LIT_MATERIAL_DELTA
-#define PGL_LIT_MATERIAL_DELTA 1
-#endif
-#if PGL_LIT_MATERIAL_DELTA != 0 && PGL_LIT_MATERIAL_DELTA != 1
-#error "PGL_LIT_MATERIAL_DELTA must be 0 or 1"
-#endif
-
 /* Keep the established unlit delta writer specialized and reject invalid
  * reuse before touching lighting state. Same context words and restarts. */
 #ifndef PGL_UNLIT_DELTA_SPECIALIZE
@@ -128,130 +27,41 @@
 #error "PGL_UNLIT_DELTA_SPECIALIZE must be 0 or 1"
 #endif
 
-/* Skip arbitrary-strip bookkeeping for one stock, uniform textured quad
- * array. Same VU chunk boundaries, REF transfers and microprogram. */
-#ifndef PGL_FLAT_QUAD_PACKETS
-#define PGL_FLAT_QUAD_PACKETS 1
-#endif
-/* Independent primitives have an immutable no-restart ADC header. */
-#ifndef PGL_INDEPENDENT_PRIM_HEADER
-#define PGL_INDEPENDENT_PRIM_HEADER 1
-#endif
-/* Recompute VIF unpack masks only when that renderer's input width changes.
- * Existing format fields own the cache; row/fallback values stay live. */
-#ifndef PGL_TRANSFER_FORMAT_CACHE
-#define PGL_TRANSFER_FORMAT_CACHE 1
-#endif
-/* Pure GS texture/draw-environment changes need not replace a compatible
- * stock unlit VU context. GS synchronization itself remains mandatory. */
-#ifndef PGL_UNLIT_GS_CONTEXT_DELTA
-#define PGL_UNLIT_GS_CONTEXT_DELTA 1
-#endif
-/* Borrow caller-owned, immutable uniform quad arrays through packet finish.
- * Eligibility failures leave state unchanged and retain the copying API. */
-#ifndef PGL_BORROWED_QUAD_ARRAYS
-#define PGL_BORROWED_QUAD_ARRAYS 1
-#endif
 /* Optional scoped CPU submission counters; no clocks, waits or per-vertex
  * hooks. The application explicitly samples a small subset of frames. */
 #ifndef PGL_SUBMISSION_METRICS
 #define PGL_SUBMISSION_METRICS 1
 #endif
-#if (PGL_FLAT_QUAD_PACKETS != 0 && PGL_FLAT_QUAD_PACKETS != 1) || \
-    (PGL_INDEPENDENT_PRIM_HEADER != 0 && PGL_INDEPENDENT_PRIM_HEADER != 1) || \
-    (PGL_TRANSFER_FORMAT_CACHE != 0 && PGL_TRANSFER_FORMAT_CACHE != 1) || \
-    (PGL_UNLIT_GS_CONTEXT_DELTA != 0 && PGL_UNLIT_GS_CONTEXT_DELTA != 1) || \
-    (PGL_BORROWED_QUAD_ARRAYS != 0 && PGL_BORROWED_QUAD_ARRAYS != 1) || \
-    (PGL_SUBMISSION_METRICS != 0 && PGL_SUBMISSION_METRICS != 1)
+#if PGL_SUBMISSION_METRICS != 0 && PGL_SUBMISSION_METRICS != 1
 #error "Packet optimization/metrics switches must be 0 or 1"
 #endif
 
-/* Extend the proven context-delta spans to the original GeneralClipTri
- * renderer only. Other custom VU programs retain their existing contracts. */
-#ifndef PGL_CLIP_CONTEXT_DELTA
-#define PGL_CLIP_CONTEXT_DELTA 1
+/* Reuse the identical resident X2 base image across X2-family renderer loads
+ * in one ordered packet. Decoder uploads, MSCAL0 and contexts remain intact.
+ * Unknown loaders, packet changes/resets and cached replay invalidate proof. */
+#ifndef PGL_X2_BASE_PREFIX_REUSE
+#define PGL_X2_BASE_PREFIX_REUSE 1
 #endif
-#if PGL_CLIP_CONTEXT_DELTA != 0 && PGL_CLIP_CONTEXT_DELTA != 1
-#error "PGL_CLIP_CONTEXT_DELTA must be 0 or 1"
-#endif
-
-/* Cache scalar depth/clip/fog coefficients at the owning state boundaries.
- * Original arithmetic and uploaded context words remain unchanged. */
-#ifndef PGL_CONTEXT_COEFFICIENT_CACHE
-#define PGL_CONTEXT_COEFFICIENT_CACHE 1
-#endif
-#if PGL_CONTEXT_COEFFICIENT_CACHE != 0 && PGL_CONTEXT_COEFFICIENT_CACHE != 1
-#error "PGL_CONTEXT_COEFFICIENT_CACHE must be 0 or 1"
+#if PGL_X2_BASE_PREFIX_REUSE != 0 && PGL_X2_BASE_PREFIX_REUSE != 1
+#error "PGL_X2_BASE_PREFIX_REUSE must be 0 or 1"
 #endif
 
-/* Exact byte-to-float color mapping, replacing four software double divides.
- * The public float values and color/material/display-list behavior stay the
- * same. Rebuild ps2gl EE after changing either gate below. */
-#ifndef PGL_COLOR4UB_LUT
-#define PGL_COLOR4UB_LUT 1
+/* Fill the existing 30-vertex raw X2 input arena for one independent,
+ * single-material XYZ3/UV2/RGBA4 draw. Paired windows, other layouts and
+ * multi-strip blocks retain their original 24-vertex activation boundary. */
+#ifndef PGL_X2_SINGLE_MATERIAL_BATCH
+#define PGL_X2_SINGLE_MATERIAL_BATCH 1
 #endif
-#if PGL_COLOR4UB_LUT != 0 && PGL_COLOR4UB_LUT != 1
-#error "PGL_COLOR4UB_LUT must be 0 or 1"
-#endif
-
-/* Caller-ordered 2D quad corners copied into existing immediate buffers.
- * Keeps the stock GL_QUADS renderer, diagonal and final current UV. */
-#ifndef PGL_BULK_QUAD_CORNERS
-#define PGL_BULK_QUAD_CORNERS 1
-#endif
-#if PGL_BULK_QUAD_CORNERS != 0 && PGL_BULK_QUAD_CORNERS != 1
-#error "PGL_BULK_QUAD_CORNERS must be 0 or 1"
+#if PGL_X2_SINGLE_MATERIAL_BATCH != 0 && PGL_X2_SINGLE_MATERIAL_BATCH != 1
+#error "PGL_X2_SINGLE_MATERIAL_BATCH must be 0 or 1"
 #endif
 
-/* Omit unused source W in stable stock unlit quad runs. The existing VIF
- * XYZ unpack and quad shader still produce the same homogeneous position.
- * Unknown/custom/changing renderer ownership keeps the XYZW source path. */
-#ifndef PGL_BULK_QUAD_XYZ3
-#define PGL_BULK_QUAD_XYZ3 1
+/* Independent compact road sky/view clipping program. */
+#ifndef PGL_CITY_ROADS_VU1
+#define PGL_CITY_ROADS_VU1 1
 #endif
-#if PGL_BULK_QUAD_XYZ3 != 0 && PGL_BULK_QUAD_XYZ3 != 1
-#error "PGL_BULK_QUAD_XYZ3 must be 0 or 1"
-#endif
-
-/* Three glVertex3f submissions with identical current attributes, appended
- * transactionally to the existing immediate GL_TRIANGLES stream. */
-#ifndef PGL_FUSED_TRIANGLE3D
-#define PGL_FUSED_TRIANGLE3D 1
-#endif
-#if PGL_FUSED_TRIANGLE3D != 0 && PGL_FUSED_TRIANGLE3D != 1
-#error "PGL_FUSED_TRIANGLE3D must be 0 or 1"
-#endif
-
-/* Stock lit programs upload light records through the highest enabled slot,
- * then resume at global ambient. Custom programs retain complete records. */
-#ifndef PGL_SPARSE_LIGHT_CONTEXT
-#define PGL_SPARSE_LIGHT_CONTEXT 1
-#endif
-#if PGL_SPARSE_LIGHT_CONTEXT != 0 && PGL_SPARSE_LIGHT_CONTEXT != 1
-#error "PGL_SPARSE_LIGHT_CONTEXT must be 0 or 1"
-#endif
-
-/* Defer immediate glLoadMatrixf inversion until an inverse is consumed.
- * Concat retains the original inverse multiplication order; display-list
- * recording remains eager. Independent library-build A/B, no matrix rounding
- * change. Rebuild all ps2gl EE objects when changing this class-layout gate. */
-#ifndef PGL_LAZY_MATRIX_INVERSE
-#define PGL_LAZY_MATRIX_INVERSE 1
-#endif
-#if PGL_LAZY_MATRIX_INVERSE != 0 && PGL_LAZY_MATRIX_INVERSE != 1
-#error "PGL_LAZY_MATRIX_INVERSE must be 0 or 1"
-#endif
-
-/* Defer immediate inverse concatenation until GetInvTop consumes it. Store
- * the original ordered operands, never invert the composed forward matrix.
- * A fixed journal falls back eagerly when full; display-list recording stays
- * eager. Independent of lazy glLoadMatrixf, no VU changes. Rebuild every EE
- * consumer of internal ps2gl headers after changing this class-layout gate. */
-#ifndef PGL_DEFER_MATRIX_CONCAT_INVERSE
-#define PGL_DEFER_MATRIX_CONCAT_INVERSE 1
-#endif
-#if PGL_DEFER_MATRIX_CONCAT_INVERSE != 0 && PGL_DEFER_MATRIX_CONCAT_INVERSE != 1
-#error "PGL_DEFER_MATRIX_CONCAT_INVERSE must be 0 or 1"
+#if PGL_CITY_ROADS_VU1 != 0 && PGL_CITY_ROADS_VU1 != 1
+#error "PGL_CITY_ROADS_VU1 must be 0 or 1"
 #endif
 
 /********************************************
@@ -295,21 +105,44 @@ extern GLboolean pglTryDrawTexturedQuads2D(const GLfloat* quads, GLsizei count);
  * aligned and remain immutable through DMA completion, with caller cache
  * writeback before submission of the frame. No client-array state mutation.
  * Requires the already-selected stable stock unlit quad renderer and its
- * linked bulk vertex width (XYZ3 gate ON:3, OFF:4). Rejection is untouched.
+ * linked bulk vertex width (three floats). Rejection is untouched.
  * The final current UV is read from the last input vertex. */
 extern GLboolean pglTryDrawTexturedQuads2DArrays(const GLfloat* vertices,
     const GLfloat* texcoords, GLsizei count, GLint wordsPerVertex);
 /* Same admission/lifetime contract as the rectangle run above, but each
  * quad is four caller-ordered {x,y,u,v} corners (16 floats). No sorting or
  * rectangle reconstruction; z=0,w=1 and the original diagonal are retained.
- * The final current UV is the fourth corner of the last quad. Gate OFF
- * returns false without modifying anything so callers use immediate mode. */
+ * The final current UV is the fourth corner of the last quad. Inadmissible
+ * calls return false without changes so callers use immediate mode. */
 extern GLboolean pglTryDrawTexturedQuadCorners2D(const GLfloat* quads, GLsizei count);
 /* Internal frame/renderer ownership fence for the context-delta proof. */
 extern void pglInvalidateUnlitContextDelta(void);
-/* Actual linked library setting, not the caller's header default. */
+/* Invalidate before any external/raw VU1 microprogram upload or cached replay.
+ * This proves ordered code residency only, never VU/GS completion. */
+extern void pglInvalidateX2BasePrefix(void);
+/* Cumulative unsigned skipped-base upload count and bytes. Subtract snapshots
+ * modulo unsigned wrap. Read has no rendering side effects; either output may
+ * be NULL. Separate from PGL_SUBMIT_COUNT to preserve its existing array ABI. */
+extern void pglGetX2BaseReuseStats(unsigned int* uploads, unsigned int* bytes);
+/* Draw-environment pointer bookkeeping diagnostics, read without rendering
+ * side effects. lastFrame/highWater count records at completed swaps;
+ * over100Frames/growths are cumulative unsigned counters (subtract modulo
+ * wrap). heapBytes counts live grown pointer banks, excluding embedded100.
+ * Outputs may be NULL. Counters restart when a context is constructed. */
+extern void pglGetDrawEnvStats(unsigned int* lastFrame, unsigned int* highWater,
+    unsigned int* over100Frames, unsigned int* growths, unsigned int* heapBytes);
+/* Optional main-thread allocation observer. Successful growth/free reports
+ * old/new total requested heap bytes, excluding allocator overhead. Installing
+ * a different non-NULL observer reports existing storage as 0 -> heapBytes;
+ * re-installing the same observer does nothing. NULL detaches. The callback
+ * must not render, destroy the context, or change this observer. */
+extern void pglSetDrawEnvHeapObserver(void (*observer)(unsigned int, unsigned int));
+/* Compatibility query: immediate geometry always uses cached memory. */
 extern GLboolean pglUsesCachedImmediateGeometry(void);
-/* Linked-library context A/B settings: bit0=unchanged draw-state suppression,
+/* Linked-library feature record; promoted paths report constant ON.
+ * Bits4/5 retain historical ON values although their superseded EE selectors
+ * are removed; bit7 identifies the active VU0 matrix path.
+ * bit0=unchanged draw-state suppression,
  * bit1=stock unlit sparse context, bit2=unlit PGL_CLIP_TRIANGLES context,
  * bit3=deferred inverse concat, bit4=scalar matrix kernel, bit5=EE matrix
  * kernel (takes precedence over bit4), bit6=lazy glLoadMatrixf inverse,
@@ -330,7 +163,10 @@ extern GLboolean pglUsesCachedImmediateGeometry(void);
  * bit23=scoped CPU submission metrics available,
  * bit24=renderer-owned VIF transfer-format reuse,
  * bit25=stock unlit context reuse across compatible GS state changes,
- * bit26=caller-owned immutable uniform quad arrays.
+ * bit26=caller-owned immutable uniform quad arrays,
+ * bit27=identical X2-family base microprogram prefix reuse,
+ * bit28=bounded raw X2 single-material 30-vertex input batches,
+ * bit29=owned compact road sky/view clipping packets.
  * Query once per report, not per vertex. */
 extern unsigned int pglGetContextOptimizationFlags(void);
 /* Cumulative unsigned counters within one explicit, non-nestable sample.
@@ -638,6 +474,49 @@ void pglClipX2QSetWindowTexture(GLuint texId, float r, float g, float b, float a
 #define PGL_CLIP_GLOW_X2G_PROP ((pglU64_t)1 << 37)
 void pglRegisterClipGlowX2GRenderer(void);
 void pglClipX2GSetAxes(float ux, float uy, float uz, float vx, float vy, float vz);
+
+/* Dedicated unlit road representation. These contiguous float fields are the
+   56-qword VU context at absolute q1..56; all reserved lanes must be zero.
+   Planes, basis and source coordinates retain the caller's arithmetic frame.
+   q52 = eye.xyz/incircle squared; q53 = sky center X/Z and source px/py;
+   q54 = near/NDC limit/1e-6/0; q55 = normalized RGBA; q56 = source Y/0/0/0. */
+typedef struct PGLRoadContext {
+    GLfloat eyePlanes[24][4];
+    GLfloat sourcePlanes[24][4];
+    GLfloat right[4], up[4], forward[4];
+    GLfloat eyeIncircle[4];
+    GLfloat skyCenterScale[4];
+    GLfloat clipParams[4];
+    GLfloat color[4];
+    GLfloat sourceY[4];
+} PGLRoadContext;
+
+/* Exact original corners, not a reconstructed parallelogram. UVs are
+   A(0,0), B(1,0), C(1,v1), D(0,v1), triangles ABC then ACD. */
+typedef struct PGLRoadQuad {
+    GLfloat ab[4]; /* Ax, Az, Bx, Bz */
+    GLfloat cd[4]; /* Cx, Cz, Dx, Dz */
+    GLfloat v[4];  /* v1, 0, 0, 0 */
+} PGLRoadQuad;
+
+#define PGL_CLIP_ROAD_QUADS_X2R ((GLenum)0x80000000 | 6)
+#define PGL_CLIP_ROAD_X2R_PROP ((pglU64_t)1 << 38)
+void pglRegisterRoadRenderer(void);
+/* Count is complete quads in one material, split internally into <=32.
+   Call in the normal frame chain, outside Begin/End/display lists, after
+   flushing pending geometry. Requires identity modelview, finite context,
+   texture enabled, lighting/fog/culling/edge-AA off, FILL. COLOR_MATERIAL
+   and client arrays are ignored and preserved. Texture dimensions are 1..1024;
+   supported formats are PSM32/24/16/16s/8/8h, with an owned palette for 8/8h.
+   Caller owns exact eligible finite convex corner/UV topology and projection;
+   this API does not rescan descriptors or change source geometry/material.
+   FALSE consumes no inputs and changes no GL state/packet/cursor, apart from
+   materializing the pure vertex-transform cache. TRUE copies ALL source and
+   context bytes into frame-owned chain storage before return and leaves no
+   pending geometry. Texture/depth/blend state and current attributes remain
+   caller-owned. No generic glDrawArrays call uses this private primitive. */
+GLboolean pglDrawRoadQuads(const PGLRoadContext* context,
+    const PGLRoadQuad* quads, GLsizei count);
 
 // custom state
 
