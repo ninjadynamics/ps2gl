@@ -208,7 +208,7 @@ public:
     bool IsPending() const { return (PrimType != GL_INVALID_VALUE); }
     bool MergeNew();
     void MakeNewValuesCurrent();
-    void AdjustNewGeomPtrs(int offset)
+    void AdjustNewGeomPtrs(int offset, bool compactWallColor = false)
     {
         if (AreNewVerticesValid)
             NewVertices = (float*)NewVertices + offset * WordsPerNewVertex;
@@ -217,7 +217,8 @@ public:
         if (AreNewTexCoordsValid)
             NewTexCoords = (float*)NewTexCoords + offset * WordsPerNewTexCoord;
         if (AreNewColorsValid)
-            NewColors = (float*)NewColors + offset * WordsPerNewColor;
+            NewColors = (float*)NewColors + (compactWallColor ? (offset >> 1) : offset)
+                * WordsPerNewColor;
     }
 };
 

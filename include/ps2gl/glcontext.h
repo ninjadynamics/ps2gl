@@ -179,6 +179,8 @@ public:
     CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize);
     ~CGLContext();
 
+    unsigned int GetFrameNumber() const { return CurrentFrameNumber; }
+
     void SetMatrixMode(GLenum mode);
     inline CMatrixStack& GetCurMatrixStack() { return *CurMatrixStack; }
     inline CImmMatrixStack& GetModelViewStack() { return *ModelViewMatStack; }

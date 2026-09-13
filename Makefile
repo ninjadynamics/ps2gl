@@ -23,8 +23,12 @@ EE_OBJS = \
 	src/clear.o \
 	src/clip_renderer.o \
 	src/x2q_renderer.o \
+	src/x2c_renderer.o \
 	src/x2g_renderer.o \
 	src/x2r_renderer.o \
+	src/x2p_renderer.o \
+	src/x2b_renderer.o \
+	src/x2e_renderer.o \
 	src/displaycontext.o \
 	src/dlgmanager.o \
 	src/dlist.o \
@@ -53,8 +57,13 @@ RENDERERS = \
 	general_clip_tri_x2 \
 	general_clip_tri_x2d_decode \
 	general_clip_tri_x2q_decode \
+	general_clip_tri_x2c_decode \
 	general_clip_glow_x2g_decode \
 	general_clip_road_x2r \
+	general_clip_pool_x2p \
+	general_clip_billboard_x2b \
+	general_clip_billboard_x2a \
+	general_clip_decal_x2e \
 	general_nospec_quad \
 	general_nospec_tri \
 	general_nospec \
@@ -76,10 +85,20 @@ X2D_DECODER_VSM = vu1/general_clip_tri_x2d_decode_vcl.vsm
 X2D_GUARD = vu1/x2d_microcode_guard.py
 X2Q_DECODER_VSM = vu1/general_clip_tri_x2q_decode_vcl.vsm
 X2Q_GUARD = vu1/x2q_microcode_guard.py
+X2C_DECODER_VSM = vu1/general_clip_tri_x2c_decode_vcl.vsm
+X2C_GUARD = vu1/x2c_microcode_guard.py
 X2G_DECODER_VSM = vu1/general_clip_glow_x2g_decode_vcl.vsm
 X2G_GUARD = vu1/x2g_microcode_guard.py
 X2R_VSM = vu1/general_clip_road_x2r_vcl.vsm
 X2R_GUARD = vu1/x2r_microcode_guard.py
+X2P_VSM = vu1/general_clip_pool_x2p_vcl.vsm
+X2P_GUARD = vu1/x2p_microcode_guard.py
+X2B_VSM = vu1/general_clip_billboard_x2b_vcl.vsm
+X2B_GUARD = vu1/x2b_microcode_guard.py
+X2A_VSM = vu1/general_clip_billboard_x2a_vcl.vsm
+X2A_GUARD = vu1/x2a_microcode_guard.py
+X2E_VSM = vu1/general_clip_decal_x2e_vcl.vsm
+X2E_GUARD = vu1/x2e_microcode_guard.py
 
 all: $(VSM_SOURCES) x2d-microcode-guard $(EE_LIB)
 
@@ -87,6 +106,29 @@ $(EE_LIB): x2d-microcode-guard
 $(EE_LIB): x2q-microcode-guard
 $(EE_LIB): x2g-microcode-guard
 $(EE_LIB): x2r-microcode-guard
+$(EE_LIB): x2e-microcode-guard
+$(EE_LIB): x2c-microcode-guard x2p-microcode-guard
+$(EE_LIB): x2b-microcode-guard
+$(EE_LIB): x2a-microcode-guard
+
+.PHONY: x2a-microcode-guard
+x2a-microcode-guard: $(X2A_VSM) $(X2A_GUARD) $(X2R_GUARD)
+	python3 $(X2A_GUARD) $(X2A_VSM)
+
+.PHONY: x2b-microcode-guard
+x2b-microcode-guard: $(X2B_VSM) $(X2B_GUARD) $(X2R_GUARD)
+	python3 $(X2B_GUARD) $(X2B_VSM)
+
+.PHONY: x2c-microcode-guard x2p-microcode-guard
+x2c-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2C_DECODER_VSM) $(X2C_GUARD) $(X2Q_GUARD) $(X2D_GUARD)
+	python3 $(X2C_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2C_DECODER_VSM)
+
+x2p-microcode-guard: $(X2P_VSM) $(X2P_GUARD) $(X2R_GUARD)
+	python3 $(X2P_GUARD) $(X2P_VSM)
+
+.PHONY: x2e-microcode-guard
+x2e-microcode-guard: $(X2E_VSM) $(X2E_GUARD)
+	python3 $(X2E_GUARD) $(X2E_VSM)
 
 .PHONY: x2r-microcode-guard
 x2r-microcode-guard: $(X2R_VSM) $(X2R_GUARD)
@@ -141,7 +183,32 @@ vu1/general_clip_road_x2r.vo: $(X2R_VSM) $(X2R_GUARD)
 	python3 $(X2R_GUARD) $(X2R_VSM)
 	dvp-as -o $@ $(X2R_VSM)
 
+vu1/general_clip_decal_x2e.vo: $(X2E_VSM) $(X2E_GUARD)
+	python3 $(X2E_GUARD) $(X2E_VSM)
+	dvp-as -o $@ $(X2E_VSM)
+
+vu1/general_clip_pool_x2p.vo: $(X2P_VSM) $(X2P_GUARD) $(X2R_GUARD)
+	python3 $(X2P_GUARD) $(X2P_VSM)
+	dvp-as -o $@ $(X2P_VSM)
+
+vu1/general_clip_billboard_x2b.vo: $(X2B_VSM) $(X2B_GUARD) $(X2R_GUARD)
+	python3 $(X2B_GUARD) $(X2B_VSM)
+	dvp-as -o $@ $(X2B_VSM)
+
+vu1/general_clip_billboard_x2a.vo: $(X2A_VSM) $(X2A_GUARD) $(X2R_GUARD)
+	python3 $(X2A_GUARD) $(X2A_VSM)
+	dvp-as -o $@ $(X2A_VSM)
+
+vu1/general_clip_tri_x2c_decode.vo: $(X2C_DECODER_VSM) $(X2C_GUARD) $(X2Q_GUARD) $(X2D_GUARD)
+	python3 $(X2C_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2C_DECODER_VSM)
+	dvp-as -o $@ $(X2C_DECODER_VSM)
+
 ifeq ($(REBUILD_VU1),1)
+$(X2C_DECODER_VSM): vu1/general_clip_tri_x2c_decode_pp4.vcl $(X2C_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
+	vcl -o$@ $<
+	python3 $(X2C_GUARD) --fix-decoder $(X2_VSM) $(X2D_DECODER_VSM) $@
+	rm -f $<
+
 $(X2G_DECODER_VSM): vu1/general_clip_glow_x2g_decode_pp4.vcl $(X2G_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
 	vcl -o$@ $<
 	python3 $(X2G_GUARD) --fix-decoder $(X2_VSM) $(X2D_DECODER_VSM) $@
@@ -168,6 +235,26 @@ $(X2D_DECODER_VSM): vu1/general_clip_tri_x2d_decode_pp4.vcl $(X2D_GUARD) $(X2_VS
 # the established preprocessing rules and existing VU images stay unchanged.
 .INTERMEDIATE: vu1/general_clip_road_x2r_pp3.vcl vu1/general_clip_road_x2r_pp4.vcl
 vu1/general_clip_road_x2r_pp4.vcl: vu1/general_clip_road_x2r_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
+
+vu1/general_clip_road_x2r_pp1.vcl vu1/general_clip_pool_x2p_pp1.vcl: vu1/ground_clip_shared.i
+vu1/general_clip_pool_x2p_pp1.vcl: vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i
+.INTERMEDIATE: vu1/general_clip_pool_x2p_pp1.vcl vu1/general_clip_pool_x2p_pp3.vcl vu1/general_clip_pool_x2p_pp4.vcl
+vu1/general_clip_pool_x2p_pp4.vcl: vu1/general_clip_pool_x2p_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
+
+vu1/general_clip_billboard_x2b_pp1.vcl: vu1/ground_clip_shared.i vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i
+vu1/general_clip_billboard_x2b_pp1.vcl: vu1/source_billboard_begin.i vu1/source_billboard_end.i
+vu1/general_clip_billboard_x2a_pp1.vcl: vu1/ground_clip_shared.i vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i vu1/source_billboard_begin.i vu1/source_billboard_end.i
+.INTERMEDIATE: vu1/general_clip_billboard_x2a_pp1.vcl vu1/general_clip_billboard_x2a_pp3.vcl vu1/general_clip_billboard_x2a_pp4.vcl
+vu1/general_clip_billboard_x2a_pp4.vcl: vu1/general_clip_billboard_x2a_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
+.INTERMEDIATE: vu1/general_clip_billboard_x2b_pp1.vcl vu1/general_clip_billboard_x2b_pp3.vcl vu1/general_clip_billboard_x2b_pp4.vcl
+vu1/general_clip_billboard_x2b_pp4.vcl: vu1/general_clip_billboard_x2b_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
+
+.INTERMEDIATE: vu1/general_clip_decal_x2e_pp3.vcl vu1/general_clip_decal_x2e_pp4.vcl
+vu1/general_clip_decal_x2e_pp4.vcl: vu1/general_clip_decal_x2e_pp3.vcl
 	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
 
 %_pp4.vcl: %_pp3.vcl

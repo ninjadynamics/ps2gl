@@ -21,8 +21,10 @@ typedef char RoadCenterOffset[offsetof(PGLRoadContext, skyCenterScale) == 52u * 
 typedef char RoadClipOffset[offsetof(PGLRoadContext, clipParams) == 53u * 16u ? 1 : -1];
 typedef char RoadColorOffset[offsetof(PGLRoadContext, color) == 54u * 16u ? 1 : -1];
 typedef char RoadYOffset[offsetof(PGLRoadContext, sourceY) == 55u * 16u ? 1 : -1];
+typedef char RoadGiftagSize[sizeof(tGifTag) == 16u ? 1 : -1];
+typedef char RoadMatrixBytes[sizeof(cpu_mat_44) == 16u * sizeof(float) ? 1 : -1];
 
-#if PGL_CITY_ROADS_VU1
+#if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
 extern "C" {
 void vsmGeneralClipRoadX2R_CodeStart();
 void vsmGeneralClipRoadX2R_CodeEnd();
@@ -36,14 +38,28 @@ void vsmGeneralClipRoadX2R_CodeEnd();
 #endif
 
 CClipRoadX2RRenderer::CClipRoadX2RRenderer()
-    : CLinearRenderer((void*)vsmGeneralClipRoadX2R_CodeStart,
+    : CClipRoadX2RRenderer((void*)vsmGeneralClipRoadX2R_CodeStart,
           (u8*)vsmGeneralClipRoadX2R_CodeEnd - (u8*)vsmGeneralClipRoadX2R_CodeStart,
-          3, 3, 5, 96, "road sky/view, owned compact quads")
+          "road sky/view, owned compact quads", PGL_CLIP_ROAD_X2R_PROP)
+{
+}
+
+CClipRoadX2RRenderer::CClipRoadX2RRenderer(void* code, int codeSize,
+    const char* name, uint64_t prop, unsigned int contextFirstQuad)
+    : CLinearRenderer(code, codeSize, 3, 3, 5, 96, name)
+    , ContextFirstQuad(contextFirstQuad)
+    , HasRoadContext(false)
+    , RoadContextUnchanged(false)
+    , RetainedPacket(NULL)
+    , RetainedBase(NULL)
+    , RetainedEnd(NULL)
+    , RetainedFrame(0)
+    , RetainedContextValid(false)
 {
     // The public direct API admits all ordinary state; custom selection masks
     // it out so stale client-array formats cannot affect this private ABI.
-    Capabilities = PGL_CLIP_ROAD_X2R_PROP;
-    Requirements = PGL_CLIP_ROAD_X2R_PROP;
+    Capabilities = prop;
+    Requirements = prop;
     memset(&RoadContext, 0, sizeof(RoadContext));
 }
 
@@ -63,10 +79,54 @@ void CClipRoadX2RRenderer::Register()
         ~(pglU64_t)0xffffffff, PGL_DONT_MERGE_CONTIGUOUS);
 }
 
-void CClipRoadX2RRenderer::SetRoadContext(const PGLRoadContext& context)
+bool CClipRoadX2RRenderer::MatchesRoadContext(const PGLRoadContext& context) const
 {
-    memcpy(&RoadContext, &context, sizeof(RoadContext));
+    return MatchesSourceContext(&context);
+}
+
+bool CClipRoadX2RRenderer::MatchesSourceContext(const void* context) const
+{
+#if PGL_ROAD_CONTEXT_REUSE
+    const unsigned int offset = ContextFirstQuad * 16u;
+    return HasRoadContext && memcmp((const char*)&RoadContext + offset,
+        context, sizeof(RoadContext) - offset) == 0;
+#else
+    (void)context;
+    return false;
+#endif
+}
+
+void CClipRoadX2RRenderer::SetRoadContext(const PGLRoadContext& context, bool unchanged)
+{
+    SetSourceContext(&context, unchanged);
+}
+
+void CClipRoadX2RRenderer::SetSourceContext(const void* context, bool unchanged)
+{
+    RoadContextUnchanged = unchanged;
+    const unsigned int offset = ContextFirstQuad * 16u;
+    if (!unchanged) memcpy((char*)&RoadContext + offset,
+        context, sizeof(RoadContext) - offset);
+    HasRoadContext = true;
     pGLContext->SetRendererContextChanged(true);
+}
+
+void CClipRoadX2RRenderer::GetRasterContextKey(uint32_t* key)
+{
+    CImmDrawContext& draw = pGLContext->GetImmDrawContext();
+    const cpu_mat_44& transform = draw.GetVertexXform();
+    // Object-byte copies preserve signed zero and avoid float/integer aliasing.
+    memcpy(key, &transform, 16u * sizeof(float));
+    const cpu_vec_xyz& scales = draw.GetContextClipScales();
+    const float scalars[5] = { draw.GetContextDepthScale() + draw.GetDepthOffset(),
+        scales.x, scales.y, scales.z, draw.GetClipNear() };
+    memcpy(key + 16, scalars, sizeof(scalars));
+    const float cull = (float)draw.GetCullFaceDir();
+    memcpy(key + 21, &cull, sizeof(cull));
+    key[21] |= (unsigned int)draw.GetDoCullFace() << 5;
+    key[22] = draw.GetDoClipping() ? 1u : 0u;
+    const tGifTag tag = BuildGiftag(GL_TRIANGLES);
+    memcpy(key + 23, &tag, sizeof(tag));
 }
 
 void CClipRoadX2RRenderer::Load()
@@ -75,6 +135,7 @@ void CClipRoadX2RRenderer::Load()
     // context until InitContext has installed every road and standard field.
     pglInvalidateX2BasePrefix();
     pglInvalidateUnlitContextDelta();
+    RetainedContextValid = false;
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     packet.Cnt();
     packet.Flush();
@@ -103,6 +164,24 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     pglInvalidateUnlitContextDelta();
     CImmDrawContext& draw = pGLContext->GetImmDrawContext();
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+#if PGL_ROAD_CONTEXT_REUSE
+    uint32_t rasterKey[27];
+    GetRasterContextKey(rasterKey);
+    // This is an ordered-chain proof, not a cross-frame VU RAM cache. No
+    // intervening packet command may have overwritten context or VIF state.
+    // A material bind can change GS settings without changing these inputs;
+    // SyncGsContext still fences and sends that material after this returns.
+    if (RetainedContextValid && RoadContextUnchanged
+        && RetainedPacket == &packet && RetainedBase == packet.GetBase()
+        && RetainedEnd == packet.GetNextPtr()
+        && RetainedFrame == pGLContext->GetFrameNumber()
+        && &pGLContext->GetImmGeomManager().GetRendererManager().GetCurRenderer() == this
+        && memcmp(RetainedRaster, rasterKey, sizeof(rasterKey)) == 0) {
+        CacheRendererState();
+        pglCountSubmission(PGL_SUBMIT_DELTA_CONTEXTS);
+        return;
+    }
+#endif
 #if PGL_SUBMISSION_METRICS
     const unsigned int start = packet.GetByteLength();
 #endif
@@ -118,9 +197,16 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     unsigned int cullWord;
     memcpy(&cullWord, &cull, sizeof(cullWord));
     packet += cullWord | ((unsigned int)draw.GetDoCullFace() << 5);
-    // q1..56 are one contiguous, owned float copy after q0. No REF to the
-    // renderer's mutable RoadContext is allowed.
-    packet.Add((const float*)&RoadContext, sizeof(RoadContext) / sizeof(float));
+    // Roads/pools own q1..56. Billboards only read q49..56, leaving the
+    // unused sky-plane slots untouched. No REF to mutable renderer storage.
+    if (ContextFirstQuad) {
+        packet.CloseUnpack();
+        packet.Pad96();
+        packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+            ContextFirstQuad + 1u, Packet::kSingleBuff);
+    }
+    packet.Add((const float*)&RoadContext + ContextFirstQuad * 4u,
+        (56u - ContextFirstQuad) * 4u);
     packet.CloseUnpack();
 
     packet.Pad96();
@@ -159,6 +245,10 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     packet.Offset(kDoubleBufOffset);
     packet.CloseTag();
     CacheRendererState();
+#if PGL_ROAD_CONTEXT_REUSE
+    memcpy(RetainedRaster, rasterKey, sizeof(rasterKey));
+    RetainedContextValid = true;
+#endif
     pglCountSubmission(PGL_SUBMIT_FULL_CONTEXTS);
 #if PGL_SUBMISSION_METRICS
     pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - start);
@@ -167,32 +257,63 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
 
 void CClipRoadX2RRenderer::DrawRoadQuads(const PGLRoadQuad* quads, int count)
 {
+    DrawCompactGroundQuads((const float*)quads, count, 12, 32);
+}
+
+void CClipRoadX2RRenderer::DrawCompactGroundQuads(const float* quads, int count,
+    int floatsPerQuad, int quadsPerBuffer)
+{
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+#if !PGL_ROAD_HEADER_COMPACT
     static const float independentAdc[16] = { 1024.0f };
+#endif
     pglCountSubmission(PGL_SUBMIT_BLOCKS);
+#if PGL_ROAD_HEADER_COMPACT
+    // A whole material already fits the normal <=65000q frame chain. One
+    // CNT can therefore own all activations; MSCNT and alternating TOP halves
+    // retain exactly the same VIF/VU producer-consumer synchronization.
+    packet.Cnt();
+    packet.Stcycl(1, 1);
+#endif
     while (count > 0) {
-        const int batch = count > 32 ? 32 : count;
+        const int batch = count > quadsPerBuffer ? quadsPerBuffer : count;
+#if !PGL_ROAD_HEADER_COMPACT
         packet.Cnt();
         packet.Stcycl(1, 1);
+#endif
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
-        packet.Add((const float*)quads, (unsigned int)batch * 12u);
+        packet.Add(quads, (unsigned int)batch * (unsigned int)floatsPerQuad);
         packet.CloseUnpack();
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kDoubleBuff);
         packet += batch;
         packet += 0;
         packet += (uint64_t)0;
+#if !PGL_ROAD_HEADER_COMPACT
         packet.Add(independentAdc, 16);
+#endif
         packet.CloseUnpack();
         packet.Mscnt();
         packet.Pad128();
+#if !PGL_ROAD_HEADER_COMPACT
         packet.CloseTag();
+#endif
         pglCountSubmission(PGL_SUBMIT_BUFFERS);
-        pglCountSubmission(PGL_SUBMIT_EDGE_BYTES, (unsigned int)batch * sizeof(PGLRoadQuad));
-        quads += batch;
+        pglCountSubmission(PGL_SUBMIT_EDGE_BYTES,
+            (unsigned int)batch * (unsigned int)floatsPerQuad * sizeof(float));
+        quads += batch * floatsPerQuad;
         count -= batch;
     }
+#if PGL_ROAD_HEADER_COMPACT
+    packet.CloseTag();
+#endif
+#if PGL_ROAD_CONTEXT_REUSE
+    RetainedPacket = &packet;
+    RetainedBase = packet.GetBase();
+    RetainedEnd = packet.GetNextPtr();
+    RetainedFrame = pGLContext->GetFrameNumber();
+#endif
 }
 
 void CClipRoadX2RRenderer::DrawLinearArrays(CGeometryBlock& block)
@@ -200,7 +321,7 @@ void CClipRoadX2RRenderer::DrawLinearArrays(CGeometryBlock& block)
     (void)block;
     // The only supported entrance has already admitted and copied the whole
     // material. A generic array call cannot supply the private context ABI.
-    fprintf(stderr, "ps2gl: road renderer requires pglDrawRoadQuads\n");
+    fprintf(stderr, "ps2gl: compact renderer requires its owned descriptor API\n");
     abort();
 }
 #endif
@@ -209,5 +330,15 @@ extern "C" void pglRegisterRoadRenderer(void)
 {
 #if PGL_CITY_ROADS_VU1
     if (pGLContext) CClipRoadX2RRenderer::Register();
+#endif
+}
+
+extern "C" unsigned int pglGetRoadSubmissionOptions(void)
+{
+#if PGL_CITY_ROADS_VU1
+    return (PGL_ROAD_CONTEXT_REUSE ? 1u : 0u)
+        | (PGL_ROAD_HEADER_COMPACT ? 2u : 0u);
+#else
+    return 0;
 #endif
 }

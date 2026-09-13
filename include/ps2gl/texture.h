@@ -59,6 +59,12 @@ public:
 
     CMMTexture& GetCurTexture() const { return *CurTexture; }
 
+    // Direct multi-material admission must not create or bind a missing name.
+    CMMTexture* FindNamedTexture(GLuint tex) const
+    {
+        return tex > 0 && tex < (GLuint)NumTexNames ? TexNames[tex] : NULL;
+    }
+
     CMMTexture& GetNamedTexture(GLuint tex) const
     {
         mErrorIf(TexNames[tex] == NULL, "Trying to access a null texture");
@@ -148,6 +154,11 @@ public:
     // separate owner. Reuse only ordinary manager-owned immutable texels.
     bool HasManagedResidentImage() const { return XferImage && pImageMem && IsResident; }
     bool TouchImageIfResident() { return HasManagedResidentImage() && pImageMem->IsAllocated(); }
+
+    // Match LoadIfDirty's no-upload case without placing an upload ahead of
+    // its required path-1 fence. Externally managed images make that method
+    // a no-op; ordinary images retain their original residency/LRU touch.
+    bool TouchImageIfClean() { return !XferImage || TouchImageIfResident(); }
 
     // the following Load methods will check to see if a texture is resident and
     // transfer it if necessary.  The Use methods invoke the corresponding Load but

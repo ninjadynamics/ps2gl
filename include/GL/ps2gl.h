@@ -27,6 +27,15 @@
 #error "PGL_UNLIT_DELTA_SPECIALIZE must be 0 or 1"
 #endif
 
+/* Ordered, already guard-band-safe colored triangle arrays. Uses the existing
+ * unlit textured renderer; the HUD keeps its stricter affine admission. */
+#ifndef PGL_COLORED_TRI_ARRAYS
+#define PGL_COLORED_TRI_ARRAYS 1
+#endif
+#if PGL_COLORED_TRI_ARRAYS != 0 && PGL_COLORED_TRI_ARRAYS != 1
+#error "PGL_COLORED_TRI_ARRAYS must be 0 or 1"
+#endif
+
 /* Optional scoped CPU submission counters; no clocks, waits or per-vertex
  * hooks. The application explicitly samples a small subset of frames. */
 #ifndef PGL_SUBMISSION_METRICS
@@ -56,9 +65,77 @@
 #error "PGL_X2_SINGLE_MATERIAL_BATCH must be 0 or 1"
 #endif
 
-/* Independent compact road sky/view clipping program. */
+/* Independent compact coplanar decal clipping/depth program. */
+#ifndef PGL_CITY_ENTRANCES_VU1
+#define PGL_CITY_ENTRANCES_VU1 1
+#endif
+#if PGL_CITY_ENTRANCES_VU1 != 0 && PGL_CITY_ENTRANCES_VU1 != 1
+#error "PGL_CITY_ENTRANCES_VU1 must be 0 or 1"
+#endif
+/* The glow sweep references the base sweep's owned frame-packet descriptors. */
+#ifndef PGL_DECAL_PAYLOAD_REUSE
+#define PGL_DECAL_PAYLOAD_REUSE 1
+#endif
+#if PGL_DECAL_PAYLOAD_REUSE != 0 && PGL_DECAL_PAYLOAD_REUSE != 1
+#error "PGL_DECAL_PAYLOAD_REUSE must be 0 or 1"
+#endif
+
+/* Independent source-view clipping of compact center/axis cards. */
+#ifndef PGL_CITY_BILLBOARD_CORNER_ALPHA
+#define PGL_CITY_BILLBOARD_CORNER_ALPHA 1
+#endif
+#if PGL_CITY_BILLBOARD_CORNER_ALPHA != 0 && PGL_CITY_BILLBOARD_CORNER_ALPHA != 1
+#error "PGL_CITY_BILLBOARD_CORNER_ALPHA must be 0 or 1"
+#endif
+#ifndef PGL_CITY_BILLBOARDS_VU1
+#define PGL_CITY_BILLBOARDS_VU1 1
+#endif
+/* Exact float wall REF payloads and one prefix/count/activation CNT. */
+#ifndef PGL_WALL_PACKET_DIRECT
+#define PGL_WALL_PACKET_DIRECT 1
+#endif
+/* Fixed CTexEnv context-2 addresses; all GS writes and fences remain. */
+#ifndef PGL_X2_PREFIX_SETUP
+#define PGL_X2_PREFIX_SETUP 1
+#endif
+#if PGL_X2_PREFIX_SETUP != 0 && PGL_X2_PREFIX_SETUP != 1
+#error "PGL_X2_PREFIX_SETUP must be 0 or 1"
+#endif
+/* Reuse an identical, proven resident context-2 window state in packet order. */
+#ifndef PGL_X2_WINDOW_CONTEXT_REUSE
+#define PGL_X2_WINDOW_CONTEXT_REUSE 1
+#endif
+#if PGL_X2_WINDOW_CONTEXT_REUSE != 0 && PGL_X2_WINDOW_CONTEXT_REUSE != 1
+#error "PGL_X2_WINDOW_CONTEXT_REUSE must be 0 or 1"
+#endif
+#if (PGL_CITY_BILLBOARDS_VU1 != 0 && PGL_CITY_BILLBOARDS_VU1 != 1) || \
+    (PGL_WALL_PACKET_DIRECT != 0 && PGL_WALL_PACKET_DIRECT != 1)
+#error "PGL billboard/wall packet switches must be 0 or 1"
+#endif
+#ifndef PGL_CITY_POOLS_VU1
+#define PGL_CITY_POOLS_VU1 1
+#endif
+#ifndef PGL_WALL_COLOR_COMPACT
+#define PGL_WALL_COLOR_COMPACT 1
+#endif
+#if (PGL_CITY_POOLS_VU1 != 0 && PGL_CITY_POOLS_VU1 != 1) || \
+    (PGL_WALL_COLOR_COMPACT != 0 && PGL_WALL_COLOR_COMPACT != 1)
+#error "PGL pool/wall comparison switches must be 0 or 1"
+#endif
 #ifndef PGL_CITY_ROADS_VU1
 #define PGL_CITY_ROADS_VU1 1
+#endif
+/* Retain the identical road VU context only across an uninterrupted packet. */
+#ifndef PGL_ROAD_CONTEXT_REUSE
+#define PGL_ROAD_CONTEXT_REUSE 1
+#endif
+/* X2R consumes only the count qword of the generic five-qword batch header. */
+#ifndef PGL_ROAD_HEADER_COMPACT
+#define PGL_ROAD_HEADER_COMPACT 1
+#endif
+#if (PGL_ROAD_CONTEXT_REUSE != 0 && PGL_ROAD_CONTEXT_REUSE != 1) || \
+    (PGL_ROAD_HEADER_COMPACT != 0 && PGL_ROAD_HEADER_COMPACT != 1)
+#error "PGL road context/header switches must be 0 or 1"
 #endif
 #if PGL_CITY_ROADS_VU1 != 0 && PGL_CITY_ROADS_VU1 != 1
 #error "PGL_CITY_ROADS_VU1 must be 0 or 1"
@@ -124,6 +201,9 @@ extern void pglInvalidateX2BasePrefix(void);
  * modulo unsigned wrap. Read has no rendering side effects; either output may
  * be NULL. Separate from PGL_SUBMIT_COUNT to preserve its existing array ABI. */
 extern void pglGetX2BaseReuseStats(unsigned int* uploads, unsigned int* bytes);
+/* Cumulative window context opportunities; unsigned subtraction handles wrap. */
+extern void pglGetWindowContextStats(unsigned int* attempts, unsigned int* reused,
+    unsigned int* full, unsigned int* globalPins);
 /* Draw-environment pointer bookkeeping diagnostics, read without rendering
  * side effects. lastFrame/highWater count records at completed swaps;
  * over100Frames/growths are cumulative unsigned counters (subtract modulo
@@ -166,7 +246,8 @@ extern GLboolean pglUsesCachedImmediateGeometry(void);
  * bit26=caller-owned immutable uniform quad arrays,
  * bit27=identical X2-family base microprogram prefix reuse,
  * bit28=bounded raw X2 single-material 30-vertex input batches,
- * bit29=owned compact road sky/view clipping packets.
+ * bit29=owned compact road sky/view clipping packets,
+ * bit30=owned complete base/glow decal pair packets.
  * Query once per report, not per vertex. */
 extern unsigned int pglGetContextOptimizationFlags(void);
 /* Cumulative unsigned counters within one explicit, non-nestable sample.
@@ -419,6 +500,20 @@ void pglSetClipNear(float near_z);
   GLboolean pglTryDrawColoredHud2DArrays(const GLfloat* vertices,
       const GLfloat* texcoords, const GLfloat* colors, GLsizei vertexCount);
 
+  /* Admission for ordered textured triangles with finite transforms/material,
+     fog/lighting/color-material/culling/clipping/AA OFF and polygon fill.
+     Unlike the HUD route, perspective is permitted: caller proves positive W
+     and GS-safe coordinates for every triangle using its existing guard.
+     Uniform RGBA per triangle must use the original glColor4ub float values.
+     The borrowed draw requires a positive multiple of three, repeats cheap
+     state checks, and preserves client arrays/current attributes. No partial
+     consumption on FALSE. Arrays survive normal frame completion; drain
+     construction before changing live texture/state. */
+  GLboolean pglCanDrawColoredTriangles(void);
+  GLboolean pglUsesColoredTriArrays(void);
+  GLboolean pglTryDrawColoredTriangleArrays(const GLfloat* vertices,
+      const GLfloat* texcoords, const GLfloat* colors, GLsizei vertexCount);
+
 /* P3 DESCRIPTOR variant of the x2 renderer: walls travel as compact
    parametric descriptors and VU1 reconstructs the vertices, then the same
    dual-context wall+window compound kick runs. Contract per descriptor
@@ -460,6 +555,20 @@ void pglClipX2SetWindowTexture(GLuint texId, float r, float g, float b, float a)
 void pglRegisterClipTriX2QRenderer(void);
 void pglClipX2QSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 
+/* X2Q geometry with exactly shared bottom/top RGB and edge fog. COLOR uses
+   glColorPointer(4,GL_FLOAT,0,colors) but packs TWO qwords per wall:
+   [bottomRGB,fogA] [topRGB,fogB]. A=(bottom,fogA), B=(bottom,fogB),
+   C=(top,fogB), D=(top,fogA). The decoder only copies fields, then enters
+   the same X2 body. GEO/draw counts remain four elements per wall; first
+   must be a multiple of four. Both source arrays stay DMA-live. */
+#define PGL_CLIP_TRIANGLES_X2C ((GLenum)0x80000000 | 9)
+#define PGL_CLIP_TRI_X2C_PROP ((pglU64_t)1 << 41)
+void pglRegisterClipTriX2CRenderer(void);
+void pglClipX2CSetWindowTexture(GLuint texId, float r, float g, float b, float a);
+/* bit0 registered X2C colors, bit1 direct float X2Q/C packet specialization,
+   bit2 fixed context-2 texture-prefix preparation, bit3 ordered window reuse. */
+unsigned int pglGetWallSubmissionOptions(void);
+
 /* Compact camera-facing glow quads, independent of the paired-wall state.
    Register once after pglInit; call SetAxes with the source-space U/V axes.
    GEO glVertexPointer(4,GL_FLOAT): [center.xyz,half][u0,v0,u1,v1].
@@ -499,9 +608,75 @@ typedef struct PGLRoadQuad {
     GLfloat v[4];  /* v1, 0, 0, 0 */
 } PGLRoadQuad;
 
+/* Pool sky clipping uses the road coordinate/plane context. Unlike roads,
+   pools then clip the complete polygon against the source SH view planes
+   BEFORE fan triangulation; VU projects that already-clipped fan directly.
+   sourceY is common to the whole batch, color in the context is reserved
+   (set all four lanes to 0). Per-quad UV and color are explicit float values. */
+typedef PGLRoadContext PGLPoolContext;
+typedef struct PGLPoolQuad {
+    GLfloat xz[2][4]; /* Ax,Az,Bx,Bz; Cx,Cz,Dx,Dz */
+    GLfloat uv[4];   /* u0,v0,u1,v1: A00 B10 C11 D01 */
+    GLfloat color[4];
+} PGLPoolQuad;
+#define PGL_CLIP_POOL_QUADS_X2P ((GLenum)0x80000000 | 8)
+#define PGL_CLIP_POOL_X2P_PROP ((pglU64_t)1 << 40)
+void pglRegisterPoolRenderer(void);
+unsigned int pglGetPoolSubmissionOptions(void);
+/* Same identity-modelview, finite projection and unlit state admission as
+   pglDrawRoadQuads; retains caller texture, blend, depth and alpha-test state.
+   PGL_CLIPPING must be OFF: this program performs source-view clipping only.
+   No pending geometry allowed. FALSE publishes nothing. TRUE owns all source
+   bytes in the normal frame packet. Inputs cannot alias future packet writes,
+   including cached/uncached aliases. No retained reference to caller storage.
+   Caller supplies finite, haze-free pools on the exact common floor plane. */
+GLboolean pglDrawPoolQuads(const PGLPoolContext* context,
+    const PGLPoolQuad* quads, GLsizei count);
+
+/* q49..56: same source-eye/view contract as pools, without sky planes. */
+typedef struct PGLBillboardContext {
+    GLfloat right[4], up[4], forward[4], eye[4];
+    GLfloat projection[4]; /* 0,0,px,py */
+    GLfloat clip[4];       /* near,NDC,epsilon,0 */
+    GLfloat axisU[4], axisV[4];
+} PGLBillboardContext;
+typedef struct PGLBillboardQuad {
+    GLfloat centerHalf[4];
+    GLfloat uv[4];
+    GLfloat color[4];
+} PGLBillboardQuad;
+/* Same authored corners/UV/RGB; final source alpha is supplied per corner
+   before clipping, preserving EE radial haze and its byte/LUT rounding. */
+typedef struct PGLBillboardAlphaQuad {
+    GLfloat centerHalf[4];
+    GLfloat uv[4];
+    GLfloat color[4];
+    GLfloat alpha[4]; /* A, B, C, D */
+} PGLBillboardAlphaQuad;
+#define PGL_CLIP_BILLBOARD_QUADS_X2A ((GLenum)0x80000000 | 11)
+#define PGL_CLIP_BILLBOARD_X2A_PROP ((pglU64_t)1 << 43)
+#define PGL_CLIP_BILLBOARD_QUADS_X2B ((GLenum)0x80000000 | 10)
+#define PGL_CLIP_BILLBOARD_X2B_PROP ((pglU64_t)1 << 42)
+void pglRegisterBillboardRenderer(void);
+/* bit0 uniform-alpha X2B, bit1 independent per-corner-alpha X2A. */
+unsigned int pglGetBillboardSubmissionOptions(void);
+/* Same transactional source ownership/state contract as pglDrawPoolQuads.
+   Caller proves finite authored corners and that neither original triangle
+   needs source sky-floor clipping. VU reconstructs ((center +/- U*half)
+   +/- V*half), then performs source-view clipping before triangulation.
+   Haze/fog and PGL_CLIPPING must be OFF; near/side crossings are supported. */
+GLboolean pglDrawBillboardQuads(const PGLBillboardContext* context,
+    const PGLBillboardQuad* quads, GLsizei count);
+/* Same ownership/admission as above; per-corner final source alpha replaces
+   color.w before clipping. Source radial haze stays with the caller. */
+GLboolean pglDrawBillboardAlphaQuads(const PGLBillboardContext* context,
+    const PGLBillboardAlphaQuad* quads, GLsizei count);
+
 #define PGL_CLIP_ROAD_QUADS_X2R ((GLenum)0x80000000 | 6)
 #define PGL_CLIP_ROAD_X2R_PROP ((pglU64_t)1 << 38)
 void pglRegisterRoadRenderer(void);
+/* Linked library choices: bit0 retained context, bit1 compact batch headers. */
+unsigned int pglGetRoadSubmissionOptions(void);
 /* Count is complete quads in one material, split internally into <=32.
    Call in the normal frame chain, outside Begin/End/display lists, after
    flushing pending geometry. Requires identity modelview, finite context,
@@ -517,6 +692,54 @@ void pglRegisterRoadRenderer(void);
    caller-owned. No generic glDrawArrays call uses this private primitive. */
 GLboolean pglDrawRoadQuads(const PGLRoadContext* context,
     const PGLRoadQuad* quads, GLsizei count);
+
+/* Entrance decal context occupies absolute VU q1..8, in this exact order.
+   The caller preflights finite source topology, clipping and biased-depth
+   headroom before publication. Matrices retain the accepted EE product order. */
+typedef struct PGLDecalContext {
+    GLfloat transform[4][4]; /* column-major GS-scaled projection * view */
+    GLfloat raster[4];      /* raster X, Y, Z, source near */
+    GLfloat inverse[4];     /* 1/rasterX, 1/rasterY, 2/maxDepth, maxDepth */
+    GLfloat depth[4];       /* reciprocal-depth coefficient, base/glow bias, pass */
+    GLfloat clip[4];        /* source clip guard X/Y, 0, 0 */
+} PGLDecalContext;
+
+/* Exact vertical rectangle ABC/ACD; no midpoint reconstruction. Both colors
+   and glow alpha are constant along each vertical edge. Z/W and per-source-
+   triangle maxima are supplied by the admission computation, not estimated.
+   The descriptor is nine qwords (144 bytes), copied inline for each pass. */
+typedef struct PGLDecalQuad {
+    GLfloat geometry[3][4]; /* Ax/Az/Bx/Bz; ylo/yhi/u0/u1; v0/v1/glowA/glowB */
+    GLfloat colors[2][4];   /* normalized RGBA at A/D, B/C; A is base fog keep */
+    GLfloat zw[4][2];       /* exact homogeneous clip Z/W at A, B, C, D */
+    GLfloat depth[2][4];    /* ABC/ACD allowance, sumAbsZ, sumAbsW, skip(0/1) */
+} PGLDecalQuad;
+
+#define PGL_CLIP_DECAL_QUADS_X2E ((GLenum)0x80000000 | 7)
+#define PGL_CLIP_DECAL_X2E_PROP ((pglU64_t)1 << 39)
+void pglRegisterDecalRenderer(void);
+/* Linked effective options: bit 0 = owned base/glow payload reuse. */
+unsigned int pglGetDecalSubmissionOptions(void);
+/* Submit the whole base sweep followed by the optional whole glow sweep.
+   Call after draining pending geometry, in the normal frame chain, outside
+   Begin/End/display lists. Requires identity projection/modelview, texture ON,
+   lighting/culling/edge-AA/clipping/alpha-test/blending OFF, FILL, depth LEQUAL
+   with writes OFF, depth offset zero and identity clip-near one. Base fog may
+   be enabled. COLOR_MATERIAL, client-array descriptions and current attributes
+   are ignored and preserved. Both named textures must already exist, have
+   dimensions 1..1024 and use PSM32/24/16/16s/8/8h; 8/8h need an owned palette.
+   The caller owns finite descriptors, source near/headroom admission and the
+   exact rectangle/attribute contract above; this API does not rescan quads.
+   FALSE publishes nothing and changes no GL state or cursor, apart from
+   materializing the pure vertex-transform cache. Inputs may not overlap the
+   reserved future frame-packet write range, including its uncached aliases.
+   TRUE owns all descriptor/context bytes before return; the glow pass may
+   reference the base pass's owned copy. It leaves no pending geometry;
+   the last material remains bound. With glow, fog is OFF and SRC_ALPHA/ONE
+   blending ON; without glow, caller's base fog/blend state remains. The caller
+   owns the normal pass teardown. No fallback is allowed after a TRUE result. */
+GLboolean pglDrawDecalQuads(const PGLDecalContext* context,
+    const PGLDecalQuad* quads, GLsizei count, GLuint baseTexture, GLuint glowTexture);
 
 // custom state
 

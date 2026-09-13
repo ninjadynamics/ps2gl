@@ -10,6 +10,7 @@
 #ifndef clip_renderer_h
 #define clip_renderer_h
 
+#include "GL/ps2gl.h"
 #include "ps2gl/linear_renderer.h"
 #include "ps2gl/renderer.h"
 
@@ -45,10 +46,13 @@ protected:
     CMMTexture* WinTex;
     float WinColor[4]; // 0..1 floats as passed to pglClipX2SetWindowTexture
 
-    // Context-2 program status. GS context 2 is NOT ours alone: glClear draws
+    // Context-2 pair status. GS context 2 is NOT ours alone: glClear draws
     // through a kContext2 CDrawEnv + CSprite (clear.cpp) and stomps it every
     // frame. SetWindowTexture() disarms; the first BuildPrefixes after it
-    // re-programs ctx2 down the chain. Correct because the game re-calls
+    // re-programs ctx2 or proves an identical preceding program in this chain.
+    // The independent reuse gate tracks actual writes, including global
+    // TEXA / TEST_1, rather than treating a same-texture bind as ownership.
+    // Correct because the game re-calls
     // pglClipX2SetWindowTexture for every x2 pass and nothing clears
     // mid-pass; the live FRAME/ZBUF/XYOFFSET/SCISSOR this mirrors are stable
     // within a pass (layout switches happen between frames).
@@ -75,6 +79,11 @@ protected:
     // Same transfer-count sizing rule as Pfx (packet.Add(Ctx2, 16)).
     uint128_t Ctx2[16] __attribute__((aligned(16)));
 
+    void BuildWindowContext2Settings();
+#if PGL_X2_WINDOW_CONTEXT_REUSE
+    bool TryReuseWindowContext(CVifSCDmaPacket& packet);
+    void RememberWindowContext(const CVifSCDmaPacket& packet);
+#endif
     void BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block);
     void XferPrefixes(CVifSCDmaPacket& packet);
     void DrawBlockX2(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
@@ -109,16 +118,18 @@ class CClipTriX2DRenderer : public CClipTriX2Renderer {
     int DescriptorElements;
     int DescriptorColorWords;
     int DescriptorColorOffset;
+    int DescriptorColorDivisor;
 
     void DrawBlockX2D(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxElemsPerBuffer);
-    void FinishBufferX2D(CVifSCDmaPacket& packet, int numElems);
+    void FinishBufferX2D(CVifSCDmaPacket& packet, int numElems, bool directPacket);
 
 protected:
     // Shared upload/activation machinery; the legacy public constructor
     // retains its three-element byte-color ABI. Exact-corner descriptors use
     // four elements and float colors through the separate X2Q primitive.
     CClipTriX2DRenderer(const void* decoder, int decoderSize,
-        const char* name, uint64_t prop, int elements, int colorWords);
+        const char* name, uint64_t prop, int elements, int colorWords,
+        int colorDivisor = 1);
 
 public:
     CClipTriX2DRenderer();

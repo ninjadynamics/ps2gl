@@ -43,7 +43,8 @@ extern "C" unsigned int pglGetContextOptimizationFlags(void)
         | (1 << 24) | (1 << 25)
         | (1 << 26) | (PGL_X2_BASE_PREFIX_REUSE << 27)
         | (PGL_X2_SINGLE_MATERIAL_BATCH << 28)
-        | (PGL_CITY_ROADS_VU1 << 29);
+        | (PGL_CITY_ROADS_VU1 << 29)
+        | (PGL_CITY_ENTRANCES_VU1 << 30);
 }
 
 // A proof about the last context written to this ordered VIF chain, not a

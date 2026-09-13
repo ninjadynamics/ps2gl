@@ -560,6 +560,7 @@ public:
         // if the packet was cached, call() it from the vif1 dma chain
         if (IsCached) {
             pglInvalidateX2BasePrefix();
+            GS::CTexEnv::InvalidateTextureSync();
             pGLContext->GetVif1Packet().Call(*RenderPacket);
             pGLContext->GetVif1Packet().Pad128();
             pGLContext->GetVif1Packet().CloseTag();
@@ -660,6 +661,7 @@ public:
 
         if (!dontCache) {
             pglInvalidateX2BasePrefix();
+            GS::CTexEnv::InvalidateTextureSync();
             pGLContext->GetVif1Packet().Call(*RenderPacket);
             pGLContext->GetVif1Packet().Pad128();
             pGLContext->GetVif1Packet().CloseTag();

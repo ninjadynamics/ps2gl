@@ -30,6 +30,10 @@ class CRenderer;
 class CUnlitTexTriRenderer;
 class CClipTriX2Renderer;
 class CClipRoadX2RRenderer;
+class CClipPoolX2PRenderer;
+class CClipBillboardX2BRenderer;
+class CClipBillboardAlphaX2ARenderer;
+class CClipDecalX2ERenderer;
 
 typedef enum { kDirectional,
     kPoint,
@@ -57,6 +61,10 @@ class CRendererManager {
     const tRenderer *CurrentRenderer, *NewRenderer;
     bool ColoredHudRendererRegistered;
     CClipRoadX2RRenderer* RoadRenderer;
+    CClipPoolX2PRenderer* PoolRenderer;
+    CClipBillboardX2BRenderer* BillboardRenderer;
+    CClipBillboardAlphaX2ARenderer* BillboardAlphaRenderer;
+    CClipDecalX2ERenderer* DecalRenderer;
 
     void RegisterDefaultRenderer(CRenderer* renderer);
 
@@ -71,6 +79,38 @@ public:
     bool CanSelectRoadRenderer() const
     {
         return RoadRenderer != NULL
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
+    void RegisterPoolRenderer(CClipPoolX2PRenderer* renderer);
+    CClipPoolX2PRenderer* GetPoolRenderer() const { return PoolRenderer; }
+    bool CanSelectPoolRenderer() const
+    {
+        return PoolRenderer != NULL
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
+    void RegisterDecalRenderer(CClipDecalX2ERenderer* renderer);
+    void RegisterBillboardRenderer(CClipBillboardX2BRenderer* renderer);
+    void RegisterBillboardAlphaRenderer(CClipBillboardAlphaX2ARenderer* renderer);
+    CClipBillboardAlphaX2ARenderer* GetBillboardAlphaRenderer() const { return BillboardAlphaRenderer; }
+    bool CanSelectBillboardAlphaRenderer() const
+    {
+        return BillboardAlphaRenderer != NULL
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
+    CClipBillboardX2BRenderer* GetBillboardRenderer() const { return BillboardRenderer; }
+    bool CanSelectBillboardRenderer() const
+    {
+        return BillboardRenderer != NULL
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
+    CClipDecalX2ERenderer* GetDecalRenderer() const { return DecalRenderer; }
+    bool CanSelectDecalRenderer() const
+    {
+        return DecalRenderer != NULL
             && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
                 & ~(uint64_t)0xffffffff) == 0;
     }

@@ -18,6 +18,9 @@
 #include "ps2gl/unlit_renderer.h"
 #include "ps2gl/clip_renderer.h"
 #include "ps2gl/x2r_renderer.h"
+#include "ps2gl/x2p_renderer.h"
+#include "ps2gl/x2b_renderer.h"
+#include "ps2gl/x2e_renderer.h"
 
 #include "vu1_mem_linear.h"
 #include "vu1renderers.h"
@@ -39,6 +42,10 @@ CRendererManager::CRendererManager(CGLContext& context)
     , NewRenderer(NULL)
     , ColoredHudRendererRegistered(false)
     , RoadRenderer(NULL)
+    , PoolRenderer(NULL)
+    , BillboardRenderer(NULL)
+    , BillboardAlphaRenderer(NULL)
+    , DecalRenderer(NULL)
 {
     // Zero the WHOLE bitfield first: the field-by-field init below never
     // touched `unused:12`, which therefore carried whatever heap garbage the
@@ -395,6 +402,66 @@ void CRendererManager::RegisterRoadRenderer(CClipRoadX2RRenderer* renderer)
         }
     }
     RoadRenderer = NULL;
+}
+
+void CRendererManager::RegisterPoolRenderer(CClipPoolX2PRenderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    const uint64_t reqs = PGL_CLIP_POOL_X2P_PROP;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            PoolRenderer = entry.renderer == renderer ? renderer : NULL;
+            return;
+        }
+    }
+    PoolRenderer = NULL;
+}
+
+void CRendererManager::RegisterBillboardRenderer(CClipBillboardX2BRenderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    const uint64_t reqs = PGL_CLIP_BILLBOARD_X2B_PROP;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            BillboardRenderer = entry.renderer == renderer ? renderer : NULL;
+            return;
+        }
+    }
+    BillboardRenderer = NULL;
+}
+
+void CRendererManager::RegisterBillboardAlphaRenderer(CClipBillboardAlphaX2ARenderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    const uint64_t reqs = PGL_CLIP_BILLBOARD_X2A_PROP;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            BillboardAlphaRenderer = entry.renderer == renderer ? renderer : NULL;
+            return;
+        }
+    }
+    BillboardAlphaRenderer = NULL;
+}
+
+void CRendererManager::RegisterDecalRenderer(CClipDecalX2ERenderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    const uint64_t reqs = PGL_CLIP_DECAL_X2E_PROP;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            DecalRenderer = entry.renderer == renderer ? renderer : NULL;
+            return;
+        }
+    }
+    DecalRenderer = NULL;
 }
 
 // state updates

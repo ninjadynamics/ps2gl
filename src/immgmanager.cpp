@@ -25,6 +25,9 @@
 #include "ps2gl/renderer.h"
 #include "ps2gl/texture.h"
 #include "ps2gl/x2r_renderer.h"
+#include "ps2gl/x2p_renderer.h"
+#include "ps2gl/x2b_renderer.h"
+#include "ps2gl/x2e_renderer.h"
 
 using namespace ArrayType;
 
@@ -380,10 +383,16 @@ GLboolean pglCanDrawColoredHud2D(void)
 bool CImmGeomManager::TryDrawColoredHud2DArrays(const float* vertices,
     const float* texcoords, const float* colors, int vertexCount)
 {
+    return TryDrawColoredArrays(vertices, texcoords, colors, vertexCount, 6);
+}
+
+bool CImmGeomManager::TryDrawColoredArrays(const float* vertices,
+    const float* texcoords, const float* colors, int vertexCount, int vertexMultiple)
+{
     // All rejection precedes PrimChanged/Geometry writes. The pass owner has
     // already admitted its unchanged matrices; do not rescan them per span.
     if (!vertices || !texcoords || !colors || vertexCount <= 0
-        || vertexCount > INT_MAX / 16 || vertexCount % 6 != 0
+        || vertexCount > INT_MAX / 16 || vertexCount % vertexMultiple != 0
         || (((uintptr_t)vertices | (uintptr_t)texcoords | (uintptr_t)colors) & 3u)
         || Geometry.GetTotalVertices() > INT_MAX - vertexCount
         || !CanDrawColoredHud2DState()) return false;
@@ -430,18 +439,93 @@ GLboolean pglTryDrawColoredHud2DArrays(const GLfloat* vertices,
         vertices, texcoords, colors, vertexCount) ? GL_TRUE : GL_FALSE;
 }
 
-#if PGL_CITY_ROADS_VU1
-static bool RoadIdentityColumn(cpu_vec_4 column, float x, float y, float z, float w)
+bool CImmGeomManager::CanDrawColoredTriangles() const
+{
+#if PGL_COLORED_TRI_ARRAYS
+    if (!CanDrawColoredHud2DState()) return false;
+    const cpu_vec_4 ambient = GLContext.GetMaterialManager().GetImmMaterial().GetAmbient();
+    if (!HudFiniteFloat(ambient.x) || !HudFiniteFloat(ambient.y)
+        || !HudFiniteFloat(ambient.z)) return false;
+    const cpu_mat_44 matrices[3] = {
+        GLContext.GetModelViewStack().GetTop(),
+        GLContext.GetProjectionStack().GetTop(),
+        GLContext.GetImmDrawContext().GetVertexXform()
+    };
+    for (unsigned int i = 0; i < 3; ++i) {
+        const cpu_vec_4 columns[4] = {
+            matrices[i].get_col0(), matrices[i].get_col1(),
+            matrices[i].get_col2(), matrices[i].get_col3()
+        };
+        for (unsigned int j = 0; j < 4; ++j)
+            if (!HudFiniteFloat(columns[j].x) || !HudFiniteFloat(columns[j].y)
+                || !HudFiniteFloat(columns[j].z) || !HudFiniteFloat(columns[j].w))
+                return false;
+    }
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool CImmGeomManager::TryDrawColoredTriangleArrays(const float* vertices,
+    const float* texcoords, const float* colors, int vertexCount)
+{
+#if PGL_COLORED_TRI_ARRAYS
+    return TryDrawColoredArrays(vertices, texcoords, colors, vertexCount, 3);
+#else
+    (void)vertices;
+    (void)texcoords;
+    (void)colors;
+    (void)vertexCount;
+    return false;
+#endif
+}
+
+GLboolean pglCanDrawColoredTriangles(void)
+{
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().CanDrawColoredTriangles() ? GL_TRUE : GL_FALSE;
+}
+
+GLboolean pglUsesColoredTriArrays(void)
+{
+    return PGL_COLORED_TRI_ARRAYS ? GL_TRUE : GL_FALSE;
+}
+
+GLboolean pglTryDrawColoredTriangleArrays(const GLfloat* vertices,
+    const GLfloat* texcoords, const GLfloat* colors, GLsizei vertexCount)
+{
+    if (!pGLContext || pGLContext->InDListDef()) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().TryDrawColoredTriangleArrays(
+        vertices, texcoords, colors, vertexCount) ? GL_TRUE : GL_FALSE;
+}
+
+#if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA || PGL_CITY_ENTRANCES_VU1
+static bool DirectIdentityColumn(cpu_vec_4 column, float x, float y, float z, float w)
 {
     return column.x == x && column.y == y && column.z == z && column.w == w;
 }
 
-static bool RoadFiniteColumn(cpu_vec_4 column)
+static bool DirectFiniteColumn(cpu_vec_4 column)
 {
     return HudFiniteFloat(column.x) && HudFiniteFloat(column.y)
         && HudFiniteFloat(column.z) && HudFiniteFloat(column.w);
 }
 
+static bool DirectTextureValid(const CMMTexture* texture)
+{
+    if (!texture) return false;
+    const GS::tPSM psm = texture->GetPSM();
+    if (psm != GS::kPsm32 && psm != GS::kPsm24 && psm != GS::kPsm16
+        && psm != GS::kPsm16s && psm != GS::kPsm8 && psm != GS::kPsm8h)
+        return false;
+    return texture->GetW() && texture->GetH()
+        && texture->GetW() <= 1024u && texture->GetH() <= 1024u
+        && ((psm != GS::kPsm8 && psm != GS::kPsm8h) || texture->GetOwnClut());
+}
+#endif
+
+#if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1
 static bool RoadContextValid(const PGLRoadContext& context)
 {
     const float* values = (const float*)&context;
@@ -484,19 +568,22 @@ bool CImmGeomManager::DrawRoadQuads(const PGLRoadContext* context,
 
     CClipRoadX2RRenderer* renderer = RendererManager.GetRoadRenderer();
     CImmDrawContext& draw = GLContext.GetImmDrawContext();
-    if (!renderer->IsCodeValid() || !RoadContextValid(*context)
+    // An exact copy of the last admitted source context is already finite
+    // and well formed. This does not imply its VU retention, checked later.
+    const bool sameRoadContext = renderer->MatchesRoadContext(*context);
+    if (!renderer->IsCodeValid() || (!sameRoadContext && !RoadContextValid(*context))
         || draw.GetFogEnabled() || draw.GetDoCullFace() || draw.GetEdgeAAEnabled()
         || draw.GetPolygonMode() != GL_FILL || !HudFiniteFloat(draw.GetDepthOffset())
         || context->clipParams[0] != draw.GetClipNear()) return false;
 
     const cpu_mat_44& model = GLContext.GetModelViewStack().GetTop();
-    if (!RoadIdentityColumn(model.get_col0(), 1, 0, 0, 0)
-        || !RoadIdentityColumn(model.get_col1(), 0, 1, 0, 0)
-        || !RoadIdentityColumn(model.get_col2(), 0, 0, 1, 0)
-        || !RoadIdentityColumn(model.get_col3(), 0, 0, 0, 1)) return false;
+    if (!DirectIdentityColumn(model.get_col0(), 1, 0, 0, 0)
+        || !DirectIdentityColumn(model.get_col1(), 0, 1, 0, 0)
+        || !DirectIdentityColumn(model.get_col2(), 0, 0, 1, 0)
+        || !DirectIdentityColumn(model.get_col3(), 0, 0, 0, 1)) return false;
     const cpu_mat_44& xform = draw.GetVertexXform();
-    if (!RoadFiniteColumn(xform.get_col0()) || !RoadFiniteColumn(xform.get_col1())
-        || !RoadFiniteColumn(xform.get_col2()) || !RoadFiniteColumn(xform.get_col3()))
+    if (!DirectFiniteColumn(xform.get_col0()) || !DirectFiniteColumn(xform.get_col1())
+        || !DirectFiniteColumn(xform.get_col2()) || !DirectFiniteColumn(xform.get_col3()))
         return false;
 
     // At <=1024x1024 and <=32bpp an image has <=9 IMAGE chunks: <=34
@@ -504,15 +591,7 @@ bool CImmGeomManager::DrawRoadQuads(const PGLRoadContext* context,
     // 256q covers these, both GS fences, <=8 MPG tags, full 72q context and
     // command padding. Each activation needs <=16q overhead beyond its 3q
     // descriptors. Keep another 16q for the ordinary EndGeometry trailer.
-    CMMTexture& texture = GLContext.GetTexManager().GetCurTexture();
-    const GS::tPSM psm = texture.GetPSM();
-    if (psm != GS::kPsm32 && psm != GS::kPsm24 && psm != GS::kPsm16
-        && psm != GS::kPsm16s && psm != GS::kPsm8 && psm != GS::kPsm8h)
-        return false;
-    if (!texture.GetW() || !texture.GetH()
-        || texture.GetW() > 1024u || texture.GetH() > 1024u
-        || ((psm == GS::kPsm8 || psm == GS::kPsm8h) && !texture.GetOwnClut()))
-        return false;
+    if (!DirectTextureValid(&GLContext.GetTexManager().GetCurTexture())) return false;
     const uint64_t batches = ((uint64_t)count + 31u) / 32u;
     const uint64_t words = ((uint64_t)count * 3u + batches * 16u + 272u) * 4u;
     CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
@@ -521,7 +600,7 @@ bool CImmGeomManager::DrawRoadQuads(const PGLRoadContext* context,
 
     // Admission is complete. All following operations append this material
     // without a fallible partial publication or a pending borrowed block.
-    renderer->SetRoadContext(*context);
+    renderer->SetRoadContext(*context, sameRoadContext);
     PrimChanged(PGL_CLIP_ROAD_QUADS_X2R);
     DrawingLinearArray();
     // The road program reads q55, not fixed-function material/light slots.
@@ -546,6 +625,349 @@ GLboolean pglDrawRoadQuads(const PGLRoadContext* context,
     if (!pGLContext) return GL_FALSE;
     return pGLContext->GetImmGeomManager().DrawRoadQuads(context, quads, count)
         ? GL_TRUE : GL_FALSE;
+}
+
+#if PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
+static bool BillboardContextValid(const PGLBillboardContext& context)
+{
+    const float* values = (const float*)&context;
+    for (unsigned int i = 0; i < sizeof(context) / sizeof(float); ++i)
+        if (!HudFiniteFloat(values[i])) return false;
+    return context.right[3] == 0.0f && context.up[3] == 0.0f
+        && context.forward[3] == 0.0f && context.eye[3] == 0.0f
+        && context.projection[0] == 0.0f && context.projection[1] == 0.0f
+        && context.projection[2] > 0.0f && context.projection[3] > 0.0f
+        && context.clip[0] > 0.0f && context.clip[1] > 0.0f
+        && context.clip[2] == 1.0e-6f && context.clip[3] == 0.0f
+        && context.axisU[3] == 0.0f && context.axisV[3] == 0.0f;
+}
+#endif
+
+bool CImmGeomManager::DrawSourceViewQuads(const void* context, const void* quads,
+    int count, unsigned int format)
+{
+#if PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
+    CClipRoadX2RRenderer* renderer = NULL;
+    unsigned int quadBytes, contextBytes, batchLimit;
+    GLenum primitive;
+    uint64_t prop;
+    bool validContext;
+    float near;
+    if (format == 2) {
+#if PGL_CITY_BILLBOARD_CORNER_ALPHA
+        if (!context || !RendererManager.CanSelectBillboardAlphaRenderer()) return false;
+        renderer = RendererManager.GetBillboardAlphaRenderer();
+        quadBytes = sizeof(PGLBillboardAlphaQuad);
+        contextBytes = sizeof(PGLBillboardContext);
+        batchLimit = 24;
+        primitive = PGL_CLIP_BILLBOARD_QUADS_X2A;
+        prop = PGL_CLIP_BILLBOARD_X2A_PROP;
+#else
+        return false;
+#endif
+    } else if (format == 1) {
+#if PGL_CITY_BILLBOARDS_VU1
+        if (!context || !RendererManager.CanSelectBillboardRenderer()) return false;
+        renderer = RendererManager.GetBillboardRenderer();
+        quadBytes = sizeof(PGLBillboardQuad);
+        contextBytes = sizeof(PGLBillboardContext);
+        batchLimit = 32;
+        primitive = PGL_CLIP_BILLBOARD_QUADS_X2B;
+        prop = PGL_CLIP_BILLBOARD_X2B_PROP;
+#else
+        return false;
+#endif
+    } else if (format == 0) {
+#if PGL_CITY_POOLS_VU1
+        if (!context || !RendererManager.CanSelectPoolRenderer()) return false;
+        renderer = RendererManager.GetPoolRenderer();
+        quadBytes = sizeof(PGLPoolQuad);
+        contextBytes = sizeof(PGLPoolContext);
+        batchLimit = 24;
+        primitive = PGL_CLIP_POOL_QUADS_X2P;
+        prop = PGL_CLIP_POOL_X2P_PROP;
+#else
+        return false;
+#endif
+    } else return false;
+    // No old block may be flushed after reservation: its packet footprint and
+    // borrowed state belong to the preceding material. The caller drains it
+    // before this API, exactly as it does before changing X2 window pairs.
+    if (!context || !quads || count <= 0 || count > INT_MAX / (int)quadBytes
+        || (((uintptr_t)context | (uintptr_t)quads) & 3u)
+        || (uintptr_t)quads > ~(uintptr_t)0 - (uintptr_t)count * quadBytes
+        || (uintptr_t)context > ~(uintptr_t)0 - contextBytes
+        || InsideBeginEnd || Geometry.IsPending() || GLContext.InDListDef()
+        || !GLContext.UsesNormalFramePacket()
+        || GetUserPrimRequirements(primitive) != prop
+        || GetUserPrimReqMask(primitive) != ~(uint64_t)0xffffffff
+        || GLContext.GetImmLighting().GetLightingEnabled()
+        || !GLContext.GetTexManager().GetTexEnabled()) return false;
+
+    CImmDrawContext& draw = GLContext.GetImmDrawContext();
+    // An exact copy of the last admitted source context is already finite
+    // and well formed. This does not imply its VU retention, checked later.
+    const bool sameRoadContext = renderer->MatchesSourceContext(context);
+    if (format != 0) {
+#if PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
+        const PGLBillboardContext& source = *(const PGLBillboardContext*)context;
+        validContext = sameRoadContext || BillboardContextValid(source);
+        near = source.clip[0];
+#endif
+    } else {
+#if PGL_CITY_POOLS_VU1
+        const PGLPoolContext& source = *(const PGLPoolContext*)context;
+        validContext = sameRoadContext || RoadContextValid(source);
+        near = source.clipParams[0];
+#endif
+    }
+    if (!renderer->IsCodeValid() || !validContext
+        || draw.GetFogEnabled() || draw.GetDoCullFace() || draw.GetEdgeAAEnabled()
+        || draw.GetDoClipping()
+        || draw.GetPolygonMode() != GL_FILL || !HudFiniteFloat(draw.GetDepthOffset())
+        || near != draw.GetClipNear()) return false;
+
+    const cpu_mat_44& model = GLContext.GetModelViewStack().GetTop();
+    if (!DirectIdentityColumn(model.get_col0(), 1, 0, 0, 0)
+        || !DirectIdentityColumn(model.get_col1(), 0, 1, 0, 0)
+        || !DirectIdentityColumn(model.get_col2(), 0, 0, 1, 0)
+        || !DirectIdentityColumn(model.get_col3(), 0, 0, 0, 1)) return false;
+    const cpu_mat_44& xform = draw.GetVertexXform();
+    if (!DirectFiniteColumn(xform.get_col0()) || !DirectFiniteColumn(xform.get_col1())
+        || !DirectFiniteColumn(xform.get_col2()) || !DirectFiniteColumn(xform.get_col3()))
+        return false;
+
+    // At <=1024x1024 and <=32bpp an image has <=9 IMAGE chunks: <=34
+    // chain qwords, plus one <=256-entry CLUT, 8 texture and 14 draw settings.
+    // 256q covers these, both GS fences, <=8 MPG tags, full 72q context and
+    // command padding. Each activation needs <=16q overhead beyond its source
+    // descriptors. Keep another 16q for the ordinary EndGeometry trailer.
+    if (!DirectTextureValid(&GLContext.GetTexManager().GetCurTexture())) return false;
+    const uint64_t batches = ((uint64_t)count + batchLimit - 1u) / batchLimit;
+    const uint64_t words = ((uint64_t)count * (quadBytes / 16u) + batches * 16u + 272u) * 4u;
+    CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
+    if (words > UINT_MAX || !packet.GetTTE() || packet.HasOpenTag()
+        || !packet.CanReserveWords((unsigned int)words)) return false;
+
+    // Inputs may not alias writes made before the owned descriptor copy.
+    // Include cached/uncached aliases, as in the paired decal API.
+    const uintptr_t writeBegin = (uintptr_t)Core::MakePtrNormal(packet.GetNextPtr());
+    const uint64_t writeEnd = (uint64_t)writeBegin + words * sizeof(uint32_t);
+    const uintptr_t quadBegin = (uintptr_t)Core::MakePtrNormal(quads);
+    const uint64_t quadEnd = (uint64_t)quadBegin + (uint64_t)count * quadBytes;
+    const uintptr_t contextBegin = (uintptr_t)Core::MakePtrNormal(context);
+    const uint64_t contextEnd = (uint64_t)contextBegin + contextBytes;
+    if (((uint64_t)quadBegin < writeEnd && quadEnd > writeBegin)
+        || ((uint64_t)contextBegin < writeEnd && contextEnd > writeBegin)) return false;
+
+    // Admission is complete. All following operations append this material
+    // without a fallible partial publication or a pending borrowed block.
+    renderer->SetSourceContext(context, sameRoadContext);
+    PrimChanged(primitive);
+    DrawingLinearArray();
+    // These programs read descriptor RGBA, not material/light slots.
+    // Preserve an inherited COLOR_MATERIAL enable; no color array is supplied.
+    SyncColorMaterial(false);
+    SyncRenderer();
+    SyncRendererContext(primitive);
+    SyncGsContext();
+    renderer->DrawCompactGroundQuads((const float*)quads, count, quadBytes / 4u, batchLimit);
+    return true;
+#else
+    (void)context;
+    (void)quads;
+    (void)count;
+    (void)format;
+    return false;
+#endif
+}
+
+bool CImmGeomManager::DrawPoolQuads(const PGLPoolContext* context,
+    const PGLPoolQuad* quads, int count)
+{
+    return DrawSourceViewQuads(context, quads, count, 0);
+}
+
+GLboolean pglDrawPoolQuads(const PGLPoolContext* context,
+    const PGLPoolQuad* quads, GLsizei count)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawPoolQuads(context, quads, count)
+        ? GL_TRUE : GL_FALSE;
+}
+
+bool CImmGeomManager::DrawBillboardQuads(const PGLBillboardContext* context,
+    const PGLBillboardQuad* quads, int count)
+{
+    return DrawSourceViewQuads(context, quads, count, 1);
+}
+
+GLboolean pglDrawBillboardQuads(const PGLBillboardContext* context,
+    const PGLBillboardQuad* quads, GLsizei count)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawBillboardQuads(context, quads, count)
+        ? GL_TRUE : GL_FALSE;
+}
+
+bool CImmGeomManager::DrawBillboardAlphaQuads(const PGLBillboardContext* context,
+    const PGLBillboardAlphaQuad* quads, int count)
+{
+    return DrawSourceViewQuads(context, quads, count, 2);
+}
+
+GLboolean pglDrawBillboardAlphaQuads(const PGLBillboardContext* context,
+    const PGLBillboardAlphaQuad* quads, GLsizei count)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawBillboardAlphaQuads(context, quads, count)
+        ? GL_TRUE : GL_FALSE;
+}
+
+#if PGL_CITY_ENTRANCES_VU1
+static bool DecalContextValid(const PGLDecalContext& context, const CImmDrawContext& draw)
+{
+    const float* values = (const float*)&context;
+    for (unsigned int i = 0; i < sizeof(context) / sizeof(float); ++i)
+        if (!HudFiniteFloat(values[i])) return false;
+    float raster[3];
+    draw.GetRasterScale(raster);
+    if (context.raster[0] != raster[0] || context.raster[1] != raster[1]
+        || context.raster[2] != raster[2] || context.raster[0] <= 0.0f
+        || context.raster[1] >= 0.0f || context.raster[3] <= 0.0f
+        || (context.inverse[3] != 65535.0f && context.inverse[3] != 16777215.0f)
+        || context.inverse[3] != -2.0f * raster[2]
+        || context.inverse[0] <= 0.0f || context.inverse[1] >= 0.0f
+        || context.inverse[2] <= 0.0f || context.depth[0] <= 0.0f
+        || context.depth[1] < 0.0f || context.depth[2] < context.depth[1]
+        || context.depth[3] != 0.0f
+        || context.clip[0] != (float)draw.GetFBWidth() - 0.0625f
+        || context.clip[1] != (float)draw.GetFBHeight() - 0.0625f
+        || context.clip[2] != 0.0f || context.clip[3] != 0.0f) return false;
+    return true;
+}
+#endif
+
+bool CImmGeomManager::DrawDecalQuads(const PGLDecalContext* context,
+    const PGLDecalQuad* quads, int count, GLuint baseTexture, GLuint glowTexture)
+{
+#if PGL_CITY_ENTRANCES_VU1
+    // Admit the complete pair before any packet, texture or material mutation.
+    // Generated descriptor values/headroom are an explicit caller contract.
+    if (!context || !quads || count <= 0 || count > INT_MAX / 144
+        || (((uintptr_t)context | (uintptr_t)quads) & 3u)
+        || (uintptr_t)quads > ~(uintptr_t)0 - (uintptr_t)count * sizeof(*quads)
+        || (uintptr_t)context > ~(uintptr_t)0 - sizeof(*context)
+        || InsideBeginEnd || Geometry.IsPending() || GLContext.InDListDef()
+        || !GLContext.UsesNormalFramePacket()
+        || !RendererManager.CanSelectDecalRenderer()
+        || GetUserPrimRequirements(PGL_CLIP_DECAL_QUADS_X2E) != PGL_CLIP_DECAL_X2E_PROP
+        || GetUserPrimReqMask(PGL_CLIP_DECAL_QUADS_X2E) != ~(uint64_t)0xffffffff
+        || GLContext.GetImmLighting().GetLightingEnabled()
+        || !GLContext.GetTexManager().GetTexEnabled()) return false;
+
+    CClipDecalX2ERenderer* renderer = RendererManager.GetDecalRenderer();
+    CImmDrawContext& draw = GLContext.GetImmDrawContext();
+    if (!renderer->IsCodeValid() || !DecalContextValid(*context, draw)
+        || draw.GetDoCullFace() || draw.GetEdgeAAEnabled() || draw.GetDoClipping()
+        || draw.GetAlphaTestEnabled() || draw.GetBlendEnabled()
+        || draw.GetPolygonMode() != GL_FILL || draw.GetDepthOffset() != 0.0f
+        || draw.GetClipNear() != 1.0f || !draw.GetDepthTestEnabled()
+        || draw.GetDrawEnv().GetDepthWriteEnabled()
+        || !draw.GetDrawEnv().HasDepthTestPassMode(GS::ZTest::kGEqual)) return false;
+
+    const cpu_mat_44& model = GLContext.GetModelViewStack().GetTop();
+    const cpu_mat_44& projection = GLContext.GetProjectionStack().GetTop();
+    if (!DirectIdentityColumn(model.get_col0(), 1, 0, 0, 0)
+        || !DirectIdentityColumn(model.get_col1(), 0, 1, 0, 0)
+        || !DirectIdentityColumn(model.get_col2(), 0, 0, 1, 0)
+        || !DirectIdentityColumn(model.get_col3(), 0, 0, 0, 1)
+        || !DirectIdentityColumn(projection.get_col0(), 1, 0, 0, 0)
+        || !DirectIdentityColumn(projection.get_col1(), 0, 1, 0, 0)
+        || !DirectIdentityColumn(projection.get_col2(), 0, 0, 1, 0)
+        || !DirectIdentityColumn(projection.get_col3(), 0, 0, 0, 1)) return false;
+    const cpu_mat_44& xform = draw.GetVertexXform();
+    if (!DirectFiniteColumn(xform.get_col0()) || !DirectFiniteColumn(xform.get_col1())
+        || !DirectFiniteColumn(xform.get_col2()) || !DirectFiniteColumn(xform.get_col3()))
+        return false;
+    CTexManager& textures = GLContext.GetTexManager();
+    if (!DirectTextureValid(textures.FindNamedTexture(baseTexture))
+        || (glowTexture && !DirectTextureValid(textures.FindNamedTexture(glowTexture))))
+        return false;
+
+    // Retain the two-copy bound even when glow reuses the owned base payload:
+    // each sweep needs <=9q/descriptor and <=16q/activation. A deliberately
+    // conservative 512q/sweep covers texture IMAGE/CLUT chains, GS settings,
+    // MPG tags, full context and padding; 16q reserves EndGeometry's trailer.
+    // Both textures were checked before this reservation, so a later lookup
+    // or incompatible second material cannot cause partial fallback.
+    const uint64_t batches = ((uint64_t)count + 15u) / 16u;
+    const uint64_t passes = glowTexture ? 2u : 1u;
+    const uint64_t words = (passes * ((uint64_t)count * 9u + batches * 16u + 512u)
+        + 16u) * 4u;
+    CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
+    if (words > UINT_MAX || !packet.GetTTE() || packet.HasOpenTag()
+        || !packet.CanReserveWords((unsigned int)words)) return false;
+
+#if PGL_DECAL_PAYLOAD_REUSE
+    // Stack-local metadata belongs to this one synchronous base/glow pair.
+    // It cannot survive into another call, packet, frame or renderer epoch.
+    // Payload bytes themselves live in the append-only normal frame packet.
+    if (glowTexture && batches > CClipDecalX2ERenderer::kMaxOwnedPayloadBatches)
+        return false;
+    const float* ownedPayloads[CClipDecalX2ERenderer::kMaxOwnedPayloadBatches];
+#endif
+    // Reject either input aliasing the future reserved write range, including
+    // cached/uncached aliases. Earlier committed packet bytes remain safe.
+    const uintptr_t writeBegin = (uintptr_t)Core::MakePtrNormal(packet.GetNextPtr());
+    const uint64_t writeEnd = (uint64_t)writeBegin + words * sizeof(uint32_t);
+    const uintptr_t quadBegin = (uintptr_t)Core::MakePtrNormal(quads);
+    const uint64_t quadEnd = (uint64_t)quadBegin + (uint64_t)count * sizeof(*quads);
+    const uintptr_t contextBegin = (uintptr_t)Core::MakePtrNormal(context);
+    const uint64_t contextEnd = (uint64_t)contextBegin + sizeof(*context);
+    if (((uint64_t)quadBegin < writeEnd && quadEnd > writeBegin)
+        || ((uint64_t)contextBegin < writeEnd && contextEnd > writeBegin)) return false;
+
+    for (unsigned int pass = 0; pass < (unsigned int)passes; ++pass) {
+        if (pass) {
+            draw.SetFogEnabled(false);
+            draw.SetBlendEnabled(true);
+            draw.SetBlendMode(GL_SRC_ALPHA, GL_ONE);
+        }
+        textures.BindTexture(pass ? glowTexture : baseTexture);
+        renderer->SetDecalContext(*context, pass != 0);
+        PrimChanged(PGL_CLIP_DECAL_QUADS_X2E);
+        DrawingLinearArray();
+        SyncColorMaterial(false);
+        SyncRenderer();
+        SyncRendererContext(PGL_CLIP_DECAL_QUADS_X2E);
+        // The normal GS synchronization fences the complete preceding base
+        // sweep before replacing its texture or enabling additive blending.
+        SyncGsContext();
+#if PGL_DECAL_PAYLOAD_REUSE
+        renderer->DrawDecalQuads(quads, count,
+            glowTexture ? ownedPayloads : NULL, pass != 0);
+#else
+        renderer->DrawDecalQuads(quads, count, NULL, false);
+#endif
+    }
+    return true;
+#else
+    (void)context;
+    (void)quads;
+    (void)count;
+    (void)baseTexture;
+    (void)glowTexture;
+    return false;
+#endif
+}
+
+GLboolean pglDrawDecalQuads(const PGLDecalContext* context,
+    const PGLDecalQuad* quads, GLsizei count, GLuint baseTexture, GLuint glowTexture)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawDecalQuads(
+        context, quads, count, baseTexture, glowTexture) ? GL_TRUE : GL_FALSE;
 }
 
 bool CImmGeomManager::TryDrawTexturedQuads2DArrays(const float* vertices, const float* texcoords,
@@ -691,7 +1113,7 @@ void CImmGeomManager::DrawArrays(GLenum mode, int first, int count)
     Geometry.AddTexCoords(count);
     Geometry.AddColors(count);
 
-    Geometry.AdjustNewGeomPtrs(first);
+    Geometry.AdjustNewGeomPtrs(first, mode == PGL_CLIP_TRIANGLES_X2C);
 
     // do this before sync'ing the vu1 renderer in CommitNewGeom
     SyncColorMaterial(VertArray->GetColors() != NULL);

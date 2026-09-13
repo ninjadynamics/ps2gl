@@ -30,6 +30,8 @@ class CImmGeomManager : public CGeomManager {
     void CommitTexturedQuadArrays(const float* vertices, const float* texcoords,
         int count, int wordsPerVertex);
     bool CanDrawColoredHud2DState() const;
+    bool TryDrawColoredArrays(const float* vertices, const float* texcoords,
+        const float* colors, int vertexCount, int vertexMultiple);
 
 public:
     CImmGeomManager(CGLContext& context, int immBufferQwordSize);
@@ -83,8 +85,21 @@ public:
     bool CanDrawColoredHud2D() const;
     bool TryDrawColoredHud2DArrays(const float* vertices, const float* texcoords,
         const float* colors, int vertexCount);
+    bool CanDrawColoredTriangles() const;
+    bool TryDrawColoredTriangleArrays(const float* vertices, const float* texcoords,
+        const float* colors, int vertexCount);
     bool DrawRoadQuads(const PGLRoadContext* context,
         const PGLRoadQuad* quads, int count);
+    bool DrawPoolQuads(const PGLPoolContext* context,
+        const PGLPoolQuad* quads, int count);
+    bool DrawBillboardQuads(const PGLBillboardContext* context,
+        const PGLBillboardQuad* quads, int count);
+    bool DrawBillboardAlphaQuads(const PGLBillboardContext* context,
+        const PGLBillboardAlphaQuad* quads, int count);
+    bool DrawSourceViewQuads(const void* context, const void* quads, int count,
+        unsigned int format);
+    bool DrawDecalQuads(const PGLDecalContext* context,
+        const PGLDecalQuad* quads, int count, GLuint baseTexture, GLuint glowTexture);
     void Normal(cpu_vec_xyz normal);
     void TexCoord(float u, float v);
     void Color(cpu_vec_xyzw color);

@@ -38,7 +38,7 @@ def code_pairs(text):
     return pairs, labels
 
 
-def model(pairs, labels, top, count, rng):
+def model(pairs, labels, top, count, rng, compact=False):
     """Execute the scheduled copy-only image, including branch delay slots.
 
     Registers/memory are integer bit patterns. This tests dataflow and stores,
@@ -56,7 +56,12 @@ def model(pairs, labels, top, count, rng):
         geo[d & 3][(d + 1) & 3] = 0x80000000
         col = [[rng.getrandbits(32) for _ in range(4)] for _ in range(4)]
         mem[top+101+d*4:top+105+d*4] = [v[:] for v in geo]
-        mem[top+117+d*4:top+121+d*4] = [v[:] for v in col]
+        if compact:
+            bottom, roof = col[:2]
+            mem[top+117+d*2:top+119+d*2] = [bottom[:], roof[:]]
+            col = [bottom, bottom[:3] + roof[3:], roof, roof[:3] + bottom[3:]]
+        else:
+            mem[top+117+d*4:top+121+d*4] = [v[:] for v in col]
         ax, az, bx, bz = geo[0]
         ay, by, cy, dy = geo[1]
         positions = ((ax,ay,az), (bx,by,bz), (bx,cy,bz), (ax,dy,az))
