@@ -45,6 +45,15 @@
 #error "Packet optimization/metrics switches must be 0 or 1"
 #endif
 
+/* Five frame-boundary scopes, enabled explicitly by the application. No
+ * clocks in the vertex loops; quiet applications never read CP0 Count. */
+#ifndef PGL_FRAME_PHASE_METRICS
+#define PGL_FRAME_PHASE_METRICS 1
+#endif
+#if PGL_FRAME_PHASE_METRICS != 0 && PGL_FRAME_PHASE_METRICS != 1
+#error "PGL_FRAME_PHASE_METRICS must be 0 or 1"
+#endif
+
 /* Reuse the identical resident X2 base image across X2-family renderer loads
  * in one ordered packet. Decoder uploads, MSCAL0 and contexts remain intact.
  * Unknown loaders, packet changes/resets and cached replay invalidate proof. */
@@ -83,11 +92,26 @@
 #ifndef PGL_DECAL_HEADER_COMPACT
 #define PGL_DECAL_HEADER_COMPACT 1
 #endif
+/* Reuse exact X/Z edge and Y-height products inside the decal VU decoder. */
+#ifndef PGL_DECAL_XY_REUSE
+#define PGL_DECAL_XY_REUSE 1
+#endif
+/* Keep exceptional preprojected triangles in the compact decal program. */
+#ifndef PGL_DECAL_PROJECTED_RUNS
+#define PGL_DECAL_PROJECTED_RUNS 1
+#endif
+/* Classify all four compact decal corners together before polygon clipping. */
+#ifndef PGL_DECAL_TRIVIAL_ACCEPT
+#define PGL_DECAL_TRIVIAL_ACCEPT 1
+#endif
 /* Aligned compact descriptor/context copies use exact qword object bits. */
 #ifndef PGL_COMPACT_QWORD_COPY
 #define PGL_COMPACT_QWORD_COPY 1
 #endif
 #if (PGL_DECAL_HEADER_COMPACT != 0 && PGL_DECAL_HEADER_COMPACT != 1) || \
+    (PGL_DECAL_XY_REUSE != 0 && PGL_DECAL_XY_REUSE != 1) || \
+    (PGL_DECAL_PROJECTED_RUNS != 0 && PGL_DECAL_PROJECTED_RUNS != 1) || \
+    (PGL_DECAL_TRIVIAL_ACCEPT != 0 && PGL_DECAL_TRIVIAL_ACCEPT != 1) || \
     (PGL_COMPACT_QWORD_COPY != 0 && PGL_COMPACT_QWORD_COPY != 1)
 #error "Compact packet copy/header switches must be 0 or 1"
 #endif
@@ -239,6 +263,26 @@ extern void pglGetWindowContextStats(unsigned int* attempts, unsigned int* reuse
  * Outputs may be NULL. Counters restart when a context is constructed. */
 extern void pglGetDrawEnvStats(unsigned int* lastFrame, unsigned int* highWater,
     unsigned int* over100Frames, unsigned int* growths, unsigned int* heapBytes);
+/* Main-thread frame-boundary elapsed CPU cycles. FINISH waits for the previous
+ * normal chain's GS SIGNAL; VSYNC waits/drains vblank; SEND includes cache
+ * writeback, existing DMA-channel readiness wait and DMA start, not completion
+ * of the submitted chain. These are not GPU execution times.
+ * Count increments every EE CPU cycle (EE Core Manual p70); subtraction wraps
+ * modulo32, so each returned scope must finish within one Count period.
+ * Each phase has its OWN call count; startup and nonstandard clients can make
+ * those counts differ. Set resets the window. Take copies and clears it, with
+ * no flush/wait/render side effects. Disabled builds return false and zeros. */
+enum {
+    PGL_FRAME_END, PGL_FRAME_FINISH, PGL_FRAME_VSYNC,
+    PGL_FRAME_SWAP, PGL_FRAME_SEND, PGL_FRAME_PHASE_COUNT
+};
+typedef struct {
+    pglU64_t cycles;
+    unsigned int calls;
+    unsigned int maxCycles;
+} PGLFramePhaseStats;
+extern GLboolean pglSetFramePhaseMetrics(GLboolean enabled);
+extern GLboolean pglTakeFramePhaseMetrics(PGLFramePhaseStats phases[PGL_FRAME_PHASE_COUNT]);
 /* Optional main-thread allocation observer. Successful growth/free reports
  * old/new total requested heap bytes, excluding allocator overhead. Installing
  * a different non-NULL observer reports existing storage as 0 -> heapBytes;
@@ -755,11 +799,35 @@ typedef struct PGLDecalQuad {
     GLfloat depth[2][4];    /* ABC/ACD allowance, sumAbsZ, sumAbsW, skip(0/1) */
 } PGLDecalQuad;
 
+/* Already clipped/projected exceptional triangles, in original fan order.
+   Position contains the exact earlier EE base and glow NDC depths; texture
+   contains premultiplied STQ and the glow alpha. No reconstruction is used. */
+typedef struct PGLDecalNdcVertex {
+    GLfloat position[4]; /* xNDC, yNDC, baseZNDC, glowZNDC */
+    GLfloat texture[4];  /* S, T, Q, glowAlpha */
+    GLfloat color[4];    /* base normalized RGBA; A also carries base fog */
+} PGLDecalNdcVertex;
+
+typedef struct PGLDecalNdcTriangle {
+    PGLDecalNdcVertex vertex[3];
+} PGLDecalNdcTriangle;
+
+#define PGL_DECAL_RUN_QUADS 0u
+#define PGL_DECAL_RUN_NDC_TRIANGLES 1u
+typedef struct PGLDecalRun {
+    const void* records;
+    GLsizei count; /* quads or triangles, according to format */
+    GLuint format;
+} PGLDecalRun;
+
 #define PGL_CLIP_DECAL_QUADS_X2E ((GLenum)0x80000000 | 7)
 #define PGL_CLIP_DECAL_X2E_PROP ((pglU64_t)1 << 39)
 void pglRegisterDecalRenderer(void);
 /* Linked effective options: bit 0 = owned base/glow payload reuse,
-   bit 1 = compact header/CNT, bit 2 = aligned qword payload copies. */
+   bit 1 = compact header/CNT, bit 2 = aligned qword payload copies,
+   bit 3 = exact VU corner XY product reuse,
+   bit 4 = ordered compact/projected runs in one decal program,
+   bit 5 = exact four-corner all-inside classification. */
 unsigned int pglGetDecalSubmissionOptions(void);
 /* Submit the whole base sweep followed by the optional whole glow sweep.
    Call after draining pending geometry, in the normal frame chain, outside
@@ -781,6 +849,16 @@ unsigned int pglGetDecalSubmissionOptions(void);
    owns the normal pass teardown. No fallback is allowed after a TRUE result. */
 GLboolean pglDrawDecalQuads(const PGLDecalContext* context,
     const PGLDecalQuad* quads, GLsizei count, GLuint baseTexture, GLuint glowTexture);
+/* Same atomic ownership/state contract as pglDrawDecalQuads, with at most512
+   ordered runs. Every projected triangle must already be clipped, finite and
+   depth-admitted by the caller, with exact base/glow positions and STQ. The
+   API validates ALL run ranges and reserves BOTH materials before mutation.
+   Each material replays the complete run order; compact/projected boundaries
+   change only the activation header, never the renderer or its GS state.
+   FALSE admits no part of the stream; the caller may then use its full
+   fallback. Projected records require linked decal option bit4. */
+GLboolean pglDrawDecalRuns(const PGLDecalContext* context,
+    const PGLDecalRun* runs, GLsizei runCount, GLuint baseTexture, GLuint glowTexture);
 
 // custom state
 

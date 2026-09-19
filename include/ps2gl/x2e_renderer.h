@@ -14,7 +14,7 @@ public:
     static void Register();
     bool IsCodeValid() const;
     void SetDecalContext(const PGLDecalContext& context, bool glow);
-    void DrawDecalQuads(const PGLDecalQuad* quads, int count,
+    void DrawDecalRecords(const void* records, int count, unsigned int format,
         const float** ownedPayloads, bool reusePayload);
     virtual void Load();
     virtual void InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged);

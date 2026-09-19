@@ -15,6 +15,8 @@
 
 typedef char DecalContextSize[sizeof(PGLDecalContext) == 8u * 16u ? 1 : -1];
 typedef char DecalQuadSize[sizeof(PGLDecalQuad) == 9u * 16u ? 1 : -1];
+typedef char DecalNdcVertexSize[sizeof(PGLDecalNdcVertex) == 3u * 16u ? 1 : -1];
+typedef char DecalNdcTriangleSize[sizeof(PGLDecalNdcTriangle) == sizeof(PGLDecalQuad) ? 1 : -1];
 typedef char DecalRasterOffset[offsetof(PGLDecalContext, raster) == 4u * 16u ? 1 : -1];
 typedef char DecalInverseOffset[offsetof(PGLDecalContext, inverse) == 5u * 16u ? 1 : -1];
 typedef char DecalDepthOffset[offsetof(PGLDecalContext, depth) == 6u * 16u ? 1 : -1];
@@ -68,6 +70,10 @@ void CClipDecalX2ERenderer::SetDecalContext(const PGLDecalContext& context, bool
 {
     memcpy(&DecalContext, &context, sizeof(DecalContext));
     DecalContext.depth[3] = glow ? 1.0f : 0.0f;
+    // Public source clip.z/w remain zero. Only this linked module chooses the
+    // private decoder path; old applications do not need a new descriptor ABI.
+    DecalContext.clip[2] = PGL_DECAL_XY_REUSE ? 1.0f : 0.0f;
+    DecalContext.clip[3] = PGL_DECAL_TRIVIAL_ACCEPT ? 1.0f : 0.0f;
     pGLContext->SetRendererContextChanged(true);
 }
 
@@ -168,10 +174,11 @@ void CClipDecalX2ERenderer::InitContext(GLenum primType, uint32_t rcChanges,
 #endif
 }
 
-void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
-    const float** ownedPayloads, bool reusePayload)
+void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
+    unsigned int format, const float** ownedPayloads, bool reusePayload)
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+    const float* source = (const float*)records;
 #if !PGL_DECAL_HEADER_COMPACT
     static const float independentAdc[16] = { 1024.0f };
 #endif
@@ -216,10 +223,10 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
             packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
 #if PGL_DECAL_PAYLOAD_REUSE
             const float* owned = pglAddOwnedPayload(packet,
-                (const float*)quads, (unsigned int)batch * 36u);
+                source, (unsigned int)batch * 36u);
             if (ownedPayloads) ownedPayloads[batchIndex] = owned;
 #else
-            pglAddOwnedPayload(packet, (const float*)quads,
+            pglAddOwnedPayload(packet, source,
                 (unsigned int)batch * 36u);
 #endif
             packet.CloseUnpack();
@@ -229,7 +236,7 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kDoubleBuff);
         packet += batch;
-        packet += 0;
+        packet += format;
         packet += (uint64_t)0;
 #if !PGL_DECAL_HEADER_COMPACT
         packet.Add(independentAdc, 16);
@@ -244,7 +251,7 @@ void CClipDecalX2ERenderer::DrawDecalQuads(const PGLDecalQuad* quads, int count,
 #if PGL_DECAL_PAYLOAD_REUSE
         ++batchIndex;
 #endif
-        quads += batch;
+        source += batch * 36;
         count -= batch;
     }
 #if PGL_DECAL_HEADER_COMPACT
@@ -274,7 +281,10 @@ extern "C" unsigned int pglGetDecalSubmissionOptions(void)
 #if PGL_CITY_ENTRANCES_VU1
     return (PGL_DECAL_PAYLOAD_REUSE ? 1u : 0u)
         | (PGL_DECAL_HEADER_COMPACT ? 2u : 0u)
-        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u);
+        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u)
+        | (PGL_DECAL_XY_REUSE ? 8u : 0u)
+        | (PGL_DECAL_PROJECTED_RUNS ? 16u : 0u)
+        | (PGL_DECAL_TRIVIAL_ACCEPT ? 32u : 0u);
 #else
     return 0u;
 #endif

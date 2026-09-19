@@ -68,6 +68,69 @@ static unsigned int DrawEnvLastFrame, DrawEnvHighWater, DrawEnvOver100Frames;
 static unsigned int DrawEnvGrowths, DrawEnvHeapBytes;
 static void (*DrawEnvHeapObserver)(unsigned int, unsigned int);
 
+#if PGL_FRAME_PHASE_METRICS
+static bool FramePhaseEnabled;
+static PGLFramePhaseStats FramePhases[PGL_FRAME_PHASE_COUNT];
+
+static inline unsigned int FramePhaseClock()
+{
+    unsigned int cycles;
+    // Read-only CP0 Count, independent of PCR0/1 and the raylib system timer.
+    // The compiler barrier brackets the measured work; no timer reset/fence.
+    asm volatile("mfc0 %0, $9" : "=r"(cycles) : : "memory");
+    return cycles;
+}
+
+class CFramePhaseScope {
+    unsigned int Start;
+    const unsigned int Phase;
+    const bool Enabled;
+public:
+    explicit CFramePhaseScope(unsigned int phase)
+        : Start(0), Phase(phase), Enabled(FramePhaseEnabled)
+    {
+        if (Enabled) Start = FramePhaseClock();
+    }
+    ~CFramePhaseScope()
+    {
+        if (!Enabled) return;
+        const unsigned int elapsed = FramePhaseClock() - Start;
+        PGLFramePhaseStats& stats = FramePhases[Phase];
+        stats.cycles += elapsed;
+        ++stats.calls;
+        if (elapsed > stats.maxCycles) stats.maxCycles = elapsed;
+    }
+};
+#define PGL_FRAME_SCOPE(phase) CFramePhaseScope phaseScope(phase)
+#else
+#define PGL_FRAME_SCOPE(phase) ((void)0)
+#endif
+
+extern "C" GLboolean pglSetFramePhaseMetrics(GLboolean enabled)
+{
+#if PGL_FRAME_PHASE_METRICS
+    memset(FramePhases, 0, sizeof(FramePhases));
+    FramePhaseEnabled = enabled != GL_FALSE;
+    return FramePhaseEnabled ? GL_TRUE : GL_FALSE;
+#else
+    (void)enabled;
+    return GL_FALSE;
+#endif
+}
+
+extern "C" GLboolean pglTakeFramePhaseMetrics(PGLFramePhaseStats phases[PGL_FRAME_PHASE_COUNT])
+{
+    if (!phases) return GL_FALSE;
+#if PGL_FRAME_PHASE_METRICS
+    memcpy(phases, FramePhases, sizeof(FramePhases));
+    memset(FramePhases, 0, sizeof(FramePhases));
+    return FramePhaseEnabled ? GL_TRUE : GL_FALSE;
+#else
+    memset(phases, 0, PGL_FRAME_PHASE_COUNT * sizeof(*phases));
+    return GL_FALSE;
+#endif
+}
+
 extern "C" void pglSetDrawEnvHeapObserver(void (*observer)(unsigned int, unsigned int))
 {
     if (DrawEnvHeapObserver == observer) return;
@@ -128,6 +191,9 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
 {
     NormalChainsSubmitted = NormalChainsCompleted = 0;
     ImmediateChainsSubmitted = ImmediateChainsCompleted = 0;
+#if PGL_FRAME_PHASE_METRICS
+    memset(FramePhases, 0, sizeof(FramePhases));
+#endif
     pglInvalidateX2BasePrefix();
     // Cached construction avoids UCAB's single read-only cache line being
     // invalidated by every store before tag/UNPACK backpatches read it again.
@@ -386,6 +452,7 @@ void CGLContext::BeginGeometry()
 
 void CGLContext::EndGeometry()
 {
+    PGL_FRAME_SCOPE(PGL_FRAME_END);
     EndVif1Packet(1);
 }
 
@@ -422,6 +489,7 @@ void CGLContext::EndVif1Packet(unsigned short signalNum)
 
 void CGLContext::RenderGeometry()
 {
+    PGL_FRAME_SCOPE(PGL_FRAME_SEND);
     //printf("%s\n", __FUNCTION__);
 
     // make sure the semaphore we'll signal on completion is zero now
@@ -491,6 +559,7 @@ int CGLContext::GsIntHandler(int cause)
 
 void CGLContext::FinishRenderingGeometry(bool forceImmediateStop)
 {
+    PGL_FRAME_SCOPE(PGL_FRAME_FINISH);
     //printf("%s(%d)\n", __FUNCTION__, forceImmediateStop);
 
     mWarnIf(forceImmediateStop, "Interrupting currently rendering dma chain not supported yet");
@@ -499,6 +568,7 @@ void CGLContext::FinishRenderingGeometry(bool forceImmediateStop)
 
 void CGLContext::WaitForVSync()
 {
+    PGL_FRAME_SCOPE(PGL_FRAME_VSYNC);
     //printf("%s\n", __FUNCTION__);
 
     // wait for beginning of v-sync
@@ -516,6 +586,7 @@ void CGLContext::WaitForVSync()
 
 void CGLContext::SwapBuffers()
 {
+    PGL_FRAME_SCOPE(PGL_FRAME_SWAP);
     pglInvalidateX2BasePrefix();
     //printf("%s\n", __FUNCTION__);
 
@@ -602,7 +673,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.14 00:38]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.20 00:21]\n");
     printf("[PS2-PACKETS] normal=cached\n");
     printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",
         1, PGL_ALIGNED_VECTOR_TRANSFER,

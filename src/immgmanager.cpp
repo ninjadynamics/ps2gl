@@ -932,12 +932,19 @@ static bool DecalContextValid(const PGLDecalContext& context, const CImmDrawCont
 bool CImmGeomManager::DrawDecalQuads(const PGLDecalContext* context,
     const PGLDecalQuad* quads, int count, GLuint baseTexture, GLuint glowTexture)
 {
+    const PGLDecalRun run = { quads, count, PGL_DECAL_RUN_QUADS };
+    return DrawDecalRuns(context, &run, 1, baseTexture, glowTexture);
+}
+
+bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
+    const PGLDecalRun* runs, int runCount, GLuint baseTexture, GLuint glowTexture)
+{
 #if PGL_CITY_ENTRANCES_VU1
     // Admit the complete pair before any packet, texture or material mutation.
     // Generated descriptor values/headroom are an explicit caller contract.
-    if (!context || !quads || count <= 0 || count > INT_MAX / 144
-        || (((uintptr_t)context | (uintptr_t)quads) & 3u)
-        || (uintptr_t)quads > ~(uintptr_t)0 - (uintptr_t)count * sizeof(*quads)
+    if (!context || !runs || runCount <= 0 || runCount > 512
+        || (((uintptr_t)context | (uintptr_t)runs) & 3u)
+        || (uintptr_t)runs > ~(uintptr_t)0 - (uintptr_t)runCount * sizeof(*runs)
         || (uintptr_t)context > ~(uintptr_t)0 - sizeof(*context)
         || InsideBeginEnd || Geometry.IsPending() || GLContext.InDListDef()
         || !GLContext.UsesNormalFramePacket()
@@ -946,6 +953,22 @@ bool CImmGeomManager::DrawDecalQuads(const PGLDecalContext* context,
         || GetUserPrimReqMask(PGL_CLIP_DECAL_QUADS_X2E) != ~(uint64_t)0xffffffff
         || GLContext.GetImmLighting().GetLightingEnabled()
         || !GLContext.GetTexManager().GetTexEnabled()) return false;
+
+    uint64_t records = 0;
+    uint64_t batches = 0;
+    for (int i = 0; i < runCount; ++i) {
+        const PGLDecalRun& run = runs[i];
+        if (!run.records || run.count <= 0 || run.count > INT_MAX / 144
+            || ((uintptr_t)run.records & 3u)
+            || (uintptr_t)run.records > ~(uintptr_t)0
+                - (uintptr_t)run.count * sizeof(PGLDecalQuad)
+            || (run.format != PGL_DECAL_RUN_QUADS
+                && run.format != PGL_DECAL_RUN_NDC_TRIANGLES)
+            || (!PGL_DECAL_PROJECTED_RUNS && run.format != PGL_DECAL_RUN_QUADS))
+            return false;
+        records += (unsigned int)run.count;
+        batches += ((unsigned int)run.count + 15u) / 16u;
+    }
 
     CClipDecalX2ERenderer* renderer = RendererManager.GetDecalRenderer();
     CImmDrawContext& draw = GLContext.GetImmDrawContext();
@@ -982,9 +1005,8 @@ bool CImmGeomManager::DrawDecalQuads(const PGLDecalContext* context,
     // MPG tags, full context and padding; 16q reserves EndGeometry's trailer.
     // Both textures were checked before this reservation, so a later lookup
     // or incompatible second material cannot cause partial fallback.
-    const uint64_t batches = ((uint64_t)count + 15u) / 16u;
     const uint64_t passes = glowTexture ? 2u : 1u;
-    const uint64_t words = (passes * ((uint64_t)count * 9u + batches * 16u + 512u)
+    const uint64_t words = (passes * (records * 9u + batches * 16u + 512u)
         + 16u) * 4u;
     CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
     if (words > UINT_MAX || !packet.GetTTE() || packet.HasOpenTag()
@@ -1002,12 +1024,18 @@ bool CImmGeomManager::DrawDecalQuads(const PGLDecalContext* context,
     // cached/uncached aliases. Earlier committed packet bytes remain safe.
     const uintptr_t writeBegin = (uintptr_t)Core::MakePtrNormal(packet.GetNextPtr());
     const uint64_t writeEnd = (uint64_t)writeBegin + words * sizeof(uint32_t);
-    const uintptr_t quadBegin = (uintptr_t)Core::MakePtrNormal(quads);
-    const uint64_t quadEnd = (uint64_t)quadBegin + (uint64_t)count * sizeof(*quads);
+    const uintptr_t runBegin = (uintptr_t)Core::MakePtrNormal(runs);
+    const uint64_t runEnd = (uint64_t)runBegin + (uint64_t)runCount * sizeof(*runs);
     const uintptr_t contextBegin = (uintptr_t)Core::MakePtrNormal(context);
     const uint64_t contextEnd = (uint64_t)contextBegin + sizeof(*context);
-    if (((uint64_t)quadBegin < writeEnd && quadEnd > writeBegin)
+    if (((uint64_t)runBegin < writeEnd && runEnd > writeBegin)
         || ((uint64_t)contextBegin < writeEnd && contextEnd > writeBegin)) return false;
+    for (int i = 0; i < runCount; ++i) {
+        const uintptr_t sourceBegin = (uintptr_t)Core::MakePtrNormal(runs[i].records);
+        const uint64_t sourceEnd = (uint64_t)sourceBegin
+            + (uint64_t)runs[i].count * sizeof(PGLDecalQuad);
+        if ((uint64_t)sourceBegin < writeEnd && sourceEnd > writeBegin) return false;
+    }
 
     for (unsigned int pass = 0; pass < (unsigned int)passes; ++pass) {
         if (pass) {
@@ -1026,21 +1054,38 @@ bool CImmGeomManager::DrawDecalQuads(const PGLDecalContext* context,
         // sweep before replacing its texture or enabling additive blending.
         SyncGsContext();
 #if PGL_DECAL_PAYLOAD_REUSE
-        renderer->DrawDecalQuads(quads, count,
-            glowTexture ? ownedPayloads : NULL, pass != 0);
-#else
-        renderer->DrawDecalQuads(quads, count, NULL, false);
+        unsigned int batchOffset = 0;
 #endif
+        for (int i = 0; i < runCount; ++i) {
+            const PGLDecalRun& run = runs[i];
+#if PGL_DECAL_PAYLOAD_REUSE
+            renderer->DrawDecalRecords(run.records, run.count, run.format,
+                glowTexture ? ownedPayloads + batchOffset : NULL, pass != 0);
+#else
+            renderer->DrawDecalRecords(run.records, run.count, run.format, NULL, false);
+#endif
+#if PGL_DECAL_PAYLOAD_REUSE
+            batchOffset += ((unsigned int)run.count + 15u) / 16u;
+#endif
+        }
     }
     return true;
 #else
     (void)context;
-    (void)quads;
-    (void)count;
+    (void)runs;
+    (void)runCount;
     (void)baseTexture;
     (void)glowTexture;
     return false;
 #endif
+}
+
+GLboolean pglDrawDecalRuns(const PGLDecalContext* context,
+    const PGLDecalRun* runs, GLsizei runCount, GLuint baseTexture, GLuint glowTexture)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawDecalRuns(
+        context, runs, runCount, baseTexture, glowTexture) ? GL_TRUE : GL_FALSE;
 }
 
 GLboolean pglDrawDecalQuads(const PGLDecalContext* context,

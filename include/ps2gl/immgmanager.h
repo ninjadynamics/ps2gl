@@ -102,6 +102,8 @@ public:
         unsigned int format);
     bool DrawDecalQuads(const PGLDecalContext* context,
         const PGLDecalQuad* quads, int count, GLuint baseTexture, GLuint glowTexture);
+    bool DrawDecalRuns(const PGLDecalContext* context,
+        const PGLDecalRun* runs, int runCount, GLuint baseTexture, GLuint glowTexture);
     void Normal(cpu_vec_xyz normal);
     void TexCoord(float u, float v);
     void Color(cpu_vec_xyzw color);

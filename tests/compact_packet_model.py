@@ -45,7 +45,7 @@ class Packet:
         self.word(0x6C008000 | ((count & 255) << 16) | qword_address)
 
 
-def sweep(packet, source, compact, reuse, owned=None):
+def sweep(packet, source, compact, reuse, owned=None, format=0):
     count = len(source) // 144
     owned = [] if owned is None else owned
     if compact:
@@ -69,7 +69,7 @@ def sweep(packet, source, compact, reuse, owned=None):
             owned.append(len(packet.memory))
             packet.memory += source[consumed:consumed + batch * 144]
         packet.unpack(0, 1 if compact else 5)
-        packet.memory += struct.pack('<4I', batch, 0, 0, 0)
+        packet.memory += struct.pack('<4I', batch, format, 0, 0)
         if not compact:
             packet.memory += struct.pack('<16f', 1024.0, *([0.0] * 15))
         packet.word(0x17000000)  # MSCNT
@@ -84,7 +84,7 @@ def sweep(packet, source, compact, reuse, owned=None):
     return owned
 
 
-def execute(packet):
+def execute(packet, capture_format=False):
     # Traverse source-chain DMA separately from the packet construction model.
     data = packet.memory
     stream = bytearray()
@@ -115,7 +115,10 @@ def execute(packet):
         if command == 0x17000000:
             count = U32.unpack_from(memory[top], 0)[0]
             assert 0 < count <= 16
-            snapshots.append((count, bytes(memory[top][80:80 + count * 144])))
+            sample = (count, bytes(memory[top][80:80 + count * 144]))
+            if capture_format:
+                sample += (U32.unpack_from(memory[top], 4)[0],)
+            snapshots.append(sample)
             top ^= 1
             continue
         assert command >> 24 == 0x6C and command & 0x8000
@@ -194,7 +197,7 @@ def source_contracts():
     assert 'pglAddOwnedPayload(packet' in decal and 'pglAddOwnedPayload(packet' in road
     assert '#if !PGL_DECAL_HEADER_COMPACT\n        packet.Add(independentAdc, 16);' in decal
     reads = re.findall(r'\b(?:ilw\.\w+|lq)\s+\w+,\s*([0-4])\(buffer_top\)', vu)
-    assert reads == ['0'], reads
+    assert reads and set(reads) == {'0'}, reads
     assert 'iaddiu setup_ptr, buffer_top, 5' in vu
     assert 'packet.Ref(Core::MakePtrNormal(ownedPayloads[batchIndex])' in decal
     return 10

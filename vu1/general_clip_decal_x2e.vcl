@@ -8,11 +8,14 @@
      ; Never use an interleaved base/glow compound kick for these stickers.
      ; Context q1..4 combined matrix; q5=[rx,ry,rd,near];
      ; q6=[invRx,invRy,invDepth,M]; q7=[D,baseBias,glowBias,pass];
-     ; q8=[guardX,guardY,0,0]. Standard q57 and q75..78 retain their ABI.
+     ; q8=[guardX,guardY,XY-reuse(0/1),trivial-accept(0/1)]. Public source keeps
+     ; z/w=0; the
+     ; linked library selects its private decoder gate after owning the copy.
+     ; Standard q57 and q75..78 retain their ABI.
      ; Complete context precedes MSCAL0; Load must not start stale context.
      ; Half472q, BASE79/OFFSET472:
      ; 0..4 header;5..148 descriptors16*9q;149..160 decoded4corners*3q;
-     ; 161..184 polyA;185..208 polyB;209..213 planes;214..219 controls;
+     ; 161..184 polyA;185..208 polyB;209..213 planes;214..221 controls;
      ; outputA tag224/data225..314 (30v), B315/data316..369 (18v).
      ; 370..471 unused. Polygon vertex=[homogeneousPos,UV/glow/0,RGBA].
      ; Each descriptor q0 endpointsAxAzBxBz;q1 ylo/yhi/u0/u1;
@@ -23,6 +26,10 @@
      ; Source ABC then ACD; strict >=0 last->first clipping; identity passes
      ; retain the original polygon anchor. FMA does not replace EE lerps.
      ; Final depth preserves the accepted base-NDC then glow-NDC sequence.
+     ; Header q0.y selects 0=compact quads or1=already projected triangles.
+     ; Projected records are3 vertices *3q: [x,y,baseZ,glowZ], [S,T,Q,glowA],
+     ; baseRGBA. They have the same9q stride and use the ordinary raw-X2
+     ; identity-derived q62..65 transform before the shared final GS writer.
 
      #include "vu1_mem_linear.h"
      .include "db_in_db_out.i"
@@ -39,6 +46,8 @@ kEClip              .equ 216
 kEFinal             .equ 217
 kEAllowance         .equ 218
 kEFailure           .equ 219
+kEReuse             .equ 220
+kETrivial           .equ 221
 kEATag              .equ 224
 kEAData             .equ 225
 kEACap              .equ 30
@@ -77,11 +86,48 @@ ef_stop_lid\@:
      addw.x \result, \result, \plane
      .endm
 
+     ; Rectangle products reused without reassociation: each corner still
+     ; evaluates ((m0*x + m1*y) + m2*z) + m3 with separate MUL and ADD.
+     ; Only common products are shared; Z/W, slope and clipping stay original.
+     .macro e_decode_shared_xy
+     lq er_edge0, 0(desc_ptr)
+     lq er_yu0, 1(desc_ptr)
+     lq er_m0, 1(vi00)
+     lq er_m1, 2(vi00)
+     lq er_m2, 3(vi00)
+     lq er_m3, 4(vi00)
+     mulx.xy er_lo0, er_m1, er_yu0
+     muly.xy er_hi0, er_m1, er_yu0
+     mulx.xy er_xterm0, er_m0, er_edge0
+     muly.xy er_zterm0, er_m2, er_edge0
+     add.xy er_a0, er_xterm0, er_lo0
+     add.xy er_a0, er_a0, er_zterm0
+     add.xy er_a0, er_a0, er_m3
+     sq.xy er_a0, kEQuad(buffer_top)
+     add.xy er_d0, er_xterm0, er_hi0
+     add.xy er_d0, er_d0, er_zterm0
+     add.xy er_d0, er_d0, er_m3
+     sq.xy er_d0, kEQuad+9(buffer_top)
+     mulz.xy er_xterm0, er_m0, er_edge0
+     mulw.xy er_zterm0, er_m2, er_edge0
+     add.xy er_b0, er_xterm0, er_lo0
+     add.xy er_b0, er_b0, er_zterm0
+     add.xy er_b0, er_b0, er_m3
+     sq.xy er_b0, kEQuad+3(buffer_top)
+     add.xy er_c0, er_xterm0, er_hi0
+     add.xy er_c0, er_c0, er_zterm0
+     add.xy er_c0, er_c0, er_m3
+     sq.xy er_c0, kEQuad+6(buffer_top)
+     .endm
+
      ; Static corner fields copy bits; only combined XY does arithmetic.
-     .macro e_decode slot, side, high, zword, zsecond, colorword
+     .macro e_decode slot, side, high, zword, zsecond, colorword, prepared
+     .aif "\prepared" eq "0"
      lq ec_ab\@, 0(desc_ptr)
+     .aendi
      lq ec_yu\@, 1(desc_ptr)
      lq ec_vg\@, 2(desc_ptr)
+     .aif "\prepared" eq "0"
      .aif "\side" eq "1"
      mr32 ec_ab\@, ec_ab\@
      mr32 ec_ab\@, ec_ab\@
@@ -110,6 +156,9 @@ ef_stop_lid\@:
      add.xy ec_clip\@, ec_clip\@, ec_term\@
      lq ec_m\@, 4(vi00)
      add.xy ec_clip\@, ec_clip\@, ec_m\@
+     .aelse
+     lq ec_clip\@, kEQuad+(\slot*3)(buffer_top)
+     .aendi
      lq ec_zw\@, \zword(desc_ptr)
      .aif "\zsecond" eq "0"
      mr32 ec_zw\@, ec_zw\@
@@ -238,6 +287,16 @@ e_count_valid_lid:
      sub.xyzw pl_zero, vf00, vf00
      lq pl_raster, 5(vi00)
      lq pl_guard, 8(vi00)
+     ftoi0.z setup_reuse, pl_guard
+     mtir setup_flag, setup_reuse[z]
+     isw.x setup_flag, kEReuse(buffer_top)
+     ftoi0.w setup_accept, pl_guard
+     mtir setup_flag, setup_accept[w]
+     isw.y setup_flag, kEReuse(buffer_top)
+     ; Keep independent plane setup after the private control store. VCL
+     ; does not model its memory dependency with the first decoder ILW.
+     b e_planes_ready_lid
+e_planes_ready_lid:
      move.xyzw pl_t, pl_zero
      addw.z pl_t, pl_zero, vf00
      subw.w pl_t, pl_zero, pl_raster
@@ -257,12 +316,121 @@ e_count_valid_lid:
      b e_decode_lid
 
 e_decode_lid:
+     ilw.y record_format, 0(buffer_top)
+     ibne record_format, vi00, e_projected_record_lid
      ilw.x desc_ptr, kEDesc(buffer_top)
-     e_decode 0, 0, 0, 5, 0, 3
-     e_decode 1, 1, 0, 5, 1, 4
-     e_decode 2, 1, 1, 6, 0, 4
-     e_decode 3, 0, 1, 6, 1, 3
+     ilw.x reuse_flag, kEReuse(buffer_top)
+     ibeq reuse_flag, vi00, e_decode_legacy_lid
+     e_decode_shared_xy
+     ; Fence the common-product stores before the payload macro reads the
+     ; same slots through a new pointer/register allocation.
+     b e_decode_payload_lid
+e_decode_payload_lid:
+     e_decode 0, 0, 0, 5, 0, 3, 1
+     e_decode 1, 1, 0, 5, 1, 4, 1
+     e_decode 2, 1, 1, 6, 0, 4, 1
+     e_decode 3, 0, 1, 6, 1, 3, 1
+     b e_quad_classify_lid
+e_decode_legacy_lid:
+     e_decode 0, 0, 0, 5, 0, 3, 0
+     e_decode 1, 1, 0, 5, 1, 4, 0
+     e_decode 2, 1, 1, 6, 0, 4, 0
+     e_decode 3, 0, 1, 6, 1, 3, 0
+     b e_quad_classify_lid
+
+e_quad_classify_lid:
+     ; This is only an exact all-inside certificate. Any outside corner
+     ; retains the established per-triangle five-plane walker below.
+     ilw.y qa_enabled, kEReuse(buffer_top)
+     ibeq qa_enabled, vi00, e_quad_partial_lid
+     lq qa_a, kEQuad(buffer_top)
+     lq qa_b, kEQuad+3(buffer_top)
+     lq qa_c, kEQuad+6(buffer_top)
+     lq qa_d, kEQuad+9(buffer_top)
+     ; SoA lanes are A/B/C/D. Multiplication by one copies signed zero too.
+     mulx.x qa_sx0, ones, qa_a
+     mulx.y qa_sx0, ones, qa_b
+     mulx.z qa_sx0, ones, qa_c
+     mulx.w qa_sx0, ones, qa_d
+     muly.x qa_sy0, ones, qa_a
+     muly.y qa_sy0, ones, qa_b
+     muly.z qa_sy0, ones, qa_c
+     muly.w qa_sy0, ones, qa_d
+     mulw.x qa_sw0, ones, qa_a
+     mulw.y qa_sw0, ones, qa_b
+     mulw.z qa_sw0, ones, qa_c
+     mulw.w qa_sw0, ones, qa_d
+     sub.xyzw qa_zero, vf00, vf00
+     iaddiu qa_plane, buffer_top, kEPlanes
+     iaddiu qa_left, vi00, 5
+e_quad_plane_lid:
+     lq qa_coeff, 0(qa_plane)
+     ; Same separate MUL/ADD tree as e_distance, evaluated four-wide.
+     mulz.xyzw qa_dist, qa_sw0, qa_coeff
+     add.xyzw qa_dist, qa_zero, qa_dist
+     mulx.xyzw qa_term, qa_sx0, qa_coeff
+     add.xyzw qa_dist, qa_dist, qa_term
+     muly.xyzw qa_term, qa_sy0, qa_coeff
+     add.xyzw qa_dist, qa_dist, qa_term
+     addw.xyzw qa_dist, qa_dist, qa_coeff
+     move.xyzw qa_test, qa_zero
+     move.xyz qa_test, qa_dist
+     clipw.xyz qa_test, qa_test[w]
+     fcand vi01, 42
+     ibne vi01, vi00, e_quad_partial_lid
+     addw.x qa_test, qa_zero, qa_dist
+     clipw.xyz qa_test, qa_test[w]
+     fcand vi01, 2
+     ibne vi01, vi00, e_quad_partial_lid
+     iaddiu qa_plane, qa_plane, 1
+     isubiu qa_left, qa_left, 1
+     ibgtz qa_left, e_quad_plane_lid
+     iaddiu qa_inside, vi00, 1
+     isw.x qa_inside, kETrivial(buffer_top)
      b e_triangle_lid
+e_quad_partial_lid:
+     isw.x vi00, kETrivial(buffer_top)
+     b e_triangle_lid
+
+e_projected_record_lid:
+     ; Exceptional geometry was clipped/depth-admitted by the EE before any
+     ; source was published. Reproduce its accepted raw-X2 NDC transform,
+     ; including the matrix operation tree and landed reciprocal (W==1).
+     ilw.x nd_src, kEDesc(buffer_top)
+     ilw.w nd_pass, kEDesc(buffer_top)
+     load_vert_xfrm nd_xfrm
+     iaddiu nd_dst, buffer_top, kEPolyA
+     isw.x nd_dst, kEFinal(buffer_top)
+     iaddiu nd_left, vi00, 3
+     isw.y nd_left, kEFinal(buffer_top)
+     ; One projected record owns one triangle, so normal output completion
+     ; must advance the descriptor instead of requesting an ACD half.
+     iaddiu nd_phase, vi00, 1
+     isw.z nd_phase, kEDesc(buffer_top)
+e_projected_vertex_lid:
+     lq nd_p, 0(nd_src)
+     lq nd_s, 1(nd_src)
+     lq nd_c, 2(nd_src)
+     ibeq nd_pass, vi00, e_projected_material_lid
+     mr32.z nd_p, nd_p
+     move.xyzw nd_c, ones
+     move.w nd_c, nd_s
+e_projected_material_lid:
+     mul_pt_mat_44 nd_clip, nd_xfrm, nd_p
+     div q, vf00[w], nd_clip[w]
+     addq.x nd_q, vf00, q
+     mulx.xyz nd_clip, nd_clip, nd_q
+     mulx.xyz nd_s, nd_s, nd_q
+     sq nd_clip, 0(nd_dst)
+     sq nd_s, 1(nd_dst)
+     sq nd_c, 2(nd_dst)
+     iaddiu nd_src, nd_src, 3
+     iaddiu nd_dst, nd_dst, 3
+     isubiu nd_left, nd_left, 1
+     ibgtz nd_left, e_projected_vertex_lid
+     ; The existing output arena, typed tags, ADC/F packing and ordered kicks
+     ; are shared. Preserve the source/store seam before the fan reads it.
+     b e_output_begin_lid
 e_triangle_lid:
      ilw.x desc_ptr, kEDesc(buffer_top)
      ilw.z desc_phase, kEDesc(buffer_top)
@@ -289,6 +457,8 @@ e_triangle_ready_lid:
      iaddiu setup_ptr, vi00, 3
      isw.z setup_ptr, kEClip(buffer_top)
      isw.w vi00, kEClip(buffer_top)
+     ilw.x triangle_inside, kETrivial(buffer_top)
+     ibne triangle_inside, vi00, e_project_begin_lid
      b e_plane_lid
 
 e_plane_lid:
