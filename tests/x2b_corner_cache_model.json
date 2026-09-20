@@ -1,0 +1,24 @@
+{
+  "triangle_comparisons": 4800,
+  "corner_comparisons": 14400,
+  "full_packet_comparisons": 184,
+  "status": "PASS",
+  "native_hardware": "unmeasured",
+  "models": "float32 same-pair operands/branch-delay/emitted VSM dependency model; not VU rounding/cycles or GS/DMA emulation",
+  "images": {
+    "x2b": {
+      "pairs": 513,
+      "min_clip_flag_distance": 4,
+      "vsm_sha256": "46c7b0d1c434bbbd42f4379c464295bc63576feff7906bb9ed15a5a7931eeb2d",
+      "object_sha256": "3bf60c3a48f1323ba85b2af62e11863cfea0ba2d3eb509cdc2e418188f51692d",
+      "object_bytes": 7076
+    },
+    "x2a": {
+      "pairs": 520,
+      "min_clip_flag_distance": 4,
+      "vsm_sha256": "c602884bebf964a9b9341e19cf62f25e0101d10e707d0fe2a4fd8d07f86133ef",
+      "object_sha256": "e762771bd8e7c6458787266fa2f78a2a4f0c2ead3c48d6d7f3d26585069a5a0a",
+      "object_bytes": 7124
+    }
+  }
+}

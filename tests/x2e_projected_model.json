@@ -1,0 +1,32 @@
+{
+  "projected_record_cases": 2400,
+  "packed_vertices": 7200,
+  "arena_transitions": 800,
+  "both_materials_and_depth_modes": "pass",
+  "actual_scheduled_X2E_vs_raw_X2_operation_contract": "pass",
+  "native_VU_arithmetic_timing_and_hardware": "pending",
+  "complete_projected_activations": 128,
+  "activation_vertices": 3264,
+  "activation_kicks": 176,
+  "descriptor_exhaustion_and_final_kick": "pass",
+  "CLIP_FCAND_sites": 7,
+  "minimum_CLIP_FCAND_issue_gap": 4,
+  "Q_landed_sites_pc_gap_waitq": [
+    [
+      299,
+      1,
+      true
+    ],
+    [
+      438,
+      1,
+      true
+    ],
+    [
+      502,
+      7,
+      false
+    ]
+  ],
+  "same_pair_VF_write_collisions": 0
+}

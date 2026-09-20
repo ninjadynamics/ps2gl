@@ -1,0 +1,3 @@
+python3 vu1/x2e_microcode_guard.py vu1/general_clip_decal_x2e_vcl.vsm
+x2e microcode guard: PASS (692 pairs, 692 padded, 51 bounded branches)
+dvp-as -o vu1/general_clip_decal_x2e.vo vu1/general_clip_decal_x2e_vcl.vsm

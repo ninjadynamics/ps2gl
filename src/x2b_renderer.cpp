@@ -80,5 +80,8 @@ unsigned int pglGetBillboardSubmissionOptions(void)
 #if PGL_CITY_BILLBOARD_CORNER_ALPHA
     if (pGLContext->GetImmGeomManager().GetRendererManager().GetBillboardAlphaRenderer()) options |= 2u;
 #endif
+#if PGL_CITY_BILLBOARD_CORNER_REUSE
+    if (options & 3u) options |= 4u;
+#endif
     return options;
 }

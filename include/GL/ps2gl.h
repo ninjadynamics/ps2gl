@@ -104,6 +104,10 @@
 #ifndef PGL_DECAL_TRIVIAL_ACCEPT
 #define PGL_DECAL_TRIVIAL_ACCEPT 1
 #endif
+/* A failed quad certificate already proved its earlier clipping planes inside. */
+#ifndef PGL_DECAL_CLIP_PREFIX_REUSE
+#define PGL_DECAL_CLIP_PREFIX_REUSE 1
+#endif
 /* Aligned compact descriptor/context copies use exact qword object bits. */
 #ifndef PGL_COMPACT_QWORD_COPY
 #define PGL_COMPACT_QWORD_COPY 1
@@ -112,6 +116,7 @@
     (PGL_DECAL_XY_REUSE != 0 && PGL_DECAL_XY_REUSE != 1) || \
     (PGL_DECAL_PROJECTED_RUNS != 0 && PGL_DECAL_PROJECTED_RUNS != 1) || \
     (PGL_DECAL_TRIVIAL_ACCEPT != 0 && PGL_DECAL_TRIVIAL_ACCEPT != 1) || \
+    (PGL_DECAL_CLIP_PREFIX_REUSE != 0 && PGL_DECAL_CLIP_PREFIX_REUSE != 1) || \
     (PGL_COMPACT_QWORD_COPY != 0 && PGL_COMPACT_QWORD_COPY != 1)
 #error "Compact packet copy/header switches must be 0 or 1"
 #endif
@@ -191,6 +196,32 @@
 #endif
 #if PGL_CITY_ROADS_VU1 != 0 && PGL_CITY_ROADS_VU1 != 1
 #error "PGL_CITY_ROADS_VU1 must be 0 or 1"
+#endif
+
+/* Four authored source corners share transform/projection work on VU1. */
+#ifndef PGL_CITY_SOURCE_QUADS
+#define PGL_CITY_SOURCE_QUADS 1
+#endif
+/* Single-material X2F doubles output capacity without changing input shape. */
+#ifndef PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT
+#define PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT 1
+#endif
+#if PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT != 0 && PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT != 1
+#error "PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT must be 0 or 1"
+#endif
+/* Reuse corner classifications before entering the unchanged X2F clipper. */
+#ifndef PGL_CITY_SOURCE_CLIP_DISPATCH
+#define PGL_CITY_SOURCE_CLIP_DISPATCH 1
+#endif
+#if PGL_CITY_SOURCE_CLIP_DISPATCH != 0 && PGL_CITY_SOURCE_CLIP_DISPATCH != 1
+#error "PGL_CITY_SOURCE_CLIP_DISPATCH must be 0 or 1"
+#endif
+#ifndef PGL_CITY_BILLBOARD_CORNER_REUSE
+#define PGL_CITY_BILLBOARD_CORNER_REUSE 1
+#endif
+#if (PGL_CITY_SOURCE_QUADS != 0 && PGL_CITY_SOURCE_QUADS != 1) || \
+    (PGL_CITY_BILLBOARD_CORNER_REUSE != 0 && PGL_CITY_BILLBOARD_CORNER_REUSE != 1)
+#error "PGL city corner switches must be 0 or 1"
 #endif
 
 /********************************************
@@ -652,6 +683,19 @@ GLboolean pglDrawWallDescriptorArrays(GLenum primitive, const GLfloat* geometry,
 void pglGetWallPreparationStats(unsigned int* texturePrefixReused, unsigned int* drawTailReused,
     unsigned int* directAccepted, unsigned int* directRejected);
 
+/* Four authored corners ABCD retain the original ABC/ACD diagonal and each
+   corner's XYZ3/UV2/floatRGBA4 values. The caller subtracts eye on EE using
+   the source operation order, then uses the original rotation-only X2
+   modelview. The lane is unlit and textured; it retains X2 clipping, fog/opacity and
+   raster-depth semantics. Count and each source span must be multiples of
+   four. Arrays are borrowed and immutable until frame DMA completion. */
+#define PGL_CLIP_QUADS_X2F ((GLenum)0x80000000 | 12)
+#define PGL_CLIP_QUAD_X2F_PROP ((pglU64_t)1 << 44)
+void pglRegisterClipQuadX2FRenderer(void);
+/* bit0 = registered four-corner source path, bit1 = single-material A60/B36,
+   bit2 = shared corner classification dispatch (culling OFF only). */
+unsigned int pglGetSourceQuadSubmissionOptions(void);
+
 /* Compact camera-facing glow quads, independent of the paired-wall state.
    Register once after pglInit; call SetAxes with the source-space U/V axes.
    GEO glVertexPointer(4,GL_FLOAT): [center.xyz,half][u0,v0,u1,v1].
@@ -741,7 +785,8 @@ typedef struct PGLBillboardAlphaQuad {
 #define PGL_CLIP_BILLBOARD_QUADS_X2B ((GLenum)0x80000000 | 10)
 #define PGL_CLIP_BILLBOARD_X2B_PROP ((pglU64_t)1 << 42)
 void pglRegisterBillboardRenderer(void);
-/* bit0 uniform-alpha X2B, bit1 independent per-corner-alpha X2A. */
+/* bit0 uniform-alpha X2B, bit1 independent per-corner-alpha X2A,
+ * bit2 exact shared-corner transform/classification reuse. */
 unsigned int pglGetBillboardSubmissionOptions(void);
 /* Same transactional source ownership/state contract as pglDrawPoolQuads.
    Caller proves finite authored corners and that neither original triangle
@@ -827,7 +872,8 @@ void pglRegisterDecalRenderer(void);
    bit 1 = compact header/CNT, bit 2 = aligned qword payload copies,
    bit 3 = exact VU corner XY product reuse,
    bit 4 = ordered compact/projected runs in one decal program,
-   bit 5 = exact four-corner all-inside classification. */
+   bit 5 = exact four-corner all-inside classification,
+   bit 6 = reuse the proven plane prefix after a failed quad certificate. */
 unsigned int pglGetDecalSubmissionOptions(void);
 /* Submit the whole base sweep followed by the optional whole glow sweep.
    Call after draining pending geometry, in the normal frame chain, outside

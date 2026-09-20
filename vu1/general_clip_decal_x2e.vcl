@@ -8,7 +8,7 @@
      ; Never use an interleaved base/glow compound kick for these stickers.
      ; Context q1..4 combined matrix; q5=[rx,ry,rd,near];
      ; q6=[invRx,invRy,invDepth,M]; q7=[D,baseBias,glowBias,pass];
-     ; q8=[guardX,guardY,XY-reuse(0/1),trivial-accept(0/1)]. Public source keeps
+     ; q8=[guardX,guardY,XY-reuse(0/1),accept/prefix flags(0/1/3)]. Public source keeps
      ; z/w=0; the
      ; linked library selects its private decoder gate after owning the copy.
      ; Standard q57 and q75..78 retain their ABI.
@@ -340,7 +340,9 @@ e_decode_legacy_lid:
 
 e_quad_classify_lid:
      ; This is only an exact all-inside certificate. Any outside corner
-     ; retains the established per-triangle five-plane walker below.
+     ; retains the established per-triangle walker. q221.y records the first
+     ; unproved plane; every earlier plane leaves both source triangles intact.
+     isw.y vi00, kETrivial(buffer_top)
      ilw.y qa_enabled, kEReuse(buffer_top)
      ibeq qa_enabled, vi00, e_quad_partial_lid
      lq qa_a, kEQuad(buffer_top)
@@ -377,17 +379,25 @@ e_quad_plane_lid:
      move.xyz qa_test, qa_dist
      clipw.xyz qa_test, qa_test[w]
      fcand vi01, 42
-     ibne vi01, vi00, e_quad_partial_lid
+     ibne vi01, vi00, e_quad_prefix_lid
      addw.x qa_test, qa_zero, qa_dist
      clipw.xyz qa_test, qa_test[w]
      fcand vi01, 2
-     ibne vi01, vi00, e_quad_partial_lid
+     ibne vi01, vi00, e_quad_prefix_lid
      iaddiu qa_plane, qa_plane, 1
      isubiu qa_left, qa_left, 1
      ibgtz qa_left, e_quad_plane_lid
      iaddiu qa_inside, vi00, 1
      isw.x qa_inside, kETrivial(buffer_top)
      b e_triangle_lid
+e_quad_prefix_lid:
+     ilw.y qa_reuse, kEReuse(buffer_top)
+     isubiu qa_reuse, qa_reuse, 3
+     ibne qa_reuse, vi00, e_quad_partial_lid
+     iaddiu qa_first, vi00, 5
+     isub qa_first, qa_first, qa_left
+     isw.y qa_first, kETrivial(buffer_top)
+     b e_quad_partial_lid
 e_quad_partial_lid:
      isw.x vi00, kETrivial(buffer_top)
      b e_triangle_lid
@@ -456,9 +466,10 @@ e_triangle_ready_lid:
      isw.y setup_ptr, kEClip(buffer_top)
      iaddiu setup_ptr, vi00, 3
      isw.z setup_ptr, kEClip(buffer_top)
-     isw.w vi00, kEClip(buffer_top)
      ilw.x triangle_inside, kETrivial(buffer_top)
      ibne triangle_inside, vi00, e_project_begin_lid
+     ilw.y setup_ptr, kETrivial(buffer_top)
+     isw.w setup_ptr, kEClip(buffer_top)
      b e_plane_lid
 
 e_plane_lid:

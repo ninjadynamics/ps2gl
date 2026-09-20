@@ -90,7 +90,7 @@ def check():
             actual = int(mem[top + 221].view(np.uint32)[0])
             assert actual == want, (case, gate, actual, want, corners)
             assert not kicks
-            before[top + 221, 0] = mem[top + 221, 0]
+            before[top + 221, :2] = mem[top + 221, :2]
             assert before.tobytes() == mem.tobytes()
             assert np.array_equal(vf[1, :3], [2047.5, 2047.5, F(maximum / 2)])
             assert np.array_equal(vf[2], [1, 1, 1, 1])

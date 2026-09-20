@@ -206,8 +206,19 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
         packet.OpenUnpack(Vifs::UnpackModes::v4_32,
             ContextFirstQuad + 1u, Packet::kSingleBuff);
     }
-    pglAddOwnedPayload(packet, (const float*)&RoadContext + ContextFirstQuad * 4u,
-        (56u - ContextFirstQuad) * 4u);
+    if (ContextFirstQuad == 48u) {
+        // The public billboard context reserves q54.w=0. This private flag
+        // belongs only to X2B/X2A; retain the untouched public context cache.
+        // Copy once into the open packet, then override only its owned word.
+        // Add does not publish/send this payload before CloseUnpack below.
+        float* const billboardContext = pglAddOwnedPayload(packet,
+            (const float*)&RoadContext + ContextFirstQuad * 4u, 32u);
+        const uint32_t reuse = PGL_CITY_BILLBOARD_CORNER_REUSE ? 1u : 0u;
+        memcpy((char*)billboardContext + 5u * 16u + 12u, &reuse, sizeof(reuse));
+    } else {
+        pglAddOwnedPayload(packet, (const float*)&RoadContext + ContextFirstQuad * 4u,
+            (56u - ContextFirstQuad) * 4u);
+    }
     packet.CloseUnpack();
 
     packet.Pad96();

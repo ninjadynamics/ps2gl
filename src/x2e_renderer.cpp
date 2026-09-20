@@ -73,7 +73,8 @@ void CClipDecalX2ERenderer::SetDecalContext(const PGLDecalContext& context, bool
     // Public source clip.z/w remain zero. Only this linked module chooses the
     // private decoder path; old applications do not need a new descriptor ABI.
     DecalContext.clip[2] = PGL_DECAL_XY_REUSE ? 1.0f : 0.0f;
-    DecalContext.clip[3] = PGL_DECAL_TRIVIAL_ACCEPT ? 1.0f : 0.0f;
+    DecalContext.clip[3] = PGL_DECAL_TRIVIAL_ACCEPT
+        ? (PGL_DECAL_CLIP_PREFIX_REUSE ? 3.0f : 1.0f) : 0.0f;
     pGLContext->SetRendererContextChanged(true);
 }
 
@@ -284,7 +285,8 @@ extern "C" unsigned int pglGetDecalSubmissionOptions(void)
         | (PGL_COMPACT_QWORD_COPY ? 4u : 0u)
         | (PGL_DECAL_XY_REUSE ? 8u : 0u)
         | (PGL_DECAL_PROJECTED_RUNS ? 16u : 0u)
-        | (PGL_DECAL_TRIVIAL_ACCEPT ? 32u : 0u);
+        | (PGL_DECAL_TRIVIAL_ACCEPT ? 32u : 0u)
+        | (PGL_DECAL_TRIVIAL_ACCEPT && PGL_DECAL_CLIP_PREFIX_REUSE ? 64u : 0u);
 #else
     return 0u;
 #endif

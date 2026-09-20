@@ -29,6 +29,7 @@ class CGeometryBlock;
 class CRenderer;
 class CUnlitTexTriRenderer;
 class CClipTriX2Renderer;
+class CClipQuadX2FRenderer;
 class CClipRoadX2RRenderer;
 class CClipPoolX2PRenderer;
 class CClipBillboardX2BRenderer;
@@ -67,6 +68,7 @@ class CRendererManager {
     CClipBillboardX2BRenderer* BillboardRenderer;
     CClipBillboardAlphaX2ARenderer* BillboardAlphaRenderer;
     CClipDecalX2ERenderer* DecalRenderer;
+    CClipQuadX2FRenderer* SourceQuadRenderer;
 
     void RegisterDefaultRenderer(CRenderer* renderer);
 
@@ -76,6 +78,8 @@ public:
     void RegisterUserRenderer(CRenderer* renderer);
     void RegisterUnlitTexTriRenderer(CUnlitTexTriRenderer* renderer);
     void RegisterX2Renderer(CClipTriX2Renderer* renderer);
+    void RegisterSourceQuadRenderer(CClipQuadX2FRenderer* renderer);
+    CClipQuadX2FRenderer* GetSourceQuadRenderer() const { return SourceQuadRenderer; }
     bool CanSelectWallDescriptorRenderer(bool pairedColors) const
     {
         return (pairedColors ? WallColorRendererRegistered : WallQuadRendererRegistered)

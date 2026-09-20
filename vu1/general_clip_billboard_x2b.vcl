@@ -14,9 +14,14 @@
  * GSScale*eye-space projection with no model/view transform.
  * BASE79/OFFSET472. Relative q0.x count1..32, inputq5..100.
  * q101..105 source view planes; polyA106..201, polyB202..297 (32*3q),
+ * private four-corner cache298..309, outcodes310..313;
  * control316..323; outputA324..414 (30 vertices), B415..469 (18 vertices),
  * guard470..471. Complete-triangle spill preserves input/material order.
  */
+
+/* q54.w is the private PGL_CITY_BILLBOARD_CORNER_REUSE option. Zero keeps
+ * the original six-corner path; nonzero computes ABCD once, then clips the
+ * original ABC and ACD independently. The cache never aliases polygons/GIF. */
 
      #include "vu1_mem_linear.h"
      .include "db_in_db_out.i"
@@ -27,6 +32,8 @@
 kRPlanes            .equ 101
 kRSkyA              .equ 106
 kRSkyB              .equ 202
+kBCache             .equ 298
+kBCodes             .equ 310
 kRDesc              .equ 316
 kROut               .equ 317
 kRPlaneState        .equ 319
@@ -50,6 +57,8 @@ kBillboardCount .equ 32
 kBillboardWords .equ 3
      .include "source_billboard_begin.i"
 r_decode_lid:
+     ilw.w bc_enabled, 54(vi00)
+     ibne bc_enabled, vi00, bc_decode_lid
      ilw.x desc_ptr, kRDesc(buffer_top)
      ilw.z desc_phase, kRDesc(buffer_top)
      lq xb_center, 0(desc_ptr)
@@ -101,4 +110,17 @@ xb_decode_third_lid:
      iaddiu vertex_left, vi00, 3
      b r_classify_lid
 
+     .macro bc_load_alpha
+     .endm
+     .macro bc_alpha_a
+     .endm
+     .macro bc_alpha_b
+     .endm
+     .macro bc_alpha_c
+     .endm
+     .macro bc_alpha_d
+     .endm
+
+     .include "source_billboard_cached_decode.i"
+     .include "source_billboard_cached_classify.i"
      .include "source_billboard_end.i"

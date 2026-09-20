@@ -1,0 +1,281 @@
+cat vu1/general_clip_decal_x2e.vcl | sed 's/#include[ 	]\+.\+// ; s/#define[ 	]\+.\+// ; s|\(\.include[ 	]\+\)"\([^/].\+\)"|\1"vu1/\2"|' - > vu1/general_clip_decal_x2e_pp1.vcl
+python3 vu1/gasp.py -c ';' -Ivu1 -o vu1/general_clip_decal_x2e_pp2.vcl vu1/general_clip_decal_x2e_pp1.vcl
+cat vu1/general_clip_decal_x2e_pp2.vcl | sed 's/\[\([0-9]\)\]/_\1/g ; s/\[\([w-zW-Z]\)\]/\1/g' - > vu1/general_clip_decal_x2e_pp3.vcl
+sed 's/;.*//' vu1/general_clip_decal_x2e_pp3.vcl | cc -E -P -imacros vu1/vu1_mem_linear.h -o vu1/general_clip_decal_x2e_pp4.vcl -
+vcl -ovu1/general_clip_decal_x2e_vcl.vsm vu1/general_clip_decal_x2e_pp4.vcl
+INFO: OS_Init(win32)
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO: remove branch..
+INFO2: REMOVE INST:   ---> [***{loi}***] {12583167.0} 
+INFO2: REMOVE INST:   ---> [***{maxi.w}***] {gs_offsets},{vf00},{i} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{lq}***] {setup_depth},{7(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{lq}***] {pl_raster},{5(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{move.xyzw}***] {pl_t},{pl_zero} 
+INFO2: PRUNE FIELD: [XYZW->YW]    ---> [***{move.xyzw}***] {pl_t},{pl_zero} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{move.xyzw}***] {pl_t},{pl_zero} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {er_yu0},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {er_m0},{1(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {er_m1},{2(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {er_m2},{3(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {er_m3},{4(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{lq}***] {ec_yu6},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XZ]    ---> [***{lq}***] {ec_vg6},{2(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_clip6},{149+(0*3)(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_zw6},{5(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{mr32}***] {ec_zw6},{ec_zw6} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{mr32}***] {ec_zw6},{ec_zw6} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s6},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu6},{ec_yu6} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu6},{ec_yu6} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_vg6},{ec_vg6} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_vg6},{ec_vg6} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_vg6},{ec_vg6} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{lq}***] {ec_yu7},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{lq}***] {ec_vg7},{2(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_clip7},{149+(1*3)(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{lq}***] {ec_zw7},{5(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s7},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_yu7},{ec_yu7} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu7},{ec_yu7} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu7},{ec_yu7} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_glow7},{ec_vg7} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_vg7},{ec_vg7} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_vg7},{ec_vg7} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_vg7},{ec_vg7} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{lq}***] {ec_yu8},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YW]    ---> [***{lq}***] {ec_vg8},{2(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_clip8},{149+(2*3)(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_zw8},{6(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{mr32}***] {ec_zw8},{ec_zw8} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{mr32}***] {ec_zw8},{ec_zw8} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s8},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_yu8},{ec_yu8} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu8},{ec_yu8} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu8},{ec_yu8} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_glow8},{ec_vg8} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{lq}***] {ec_yu9},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YZ]    ---> [***{lq}***] {ec_vg9},{2(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_clip9},{149+(3*3)(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{lq}***] {ec_zw9},{6(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s9},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu9},{ec_yu9} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu9},{ec_yu9} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_ab10},{0(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XZ]    ---> [***{lq}***] {ec_yu10},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XZ]    ---> [***{lq}***] {ec_vg10},{2(desc_ptr)} 
+INFO2: REMOVE INST:   ---> [***{move.xyzw}***] {ec_p10},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_ab10},{ec_ab10} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_ab10},{ec_ab10} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_ab10},{ec_ab10} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_rot10},{ec_yu10} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_rot10},{ec_rot10} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_rot10},{ec_rot10} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m10},{1(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m10},{2(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m10},{3(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m10},{4(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_zw10},{5(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{mr32}***] {ec_zw10},{ec_zw10} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{mr32}***] {ec_zw10},{ec_zw10} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s10},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu10},{ec_yu10} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu10},{ec_yu10} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_vg10},{ec_vg10} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_vg10},{ec_vg10} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_vg10},{ec_vg10} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{lq}***] {ec_ab11},{0(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{lq}***] {ec_yu11},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{lq}***] {ec_vg11},{2(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YZ]    ---> [***{mr32}***] {ec_ab11},{ec_ab11} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{mr32}***] {ec_ab11},{ec_ab11} 
+INFO2: REMOVE INST:   ---> [***{move.xyzw}***] {ec_p11},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_ab11},{ec_ab11} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_ab11},{ec_ab11} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_ab11},{ec_ab11} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_rot11},{ec_yu11} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_rot11},{ec_rot11} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_rot11},{ec_rot11} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m11},{1(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m11},{2(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m11},{3(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m11},{4(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{lq}***] {ec_zw11},{5(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s11},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_yu11},{ec_yu11} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu11},{ec_yu11} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu11},{ec_yu11} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_glow11},{ec_vg11} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_vg11},{ec_vg11} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_vg11},{ec_vg11} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_vg11},{ec_vg11} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{lq}***] {ec_ab12},{0(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YW]    ---> [***{lq}***] {ec_yu12},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YW]    ---> [***{lq}***] {ec_vg12},{2(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YZ]    ---> [***{mr32}***] {ec_ab12},{ec_ab12} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{mr32}***] {ec_ab12},{ec_ab12} 
+INFO2: REMOVE INST:   ---> [***{move.xyzw}***] {ec_p12},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_ab12},{ec_ab12} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_ab12},{ec_ab12} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_ab12},{ec_ab12} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m12},{1(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m12},{2(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m12},{3(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m12},{4(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_zw12},{6(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->XW]    ---> [***{mr32}***] {ec_zw12},{ec_zw12} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{mr32}***] {ec_zw12},{ec_zw12} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s12},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_yu12},{ec_yu12} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu12},{ec_yu12} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu12},{ec_yu12} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_glow12},{ec_vg12} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_ab13},{0(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YZ]    ---> [***{lq}***] {ec_yu13},{1(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YZ]    ---> [***{lq}***] {ec_vg13},{2(desc_ptr)} 
+INFO2: REMOVE INST:   ---> [***{move.xyzw}***] {ec_p13},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_ab13},{ec_ab13} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{mr32}***] {ec_ab13},{ec_ab13} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{mr32}***] {ec_ab13},{ec_ab13} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m13},{1(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m13},{2(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m13},{3(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XY]    ---> [***{lq}***] {ec_m13},{4(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->ZW]    ---> [***{lq}***] {ec_zw13},{6(desc_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{sub.xyzw}***] {ec_s13},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Y]    ---> [***{mr32}***] {ec_yu13},{ec_yu13} 
+INFO2: PRUNE FIELD: [XYZW->X]    ---> [***{mr32}***] {ec_yu13},{ec_yu13} 
+INFO2: PRUNE FIELD: [XYZW->XYW]    ---> [***{lq}***] {qa_a},{149(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->XYW]    ---> [***{lq}***] {qa_b},{149+3(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->XYW]    ---> [***{lq}***] {qa_c},{149+6(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->XYW]    ---> [***{lq}***] {qa_d},{149+9(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->W]    ---> [***{move.xyzw}***] {qa_test},{qa_zero} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{move.xyzw}***] {nd_c},{ones} 
+INFO2: PRUNE FIELD: [XYZW->XYW]    ---> [***{lq}***] {scan_pos},{0(scan_ptr)} 
+INFO2: PRUNE FIELD: [XYZW->YZW]    ---> [***{sub.xyzw}***] {en_v22},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {cp_prev_s},{1(cp_last)} 
+INFO2: PRUNE FIELD: [XYZW->YZW]    ---> [***{sub.xyzw}***] {en_v24},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->YZW]    ---> [***{sub.xyzw}***] {en_v26},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{move.xyzw}***] {cp_prev_s},{cp_cur_s} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {pr_raster},{5(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {pr_depth},{7(vi00)} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {pr_coeff},{218(buffer_top)} 
+INFO2: PRUNE FIELD: [XYZW->YZW]    ---> [***{sub.xyzw}***] {en_v31},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->YZW]    ---> [***{sub.xyzw}***] {en_v33},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->Z]    ---> [***{sub.xyzw}***] {pr_zero},{vf00},{vf00} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{move.xyzw}***] {pr_c},{ones} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {ee_p36},{0(fe_p0)} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {ee_s36},{0+1(fe_p0)} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {ee_p40},{0(fe_rim)} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {ee_s40},{0+1(fe_rim)} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {ee_p44},{3(fe_rim)} 
+INFO2: PRUNE FIELD: [XYZW->XYZ]    ---> [***{lq}***] {ee_s44},{3+1(fe_rim)} 
+INFO2: REMOVE INST:   ---> [***{iaddiu}***] {next_output},{buffer_top},{316} 
+INFO: Opt::Linear e_projected_record_lid  12/12
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_55  6/6
+INFO: Opt::Linear e_projected_vertex_lid  4/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_57  1/1
+INFO: Opt::Linear e_glow_headroom_lid  10/9
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_95  21/21
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_4  2/0
+INFO: Opt::Linear       e_main_lid  7/7
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_42  2/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_7  2/2
+INFO: Opt::Linear     ef_stop_lid3  2/2
+INFO: Opt::Linear e_count_positive_lid  4/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_12  2/2
+INFO: Opt::Linear     ef_stop_lid4  2/2
+INFO: Opt::Linear e_count_valid_lid  19/19
+INFO: Opt::Linear e_planes_ready_lid  14/8
+INFO: Opt::Linear     e_decode_lid  6/6
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_21  6/6
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_22  27/21
+INFO: Opt::Linear e_decode_payload_lid  55/55
+INFO: Opt::Linear e_decode_legacy_lid  95/92
+INFO: Opt::Linear e_quad_classify_lid  6/6
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_29  16/13
+INFO: Opt::Linear e_quad_plane_lid  35/35
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_31  11/11
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_32  4/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_33  3/3
+INFO: Opt::Linear e_quad_prefix_lid  8/8
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_36  3/3
+INFO: Opt::Linear e_quad_partial_lid  2/2
+INFO: Opt::Linear e_projected_material_lid  25/23
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_44  2/2
+INFO: Opt::Linear   e_triangle_lid  18/18
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_47  8/8
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_48  13/13
+INFO: Opt::Linear        e_acd_lid  12/12
+INFO: Opt::Linear e_triangle_ready_lid  9/8
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_52  5/5
+INFO: Opt::Linear      e_plane_lid  8/8
+INFO: Opt::Linear   e_classify_lid  38/37
+INFO: Opt::Linear e_classify_next_lid  4/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_59  2/2
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_60  6/6
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_61  40/40
+INFO: Opt::Linear       e_edge_lid  37/37
+INFO: Opt::Linear  e_edge_next_lid  5/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_64  22/20
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_65  2/2
+INFO: Opt::Linear    ef_stop_lid28  2/2
+INFO: Opt::Linear   es_valid_lid27  5/5
+INFO: Opt::Linear     e_inside_lid  2/2
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_71  4/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_72  2/2
+INFO: Opt::Linear    ef_stop_lid30  2/2
+INFO: Opt::Linear   es_valid_lid29  5/5
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_78  4/4
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_79  6/5
+INFO: Opt::Linear e_next_plane_lid  7/6
+INFO: Opt::Linear e_project_begin_lid  6/5
+INFO: Opt::Linear    e_project_lid  64/64
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_85  2/2
+INFO: Opt::Linear    ef_stop_lid32  2/2
+INFO: Opt::Linear e_base_headroom_lid  26/26
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_90  2/2
+INFO: Opt::Linear    ef_stop_lid34  2/2
+INFO: Opt::Linear e_material_ready_lid  8/6
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_97  0/0
+INFO: Opt::Linear e_output_begin_lid  11/11
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_100  2/2
+INFO: Opt::Linear      e_cap_a_lid  1/1
+INFO: Opt::Linear  e_cap_ready_lid  12/12
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_104  11/11
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_109  0/0
+INFO: Opt::Linear   ek_after_lid35  2/2
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_112  1/1
+INFO: Opt::Linear   ek_ready_lid35  0/0
+INFO: Opt::Linear e_emit_begin_lid  6/5
+INFO: Opt::Linear       e_emit_lid  41/41
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_117  2/2
+INFO: Opt::Linear e_next_triangle_lid  6/6
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_120  3/3
+INFO: Opt::Linear e_next_descriptor_lid  9/8
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_123  13/11
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_128  0/0
+INFO: Opt::Linear   ek_after_lid48  2/2
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_131  0/0
+INFO: Opt::Linear   ek_ready_lid48  2/0
+INFO: Opt::Linear __v_vu1_general_clip_decal_x2e_pp4_vcl_133  2/2
+INFO: OS_End(win32)
+rm vu1/general_clip_decal_x2e_pp1.vcl vu1/general_clip_decal_x2e_pp2.vcl vu1/general_clip_decal_x2e_pp3.vcl vu1/general_clip_decal_x2e_pp4.vcl

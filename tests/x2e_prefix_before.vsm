@@ -245,7 +245,7 @@ e_quad_classify_lid:
 ; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [e_quad_classify_lid]
          NOP                                                        ilw.y         VI01,220(VI02)
          NOP                                                        ibeq          VI01,VI00,e_quad_partial_lid               ;	STALL_LATENCY ?3
-         NOP                                                        isw.y         VI00,221(VI02)
+         NOP                                                        NOP
 ; _LNOPT_w=[ normal2 ] 16 [13 0] 16   [__v_vu1_general_clip_decal_x2e_pp4_vcl_29]
          NOP                                                        lq.xyw        VF09,149(VI02)
          NOP                                                        lq.xyw        VF08,152(VI02)
@@ -279,7 +279,7 @@ e_quad_plane_lid:
          NOP                                                        NOP
          NOP                                                        NOP
          NOP                                                        fcand         VI01,42
-         NOP                                                        ibne          VI01,VI00,e_quad_prefix_lid
+         NOP                                                        ibne          VI01,VI00,e_quad_partial_lid
          NOP                                                        NOP
 ; _LNOPT_w=[ normal2 ] 8 [11 0] 11   [__v_vu1_general_clip_decal_x2e_pp4_vcl_31]
          addw.x        VF08,VF06,VF07w                              NOP
@@ -288,7 +288,7 @@ e_quad_plane_lid:
          NOP                                                        NOP
          NOP                                                        NOP
          NOP                                                        fcand         VI01,2
-         NOP                                                        ibne          VI01,VI00,e_quad_prefix_lid
+         NOP                                                        ibne          VI01,VI00,e_quad_partial_lid
          NOP                                                        NOP
 ; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_decal_x2e_pp4_vcl_32]
          NOP                                                        isubiu        VI05,VI05,0x00000001
@@ -299,17 +299,6 @@ e_quad_plane_lid:
          NOP                                                        iaddiu        VI01,VI00,0x00000001
          NOP                                                        b             e_triangle_lid
          NOP                                                        isw.x         VI01,221(VI02)
-e_quad_prefix_lid:
-; _LNOPT_w=[ normal2 ] 5 [8 0] 8   [e_quad_prefix_lid]
-         NOP                                                        ilw.y         VI01,220(VI02)
-         NOP                                                        isubiu        VI01,VI01,0x00000003                       ;	STALL_LATENCY ?3
-         NOP                                                        NOP
-         NOP                                                        ibne          VI01,VI00,e_quad_partial_lid
-         NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_decal_x2e_pp4_vcl_36]
-         NOP                                                        iaddiu        VI01,VI00,0x00000005
-         NOP                                                        isub          VI05,VI01,VI05
-         NOP                                                        isw.y         VI05,221(VI02)
 e_quad_partial_lid:
 ; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [e_quad_partial_lid]
          NOP                                                        b             e_triangle_lid
@@ -334,7 +323,7 @@ e_projected_vertex_lid:
          NOP                                                        lq            VF08,1(VI01)
          NOP                                                        ibeq          VI04,VI00,e_projected_material_lid
          NOP                                                        lq            VF09,2(VI01)
-; _LNOPT_w=[ normal2 ] 2 [4 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_42]
+; _LNOPT_w=[ normal2 ] 2 [4 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_39]
          max.xyz       VF09,VF02,VF02                               mr32.z        VF07,VF07
          max.w         VF09,VF08,VF08                               NOP
 e_projected_material_lid:
@@ -350,7 +339,7 @@ e_projected_material_lid:
          NOP                                                        sq            VF09,-3(VI05)                              ;	STALL_LATENCY ?2
          NOP                                                        ibgtz         VI06,e_projected_vertex_lid
          NOP                                                        sq            VF08,-2(VI05)
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_44]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_41]
          NOP                                                        b             e_output_begin_lid
          NOP                                                        NOP
 e_triangle_lid:
@@ -365,7 +354,7 @@ e_triangle_lid:
          NOP                                                        NOP
          NOP                                                        ibne          VI04,VI00,e_next_triangle_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 8 [8 0] 8   [__v_vu1_general_clip_decal_x2e_pp4_vcl_47]
+; _LNOPT_w=[ normal2 ] 8 [8 0] 8   [__v_vu1_general_clip_decal_x2e_pp4_vcl_44]
          NOP                                                        lq            VF06,149(VI02)
          NOP                                                        lq            VF05,150(VI02)
          NOP                                                        lq            VF04,151(VI02)
@@ -374,7 +363,7 @@ e_triangle_lid:
          NOP                                                        sq            VF05,162(VI02)
          NOP                                                        ibne          VI01,VI00,e_acd_lid
          NOP                                                        sq            VF04,163(VI02)
-; _LNOPT_w=[ normal2 ] 13 [13 0] 13   [__v_vu1_general_clip_decal_x2e_pp4_vcl_48]
+; _LNOPT_w=[ normal2 ] 13 [13 0] 13   [__v_vu1_general_clip_decal_x2e_pp4_vcl_45]
          NOP                                                        lq            VF08,152(VI02)
          NOP                                                        lq            VF07,153(VI02)
          NOP                                                        lq            VF06,154(VI02)
@@ -403,18 +392,17 @@ e_acd_lid:
          NOP                                                        sq            VF04,168(VI02)
          NOP                                                        sq            VF03,169(VI02)
 e_triangle_ready_lid:
-; _LNOPT_w=[ normal2 ] 8 [8 0] 8   [e_triangle_ready_lid]
+; _LNOPT_w=[ normal2 ] 9 [9 0] 9   [e_triangle_ready_lid]
          NOP                                                        iaddiu        VI06,VI02,0x000000a1
          NOP                                                        iaddiu        VI05,VI02,0x000000b9
-         NOP                                                        ilw.x         VI01,221(VI02)
          NOP                                                        iaddiu        VI04,VI00,0x00000003
+         NOP                                                        ilw.x         VI01,221(VI02)
          NOP                                                        isw.x         VI06,216(VI02)
          NOP                                                        isw.y         VI05,216(VI02)
-         NOP                                                        ibne          VI01,VI00,e_project_begin_lid
          NOP                                                        isw.z         VI04,216(VI02)
-; _LNOPT_w=[ normal2 ] 2 [5 0] 5   [__v_vu1_general_clip_decal_x2e_pp4_vcl_52]
-         NOP                                                        ilw.y         VI01,221(VI02)
-         NOP                                                        isw.w         VI01,216(VI02)                             ;	STALL_LATENCY ?3
+         NOP                                                        ibne          VI01,VI00,e_project_begin_lid
+         NOP                                                        isw.w         VI00,216(VI02)
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_decal_x2e_pp4_vcl_49]
 e_plane_lid:
 ; _LNOPT_w=[ normal2 ] 5 [8 0] 8   [e_plane_lid]
          NOP                                                        ilw.w         VI01,216(VI02)
@@ -422,7 +410,7 @@ e_plane_lid:
          NOP                                                        NOP
          NOP                                                        ibgez         VI04,e_project_begin_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 6 [6 0] 6   [__v_vu1_general_clip_decal_x2e_pp4_vcl_55]
+; _LNOPT_w=[ normal2 ] 6 [6 0] 6   [__v_vu1_general_clip_decal_x2e_pp4_vcl_52]
          NOP                                                        iaddiu        VI04,VI02,0x000000d1
          NOP                                                        iadd          VI04,VI04,VI01
          NOP                                                        lq            VF03,0(VI04)
@@ -450,7 +438,7 @@ e_classify_lid:
          NOP                                                        NOP
          NOP                                                        ibne          VI01,VI00,e_classify_next_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_decal_x2e_pp4_vcl_57]
+; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_decal_x2e_pp4_vcl_54]
          NOP                                                        iaddiu        VI06,VI06,0x00000001
 e_classify_next_lid:
 ; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [e_classify_next_lid]
@@ -458,14 +446,14 @@ e_classify_next_lid:
          NOP                                                        NOP
          NOP                                                        ibgtz         VI05,e_classify_lid
          NOP                                                        iaddiu        VI04,VI04,0x00000003
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_59]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_56]
          NOP                                                        ibeq          VI06,VI00,e_next_triangle_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [__v_vu1_general_clip_decal_x2e_pp4_vcl_60]
+; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [__v_vu1_general_clip_decal_x2e_pp4_vcl_57]
          NOP                                                        ilw.z         VI04,216(VI02)
          NOP                                                        ibeq          VI06,VI04,e_next_plane_lid                 ;	STALL_LATENCY ?3
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 19 [40 0] 40   [__v_vu1_general_clip_decal_x2e_pp4_vcl_61]
+; _LNOPT_w=[ normal2 ] 19 [40 0] 40   [__v_vu1_general_clip_decal_x2e_pp4_vcl_58]
          sub.yzw       VF08,VF00,VF00                               ilw.x         VI05,216(VI02)
          NOP                                                        iadd          VI06,VI04,VI04
          NOP                                                        iadd          VI08,VI06,VI04
@@ -504,7 +492,7 @@ e_edge_lid:
          NOP                                                        NOP
          NOP                                                        ibeq          VI07,VI04,e_inside_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 12 [20 0] 22   [__v_vu1_general_clip_decal_x2e_pp4_vcl_64]
+; _LNOPT_w=[ normal2 ] 12 [20 0] 22   [__v_vu1_general_clip_decal_x2e_pp4_vcl_61]
          sub.x         VF15,VF07,VF11                               NOP
          sub           VF14,VF08,VF04                               div           Q,VF07x,VF15x                              ;	STALL_LATENCY ?3
          addq.x        VF07,VF00,Q                                  waitq                                                    ;	STALL_LATENCY ?6
@@ -517,7 +505,7 @@ e_edge_lid:
          add           VF12,VF04,VF15                               NOP
          add.xyz       VF13,VF05,VF13                               ibltz         VI01,es_valid_lid27
          add           VF14,VF06,VF14                               NOP
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_65]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_62]
          NOP                                                        iaddiu        VI01,VI00,0x00000001
          NOP                                                        isw.x         VI01,219(VI02)
 ef_stop_lid28:
@@ -535,12 +523,12 @@ e_inside_lid:
 ; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [e_inside_lid]
          NOP                                                        ibne          VI04,VI00,e_edge_next_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_decal_x2e_pp4_vcl_71]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_decal_x2e_pp4_vcl_68]
          NOP                                                        isubiu        VI01,VI09,0x00000008
          NOP                                                        NOP
          NOP                                                        ibltz         VI01,es_valid_lid29
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_72]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_69]
          NOP                                                        iaddiu        VI01,VI00,0x00000001
          NOP                                                        isw.x         VI01,219(VI02)
 ef_stop_lid30:
@@ -561,12 +549,12 @@ e_edge_next_lid:
          max           VF04,VF08,VF08                               iaddiu        VI07,VI04,0
          max           VF06,VF10,VF10                               ibgtz         VI08,e_edge_lid
          max.x         VF07,VF11,VF11                               iaddiu        VI05,VI05,0x00000003
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_decal_x2e_pp4_vcl_78]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_decal_x2e_pp4_vcl_75]
          NOP                                                        isubiu        VI01,VI09,0x00000003
          NOP                                                        NOP
          NOP                                                        ibltz         VI01,e_next_triangle_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 5 [5 0] 6   [__v_vu1_general_clip_decal_x2e_pp4_vcl_79]
+; _LNOPT_w=[ normal2 ] 5 [5 0] 6   [__v_vu1_general_clip_decal_x2e_pp4_vcl_76]
          NOP                                                        ilw.x         VI04,216(VI02)
          NOP                                                        ilw.y         VI01,216(VI02)
          NOP                                                        isw.z         VI09,216(VI02)
@@ -621,7 +609,7 @@ e_project_lid:
          NOP                                                        NOP
          NOP                                                        ibeq          VI01,VI00,e_base_headroom_lid
          addx.z        VF11,VF03,VF11x                              lq.xyz        VF06,5(VI00)
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_85]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_82]
          NOP                                                        iaddiu        VI01,VI00,0x00000001
          NOP                                                        isw.x         VI01,219(VI02)
 ef_stop_lid32:
@@ -645,7 +633,7 @@ e_base_headroom_lid:
          NOP                                                        NOP
          NOP                                                        ibeq          VI01,VI00,e_glow_headroom_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_90]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_87]
          NOP                                                        iaddiu        VI01,VI00,0x00000001
          NOP                                                        isw.x         VI01,219(VI02)
 ef_stop_lid34:
@@ -660,7 +648,7 @@ e_glow_headroom_lid:
          addw.z        VF09,VF09,VF00w                              NOP
          mul.xy        VF03,VF03,VF06                               ibeq          VI01,VI00,e_material_ready_lid             ;	STALL_LATENCY ?2
          sub.z         VF09,VF09,VF03                               NOP
-; _LNOPT_w=[ normal2 ] 7 [21 0] 21   [__v_vu1_general_clip_decal_x2e_pp4_vcl_95]
+; _LNOPT_w=[ normal2 ] 7 [21 0] 21   [__v_vu1_general_clip_decal_x2e_pp4_vcl_92]
          addz.x        VF06,VF00,VF08z                              move.xyz      VF05,VF02
          suby.x        VF06,VF06,VF08y                              NOP                                                      ;	STALL_LATENCY ?3
          mulx.x        VF06,VF06,VF08x                              NOP                                                      ;	STALL_LATENCY ?3
@@ -677,7 +665,7 @@ e_material_ready_lid:
          NOP                                                        sq            VF04,-2(VI04)                              ;	STALL_LATENCY ?1
          NOP                                                        ibgtz         VI05,e_project_lid
          NOP                                                        sq            VF03,-3(VI04)
-; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_decal_x2e_pp4_vcl_97]
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_decal_x2e_pp4_vcl_94]
 e_output_begin_lid:
 ; _LNOPT_w=[ normal2 ] 10 [11 0] 11   [e_output_begin_lid]
          NOP                                                        ilw.y         VI04,215(VI02)
@@ -690,7 +678,7 @@ e_output_begin_lid:
          NOP                                                        NOP
          NOP                                                        ibeq          VI06,VI05,e_cap_a_lid
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_100]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_97]
          NOP                                                        b             e_cap_ready_lid
          NOP                                                        iaddiu        VI05,VI00,0x00000012
 e_cap_a_lid:
@@ -707,7 +695,7 @@ e_cap_ready_lid:
          NOP                                                        NOP
          NOP                                                        iblez         VI05,e_emit_begin_lid
          NOP                                                        NOP
-; _LNOPT_w=[ vuta1 ] 9 [11 0] 11   [__v_vu1_general_clip_decal_x2e_pp4_vcl_104]
+; _LNOPT_w=[ vuta1 ] 9 [11 0] 11   [__v_vu1_general_clip_decal_x2e_pp4_vcl_101]
          NOP                                                        lq            VF03,75(VI00)
          NOP                                                        iadd          VI05,VI04,VI04
          NOP                                                        iadd          VI05,VI05,VI04
@@ -722,10 +710,10 @@ e_cap_ready_lid:
          NOP                                                        iaddiu        VI01,VI02,0x000000e1
          NOP                                                        iaddiu        VI04,VI00,0x00000000
          NOP                                                        xgkick        VI05
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_109]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_106]
          NOP                                                        ibne          VI05,VI06,ek_ready_lid35
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_decal_x2e_pp4_vcl_112]
+; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_decal_x2e_pp4_vcl_109]
          NOP                                                        iaddiu        VI01,VI02,0x0000013c
 ek_ready_lid35:
 ; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [ek_ready_lid35]
@@ -778,7 +766,7 @@ e_emit_lid:
          NOP                                                        sq            VF07,-1(VI01)
          NOP                                                        ibgtz         VI06,e_emit_lid
          NOP                                                        sq            VF04,-8(VI01)
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_117]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_114]
          NOP                                                        isw.x         VI01,215(VI02)
          NOP                                                        isw.y         VI04,215(VI02)
 e_next_triangle_lid:
@@ -786,7 +774,7 @@ e_next_triangle_lid:
          NOP                                                        ilw.z         VI01,214(VI02)
          NOP                                                        ibne          VI01,VI00,e_next_descriptor_lid            ;	STALL_LATENCY ?3
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_decal_x2e_pp4_vcl_120]
+; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_decal_x2e_pp4_vcl_117]
          NOP                                                        iaddiu        VI01,VI00,0x00000001
          NOP                                                        b             e_triangle_lid
          NOP                                                        isw.z         VI01,214(VI02)
@@ -800,7 +788,7 @@ e_next_descriptor_lid:
          NOP                                                        isw.x         VI04,214(VI02)
          NOP                                                        ibgtz         VI01,e_decode_lid
          NOP                                                        isw.y         VI01,214(VI02)
-; _LNOPT_w=[ vuta1 ] 11 [11 0] 13   [__v_vu1_general_clip_decal_x2e_pp4_vcl_123]
+; _LNOPT_w=[ vuta1 ] 11 [11 0] 13   [__v_vu1_general_clip_decal_x2e_pp4_vcl_120]
          NOP                                                        ilw.y         VI01,215(VI02)
          NOP                                                        lq            VF01,75(VI00)
          NOP                                                        ilw.x         VI03,215(VI02)
@@ -817,20 +805,20 @@ e_next_descriptor_lid:
          NOP                                                        iaddiu        VI02,VI02,0x00000000
          NOP                                                        iaddiu        VI02,VI00,0x00000000
          NOP                                                        xgkick        VI01
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_128]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_125]
          NOP                                                        ibne          VI01,VI03,ek_ready_lid48
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_decal_x2e_pp4_vcl_131]
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_decal_x2e_pp4_vcl_128]
 ek_ready_lid48:
 ; _LNOPT_w=[ normal2 ] 2 [0 0] 2   [ek_ready_lid48]
          NOP[E]                                                     NOP
          NOP                                                        NOP
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_133]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_decal_x2e_pp4_vcl_130]
          NOP                                                        b             e_main_lid
          NOP                                                        NOP
 		.align 4
 vsmGeneralClipDecalX2E_CodeEnd:
-;	iCount=692
+;	iCount=683
 ; register stats:
 ;  12 VU User integer
 ;  19 VU User floating point

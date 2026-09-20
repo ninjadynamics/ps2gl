@@ -24,6 +24,7 @@ EE_OBJS = \
 	src/clip_renderer.o \
 	src/x2q_renderer.o \
 	src/x2c_renderer.o \
+	src/x2f_renderer.o \
 	src/x2g_renderer.o \
 	src/x2r_renderer.o \
 	src/x2p_renderer.o \
@@ -58,6 +59,7 @@ RENDERERS = \
 	general_clip_tri_x2d_decode \
 	general_clip_tri_x2q_decode \
 	general_clip_tri_x2c_decode \
+	general_clip_quad_x2f \
 	general_clip_glow_x2g_decode \
 	general_clip_road_x2r \
 	general_clip_pool_x2p \
@@ -99,6 +101,8 @@ X2A_VSM = vu1/general_clip_billboard_x2a_vcl.vsm
 X2A_GUARD = vu1/x2a_microcode_guard.py
 X2E_VSM = vu1/general_clip_decal_x2e_vcl.vsm
 X2E_GUARD = vu1/x2e_microcode_guard.py
+X2F_VSM = vu1/general_clip_quad_x2f_vcl.vsm
+X2F_GUARD = vu1/x2f_microcode_guard.py
 
 all: $(VSM_SOURCES) x2d-microcode-guard $(EE_LIB)
 
@@ -109,7 +113,11 @@ $(EE_LIB): x2r-microcode-guard
 $(EE_LIB): x2e-microcode-guard
 $(EE_LIB): x2c-microcode-guard x2p-microcode-guard
 $(EE_LIB): x2b-microcode-guard
-$(EE_LIB): x2a-microcode-guard
+$(EE_LIB): x2a-microcode-guard x2f-microcode-guard
+
+.PHONY: x2f-microcode-guard
+x2f-microcode-guard: $(X2F_VSM) $(X2F_GUARD)
+	python3 $(X2F_GUARD) $(X2F_VSM)
 
 .PHONY: x2a-microcode-guard
 x2a-microcode-guard: $(X2A_VSM) $(X2A_GUARD) $(X2R_GUARD)
@@ -182,6 +190,10 @@ include $(PS2SDK)/samples/Makefile.eeglobal
 vu1/general_clip_road_x2r.vo: $(X2R_VSM) $(X2R_GUARD)
 	python3 $(X2R_GUARD) $(X2R_VSM)
 	dvp-as -o $@ $(X2R_VSM)
+
+vu1/general_clip_quad_x2f.vo: $(X2F_VSM) $(X2F_GUARD)
+	python3 $(X2F_GUARD) $(X2F_VSM)
+	dvp-as -o $@ $(X2F_VSM)
 
 vu1/general_clip_decal_x2e.vo: $(X2E_VSM) $(X2E_GUARD)
 	python3 $(X2E_GUARD) $(X2E_VSM)
@@ -274,3 +286,11 @@ else
 	@echo "Install vcl and run with REBUILD_VU1=1 only if you intentionally want to regenerate them."
 	@false
 endif
+
+# X2F alone is regenerated for authored four-corner source submission.
+.INTERMEDIATE: vu1/general_clip_quad_x2f_pp1.vcl vu1/general_clip_quad_x2f_pp3.vcl vu1/general_clip_quad_x2f_pp4.vcl
+ifeq ($(REBUILD_VU1),1)
+vu1/general_clip_quad_x2f_pp4.vcl: vu1/general_clip_quad_x2f_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
+endif
+vu1/general_clip_billboard_x2b_pp1.vcl vu1/general_clip_billboard_x2a_pp1.vcl: vu1/source_billboard_cached_decode.i vu1/source_billboard_cached_classify.i

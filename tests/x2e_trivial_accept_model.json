@@ -1,0 +1,36 @@
+{
+  "scheduled_classifier_cases": 1200,
+  "accepted_quads": 428,
+  "fallback_quads": 172,
+  "complete_base_or_glow_outputs_equal": 160,
+  "all_inside_classifier_pair_lines": [
+    162
+  ],
+  "mixed_corpus_gate_off_pair_lines": 290352,
+  "mixed_corpus_gate_on_pair_lines": 206236,
+  "instruction_pair_counts_are_not_hardware_timings": true,
+  "CLIP_FCAND_sites": 7,
+  "minimum_CLIP_FCAND_issue_gap": 4,
+  "Q_landed_sites_pc_gap_waitq": [
+    [
+      299,
+      1,
+      true
+    ],
+    [
+      438,
+      1,
+      true
+    ],
+    [
+      502,
+      7,
+      false
+    ]
+  ],
+  "same_pair_VF_write_collisions": 0,
+  "complete_compact_activation_pairs": 32,
+  "complete_compact_vertices": 1224,
+  "complete_compact_kicks": 72,
+  "source_context_lifetime_and_repeated_certificates": "pass"
+}

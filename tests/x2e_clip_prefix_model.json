@@ -1,0 +1,83 @@
+{
+  "classifier_cases": 1800,
+  "first_failed_plane_or_inside": [
+    40,
+    352,
+    106,
+    32,
+    9,
+    61
+  ],
+  "complete_material_output_comparisons": 240,
+  "issue_pairs_by_first_failed_plane_or_inside": {
+    "0": [
+      39384,
+      39928,
+      40040,
+      40088
+    ],
+    "1": [
+      331134,
+      338974,
+      339870,
+      316702
+    ],
+    "2": [
+      119257,
+      123849,
+      124213,
+      105233
+    ],
+    "3": [
+      35866,
+      37738,
+      37850,
+      29066
+    ],
+    "4": [
+      8205,
+      8781,
+      8809,
+      5877
+    ],
+    "5": [
+      38232,
+      19680,
+      19632,
+      19632
+    ]
+  },
+  "issue_pair_columns": [
+    "before_trivial_off",
+    "before_trivial_on",
+    "new_prefix_off",
+    "new_prefix_on"
+  ],
+  "complete_activation_pairs": 96,
+  "emitted_vertices": 4728,
+  "matched_alternating_output_kicks": 232,
+  "activation_issue_pairs_before_new": [
+    1125148,
+    941388
+  ],
+  "CLIP_FCAND_sites": 7,
+  "minimum_CLIP_FCAND_issue_gap": 4,
+  "Q_landed_sites_pc_gap_waitq": [
+    [
+      299,
+      1,
+      true
+    ],
+    [
+      438,
+      1,
+      true
+    ],
+    [
+      502,
+      7,
+      false
+    ]
+  ],
+  "same_pair_VF_write_collisions": 0
+}
