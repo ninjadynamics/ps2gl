@@ -2,10 +2,13 @@
  * This single-material module shares the existing five-plane triangle clipper,
  * near epsilon, GS color/fog packing and lossless output-arena spill.
  * Original X2 image/source remain untouched; tests compare copied clip bodies.
- * Input q5..100: eight quads, four corners each, pos/STQ/RGBA.
- * Cache q101..104 predivide positions;105..108 divided positions;
- * q109..120 formatted STQ/RGBA/XYZF for four corners;121 phase (0=ABC,1=ACD).
- * q122.x/y triangle verdicts, z allows direct dispatch into unchanged S-H.
+ * Input q5..124: up to ten quads, four corners each, pos/STQ/RGBA.
+ * Private absolute q1..4 predivide positions; q5..8 divided positions;
+ * q9..20 formatted STQ/RGBA/XYZF for four corners; q21 phase (0=ABC,1=ACD).
+ * q22.x/y triangle verdicts, z allows direct dispatch into unchanged S-H.
+ * These scratch slots are outside both VIF input halves and all GIF output.
+ * X2F reads no fixed-function light records. Renderer transitions restore
+ * the next owner's context; context writes retain FLUSH before UNPACK.
  * Planes125..129, polyA130..153,polyB154..177;staging178..179 and both
  * output arena addresses180..471 exactly match X2. With no window material,
  * private q178.y/z supplies float A60/B36 instead of A30/B18 under the linked gate.
@@ -220,22 +223,22 @@ cp_wrap_lid\@:
      .macro         xf_cache       input_off, corner
      lq.xyz         xf_src\@, \input_off(next_input)
      mul_pt_mat_44  xf_pre\@, vert_xform, xf_src\@
-     sq             xf_pre\@, 101+\corner(buffer_top)
+     sq             xf_pre\@, 1+\corner(vi00)
      div            q, vf00[w], xf_pre\@[w]
      addq.x         xf_q\@, vf00, q
      mulx.xyz       xf_ndc\@, xf_pre\@, xf_q\@
      move.w         xf_ndc\@, xf_pre\@
-     sq             xf_ndc\@, 105+\corner(buffer_top)
+     sq             xf_ndc\@, 5+\corner(vi00)
      vert_to_gs     xf_gs\@, xf_ndc\@
      lq             xf_col\@, \input_off+2(next_input)
      fmt_color      xf_fmt\@, xf_col\@
-     sq             xf_fmt\@, 110+\corner*3(buffer_top)
+     sq             xf_fmt\@, 10+\corner*3(vi00)
      lq.xyz         xf_stq\@, \input_off+1(next_input)
      mulx.xyz       xf_stq\@, xf_stq\@, xf_q\@
-     sq.xyz         xf_stq\@, 109+\corner*3(buffer_top)
+     sq.xyz         xf_stq\@, 9+\corner*3(vi00)
      fog_coef_alpha xf_fog\@, xf_col\@
      mfir.w         xf_gs\@, xf_fog\@
-     sq             xf_gs\@, 111+\corner*3(buffer_top)
+     sq             xf_gs\@, 11+\corner*3(vi00)
      .endm
 
      ; Resolve triangle slot to authored index, never reconstruct its geometry.
@@ -243,29 +246,29 @@ cp_wrap_lid\@:
      .aif           "\slot" eq "0"
      iaddiu         \index, vi00, 0
      .aelse
-     ilw.x          \index, 121(buffer_top)
+     ilw.x          \index, 21(vi00)
      iaddiu         \index, \index, \slot
      .aendi
      .endm
 
      .macro         xf_fast        ndc, gs, slot, outoff
      xf_index       xf_idx\@, \slot
-     iadd           xf_np\@, buffer_top, xf_idx\@
-     lq             \ndc, 105(xf_np\@)
+     iadd           xf_np\@, vi00, xf_idx\@
+     lq             \ndc, 5(xf_np\@)
      iadd           xf_gp\@, xf_idx\@, xf_idx\@
      iadd           xf_gp\@, xf_gp\@, xf_idx\@
-     iadd           xf_gp\@, xf_gp\@, buffer_top
-     lq             xf_s\@, 109(xf_gp\@)
-     lq             xf_c\@, 110(xf_gp\@)
-     lq             \gs, 111(xf_gp\@)
+     iadd           xf_gp\@, xf_gp\@, vi00
+     lq             xf_s\@, 9(xf_gp\@)
+     lq             xf_c\@, 10(xf_gp\@)
+     lq             \gs, 11(xf_gp\@)
      store_stq      xf_s\@, \outoff
      store_rgba     xf_c\@, \outoff
      .endm
 
      .macro         xf_store       corner, outoff, leading
-     lq.xyz         xf_s\@, 109+\corner*3(buffer_top)
-     lq             xf_c\@, 110+\corner*3(buffer_top)
-     lq             xf_gs\@, 111+\corner*3(buffer_top)
+     lq.xyz         xf_s\@, 9+\corner*3(vi00)
+     lq             xf_c\@, 10+\corner*3(vi00)
+     lq             xf_gs\@, 11+\corner*3(vi00)
      store_stq      xf_s\@, \outoff
      store_rgba     xf_c\@, \outoff
      .aif           "\leading" eq "1"
@@ -278,8 +281,8 @@ cp_wrap_lid\@:
 
      .macro         sh_load        in_off, slot
      xf_index       xf_idx\@, \slot
-     iadd           xf_np\@, buffer_top, xf_idx\@
-     lq             shp\@, 101(xf_np\@)
+     iadd           xf_np\@, vi00, xf_idx\@
+     lq             shp\@, 1(xf_np\@)
      sq             shp\@, kCPolyA+(\slot*3)(buffer_top)
      iadd           xf_sp\@, xf_idx\@, xf_idx\@
      iadd           xf_sp\@, xf_sp\@, xf_idx\@
@@ -466,14 +469,14 @@ xf_quad_lid:
      xf_cache       3, 1
      xf_cache       6, 2
      xf_cache       9, 3
-     isw.x          vi00, 121(buffer_top)
+     isw.x          vi00, 21(vi00)
      ; Cache stores must complete before the indirect whole-quad classifier.
      b              xf_quad_classify_lid
 xf_quad_classify_lid:
-     lq             xf_a, 105(buffer_top)
-     lq             xf_b, 106(buffer_top)
-     lq             xf_c, 107(buffer_top)
-     lq             xf_d, 108(buffer_top)
+     lq             xf_a, 5(vi00)
+     lq             xf_b, 6(vi00)
+     lq             xf_c, 7(vi00)
+     lq             xf_d, 8(vi00)
      clip_vert      xf_a
      clip_vert      xf_b
      clip_vert      xf_c
@@ -498,9 +501,9 @@ xf_quad_classify_lid:
      ior            xf_out, xf_out, xf_cull
      ; Both original triangles share this verdict for wholly inside quads
      ; and the legacy route. Copy ACD into x only when ABC completes.
-     isw.xy         xf_out, 122(buffer_top)
+     isw.xy         xf_out, 22(vi00)
      ibeq           xf_out, vi00, xform_loop_lid
-     isw.z          vi00, 122(buffer_top)
+     isw.z          vi00, 22(vi00)
      ; Culling keeps the original per-triangle path, including its ADC.
      ibne           xf_cull, vi00, xform_loop_lid
      mtir           xf_direct, win_color[w]
@@ -526,13 +529,13 @@ xf_quad_classify_lid:
      iand           xf_flag, xf_flag, adc_bit
      fcand          vi01, 0x3cf3c0
      ior            xf_flag, xf_flag, vi01
-     isw.x          xf_flag, 122(buffer_top)
+     isw.x          xf_flag, 22(vi00)
      mtir           xf_flag, xf_acd[w]
      iand           xf_flag, xf_flag, adc_bit
      fcand          vi01, 0x3c03cf
      ior            xf_flag, xf_flag, vi01
-     isw.y          xf_flag, 122(buffer_top)
-     isw.z          xf_direct, 122(buffer_top)
+     isw.y          xf_flag, 22(vi00)
+     isw.z          xf_direct, 22(vi00)
      b              xform_loop_lid
 xform_loop_lid:
 
@@ -555,9 +558,9 @@ x2_fast_cap_lid:
      iblez          cap_chk, x2_fast_room_lid
      x2_kick_chunk
 x2_fast_room_lid:
-     ilw.x          xf_out, 122(buffer_top)
+     ilw.x          xf_out, 22(vi00)
      ibeq           xf_out, vi00, xf_inside_triangle_lid
-     ilw.z          xf_direct, 122(buffer_top)
+     ilw.z          xf_direct, 22(vi00)
      ibne           xf_direct, vi00, sh_handler_lid
 
      ; ---- vertex 1 (ADC always set; F field still feeds fog interpolation)
@@ -726,7 +729,7 @@ fe_loop_lid:
 
 xf_inside_triangle_lid:
      ; Literal authored indices avoid three indirect address walks per tri.
-     ilw.x          xf_phase, 121(buffer_top)
+     ilw.x          xf_phase, 21(vi00)
      ibne           xf_phase, vi00, xf_inside_acd_lid
      xf_store       0, 0, 1
      xf_store       1, kOutputQPerV, 1
@@ -741,12 +744,12 @@ xf_inside_commit_lid:
      iaddiu         out_count, out_count, 3
 
 tri_next_lid:
-     ilw.x          xf_phase, 121(buffer_top)
+     ilw.x          xf_phase, 21(vi00)
      ibne           xf_phase, vi00, xf_next_quad_lid
      iaddiu         xf_phase, vi00, 1
-     isw.x          xf_phase, 121(buffer_top)
-     ilw.y          xf_out, 122(buffer_top)
-     isw.x          xf_out, 122(buffer_top)
+     isw.x          xf_phase, 21(vi00)
+     ilw.y          xf_out, 22(vi00)
+     isw.x          xf_out, 22(vi00)
      b              xform_loop_lid
 xf_next_quad_lid:
      next_i         4

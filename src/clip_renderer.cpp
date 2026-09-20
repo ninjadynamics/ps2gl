@@ -396,8 +396,9 @@ void CClipTriX2Renderer::BuildContextInputs(uint128_t* inputs)
 void CClipTriX2Renderer::InitRetainedContext()
 {
     // q0,57,62..65,75..78 are read-only to X2 and the opted-in decoders.
-    // The checked generated programs have no absolute stores; all scratch
-    // stores are bounded within their XTOP-derived halves starting at q79.
+    // No opted-in program writes these retained ranges. X2F alone also owns
+    // private absolute scratch q1..22; all other scratch stays in the bounded
+    // XTOP-derived halves starting at q79. Renderer switches restore context.
 #if kBackFaceCullMult != 0 || kClipToGsDepthOffset != 57 || \
     kVertexXfrm != 62 || kGifTag != 75 || kClipInfo != 76 || \
     kFogParams != 77 || kFogPad != 78 || kDoubleBufBase != 79

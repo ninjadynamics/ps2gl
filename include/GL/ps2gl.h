@@ -223,6 +223,13 @@
 #if PGL_CITY_SOURCE_CLIP_DISPATCH != 0 && PGL_CITY_SOURCE_CLIP_DISPATCH != 1
 #error "PGL_CITY_SOURCE_CLIP_DISPATCH must be 0 or 1"
 #endif
+/* X2F private scratch leaves room for ten source quads per activation. */
+#ifndef PGL_CITY_SOURCE_TEN_QUADS
+#define PGL_CITY_SOURCE_TEN_QUADS 1
+#endif
+#if PGL_CITY_SOURCE_TEN_QUADS != 0 && PGL_CITY_SOURCE_TEN_QUADS != 1
+#error "PGL_CITY_SOURCE_TEN_QUADS must be 0 or 1"
+#endif
 #ifndef PGL_CITY_BILLBOARD_CORNER_REUSE
 #define PGL_CITY_BILLBOARD_CORNER_REUSE 1
 #endif
@@ -700,7 +707,8 @@ void pglGetWallPreparationStats(unsigned int* texturePrefixReused, unsigned int*
 #define PGL_CLIP_QUAD_X2F_PROP ((pglU64_t)1 << 44)
 void pglRegisterClipQuadX2FRenderer(void);
 /* bit0 = registered four-corner source path, bit1 = single-material A60/B36,
-   bit2 = shared corner classification dispatch (culling OFF only). */
+   bit2 = shared corner classification dispatch (culling OFF only),
+   bit3 = ten source quads per activation (otherwise eight). */
 unsigned int pglGetSourceQuadSubmissionOptions(void);
 
 /* Compact camera-facing glow quads, independent of the paired-wall state.

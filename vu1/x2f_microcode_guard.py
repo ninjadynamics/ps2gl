@@ -37,7 +37,24 @@ def check(text):
     branches = 0
     stops = 0
     kicks = 0
+    absolute_stores = set()
+    private = set(range(1, 23))
+    context = {0, 57, 62, 63, 64, 65, 75, 76, 77}
+    memory_op = re.compile(r"\b(lq|sq|ilw|isw)(?:\.[xyzw]+)?\s+[^,]+,(-?\d+)\(VI(\d+)\)", re.I)
     for pc, instruction in enumerate(code):
+        access = memory_op.search(instruction)
+        if access:
+            op, offset, base = access.groups()
+            offset = int(offset)
+            if 101 <= offset <= 122:
+                raise ValueError(f"PC{pc}: obsolete eight-quad scratch aliases the ten-quad input")
+            if int(base) == 0:
+                if op.lower() in ('sq', 'isw'):
+                    if offset not in private:
+                        raise ValueError(f"PC{pc}: absolute store outside private q1..22")
+                    absolute_stores.add(offset)
+                elif offset not in context | private:
+                    raise ValueError(f"PC{pc}: unreviewed absolute read at q{offset}")
         match = branch.search(instruction)
         if match:
             target = match.group(2).split(",")[-1].strip()
@@ -65,6 +82,8 @@ def check(text):
             kicks += 1
     if stops != 2 or kicks != 3:
         raise ValueError(f"review changed entry/continuation or output structure: E={stops}, XGKICK={kicks}")
+    if absolute_stores != private:
+        raise ValueError("image does not establish the complete private q1..22 cache")
     return len(code), padded, branches
 
 

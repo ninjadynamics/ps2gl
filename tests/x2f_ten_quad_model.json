@@ -1,0 +1,68 @@
+{
+  "baseline": "33086320aca9023edf4559d27c4edeb7d066ba57",
+  "cases": 192,
+  "variants": [
+    "prior X2F 8",
+    "relocated X2F 8 (gate OFF)",
+    "relocated X2F 10 (gate ON)"
+  ],
+  "work": [
+    {
+      "activations": 448,
+      "issue_pairs": 2319778,
+      "kicks": 748
+    },
+    {
+      "activations": 448,
+      "issue_pairs": 2319778,
+      "kicks": 748
+    },
+    {
+      "activations": 368,
+      "issue_pairs": 2317318,
+      "kicks": 740
+    }
+  ],
+  "instruction_pairs": [
+    1002,
+    1002
+  ],
+  "context_reads": [
+    0,
+    57,
+    62,
+    63,
+    64,
+    65,
+    75,
+    76,
+    77
+  ],
+  "private_scratch": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22
+  ],
+  "maximum_input_qword": 124,
+  "result": "ordered consumed payloads identical; context/opposite input half preserved; scratch initialized before consumed reads",
+  "hardware": "pending"
+}

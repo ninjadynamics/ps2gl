@@ -40,7 +40,7 @@ class Program:
                     assert upper[2][0] != lower[2][0], ('same-pair VF writers', len(self.code), pair)
                 self.code.append(pair)
 
-    def run(self, memory, top, forbid_inside=False, wide=False):
+    def run(self, memory, top, forbid_inside=False, wide=False, memory_trace=None):
         vf = np.zeros((32,4),dtype=F);vf[0,3]=1
         vi = np.zeros(16,dtype=np.int64)
         acc=np.zeros(4,dtype=F);imm=F(0);q=F(0);clip=0
@@ -59,6 +59,8 @@ class Program:
                 if op in ('lq','sq','ilw','isw'):
                     off,idx=re.fullmatch(r'(-?\d+)\(VI(\d+)\)',args[1]).groups()
                     address=int(off)+int(oi[int(idx)]);assert 0<=address<1024,(pc,address)
+                    if memory_trace is not None:
+                        memory_trace(op,address,m,pc,steps)
                     if op in ('sq','isw') and in_flight:
                         assert not in_flight[0]<=address<in_flight[1], ('GIF-owned overwrite',pc,address,in_flight)
                     if op=='lq':

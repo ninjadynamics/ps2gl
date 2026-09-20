@@ -57,9 +57,11 @@ void CClipQuadX2FRenderer::DrawLinearArrays(CGeometryBlock& block)
         PGL_CITY_SOURCE_CLIP_DISPATCH ? 1.0f : 0.0f
     };
     memcpy((unsigned char*)&Pfx[0] + 4, outputOptions, sizeof(outputOptions));
-    // Eight independent quads fill q5..100 as XYZ/STQ/RGBA (no unused
-    // normal slot). Cache q101..124 is never a VIF destination. Each source
-    // strip is already a complete ABCD sequence, so no strip restart exists.
+    // Private absolute q1..22 holds the per-quad cache. The double-buffered
+    // input can fill q5..124 as XYZ/STQ/RGBA (ten complete ABCD quads),
+    // ending before the unchanged clip planes at q125. No source restart or
+    // paired-material ordering boundary exists in this single-material path.
+    const int cornersPerBuffer = PGL_CITY_SOURCE_TEN_QUADS ? 40 : 32;
     packet.Cnt();
     packet.Stcycl(1, InputQuadsPerVert);
     packet.Pad128();
@@ -68,7 +70,7 @@ void CClipQuadX2FRenderer::DrawLinearArrays(CGeometryBlock& block)
     for (int strip = 0; strip < block.GetNumStrips(); ++strip) {
         const int length = block.GetStripLength(strip);
         for (int first = 0; first < length;) {
-            const int room = 32 - buffered;
+            const int room = cornersPerBuffer - buffered;
             const int count = length - first < room ? length - first : room;
             const int offset = InputGeomOffset + buffered * InputQuadsPerVert;
             XferVectors(packet, (unsigned int*)block.GetVertices(strip),
@@ -82,7 +84,7 @@ void CClipQuadX2FRenderer::DrawLinearArrays(CGeometryBlock& block)
                 ColorUnpackMode, offset + 2);
             buffered += count;
             first += count;
-            if (buffered == 32) {
+            if (buffered == cornersPerBuffer) {
                 XferPrefixes(packet);
                 FinishBuffer(packet, 0, buffered, InputQuadsPerVert, 0, NULL);
                 buffered = 0;
@@ -110,7 +112,8 @@ unsigned int pglGetSourceQuadSubmissionOptions(void)
     if (!pGLContext || !pGLContext->GetImmGeomManager().GetRendererManager()
         .GetSourceQuadRenderer()) return 0u;
     return 1u | (PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT ? 2u : 0u)
-        | (PGL_CITY_SOURCE_CLIP_DISPATCH ? 4u : 0u);
+        | (PGL_CITY_SOURCE_CLIP_DISPATCH ? 4u : 0u)
+        | (PGL_CITY_SOURCE_TEN_QUADS ? 8u : 0u);
 #else
     return 0u;
 #endif

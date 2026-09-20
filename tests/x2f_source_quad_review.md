@@ -201,3 +201,86 @@ Final artifact hashes for this pass:
 
 Scratch source/before-image and generation/assembly evidence:
 `profiling/ps2-city-spiral/x2f-dispatch-20260920/` in the main repository.
+
+
+## Ten source quads per activation - 2026-09-20
+
+`PGL_CITY_SOURCE_TEN_QUADS=1` is a default-ON, independent linked gate.
+`pglGetSourceQuadSubmissionOptions()` bit 3 (8) reports it; bit 0 must still
+report a registered source renderer. OFF retains eight quads per activation,
+ON admits ten. Both modes use the relocated private cache and the same new
+VU image. The earlier image is compared separately, so the OFF comparison
+does not hide the relocation change.
+
+The old per-quad cache occupied buffer-relative q101..122. Moving it to private
+absolute q1..22 frees the complete existing 120-qword input allocation for ten
+ABCD quads: q5..124 at three qwords per corner. Plane q125..129, polygon
+q130..177, prefix q178..179 and GIF arenas q180..471 are unchanged. No source
+format, triangle order, clip/fan capacity or material order changes.
+
+Ownership and read-set review:
+
+- All expanded/generated X2F context reads are q0,57,62..65,75..77. Included
+  fixed-function lighting macro definitions are not invoked. Absolute q1..22
+  belongs exclusively to the active X2F program; it is neither a VIF input
+  nor a GIF output destination. The generated-image guard rejects stores
+  outside those private slots and rejects the old q101..122 cache layout.
+- Each quad unconditionally writes its four predivide/divided positions and
+  formatted vertices before classification. Phase/verdict lanes are set
+  before consumption. Only STQ.w is intentionally unwritten and unconsumed.
+- XTOP remains 79/551 with 472-qword halves. VIF may fill the opposite half
+  while VU uses private scratch. Forty source corners end exactly at q124,
+  before clip scratch. Complete four-corner spans permit activation splits
+  without primitive restart or duplication; the writer still emits each
+  source span in order.
+- Retained and sparse X2 context initialization both issue FLUSH before
+  UNPACK, preserving completion before any global context update. X2F's
+  cache is outside every retained range. Material/context changes retain
+  the existing restart; no fence or flush was removed.
+- `MakeNewRendererCurrent` invalidates generic unlit deltas and forces
+  renderer context dirty. Full lit context upload has its own FLUSH and
+  freshly restores all enabled light records; sparse unlit successors do
+  not consume the old light slots. X2F is not marked as preserving the X2
+  instruction prefix. Normal load and context restoration remain intact.
+- Existing A/B GIF arenas are unchanged. The last activation always kicks
+  its final packet, including legal NLOOP=0. Therefore alternating XTOP
+  reuse does not bypass the predecessor kick/completion contract when an
+  intervening activation clips away all geometry. The model still rejects
+  stores into the current GIF-owned packet.
+
+Validation: only `general_clip_quad_x2f` was regenerated and assembled.
+The image remains 1002 issue pairs, 1002 padded, 74 bounded branches, two E
+stops and three kick sites. No game, EE or library build was run.
+
+The existing scheduled-image model passes 300 original-X2 comparisons under
+all output/dispatch settings, 56 exact/neighbor clipping boundary cases and
+six arena-spill fixtures reaching A60/B36 and four alternating kicks.
+
+The new `tests/x2f_ten_quad_model.py` compares the frozen pre-change image at
+ps2gl `33086320aca9023edf4559d27c4edeb7d066ba57` against both new modes.
+Its 192 cases include 1..31 quads, ninth/tenth corners, exact/partial batches,
+both starting halves, alternating halves, every output/dispatch combination,
+near/side clipping and repeated spills. Consumed ordered payloads match
+bit-for-bit. A dynamic memory trace proves private values are written before
+consumed reads, context is untouched, the opposite half is untouched, and
+q124 is reached without invading clip scratch. The model starts scratch
+poisoned and retains memory between activations.
+
+| Mode | Activations | Dynamic issue pairs | GIF kicks |
+|---|---:|---:|---:|
+| Prior image, eight quads | 448 | 2319778 | 748 |
+| Relocated cache, eight quads | 448 | 2319778 | 748 |
+| Relocated cache, ten quads | 368 | 2317318 | 740 |
+
+Relocation alone adds no modeled work. The larger input removes 17.9% of
+activations in this corpus (20% for long exact runs), but only 0.106% of VU
+issue pairs. The intended gain is fewer EE transfer/prefix/header operations
+and fewer VIF activations; neither percentage is a native frame-time claim.
+The host model does not emulate native VU rounding, DMA latency or GS pixels.
+Bruno's build and hardware comparison remain pending.
+
+Artifacts (SHA-256):
+
+- VCL: `6cd84ca63f61dbe91f76766cb8b6236b7d09b181fd2b323a8d6b9d71a89c4251`
+- VSM: `2eb2e041a09127cd4082702d6f52cd36227d3bab69cc522349240461d39e6f61`
+- Object: `5a2c74b6ceb77b1e815bef396296add328ced808cd0421222ab636865e4432a7`
