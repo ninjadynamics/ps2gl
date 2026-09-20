@@ -8,6 +8,7 @@ class CClipRoadX2RRenderer : public CLinearRenderer {
     const unsigned int ContextFirstQuad;
     bool HasRoadContext;
     bool RoadContextUnchanged;
+    bool SourcePrefixUnchanged;
     const CVifSCDmaPacket* RetainedPacket;
     const void* RetainedBase;
     const void* RetainedEnd;

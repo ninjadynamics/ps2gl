@@ -186,6 +186,13 @@
 #ifndef PGL_ROAD_CONTEXT_REUSE
 #define PGL_ROAD_CONTEXT_REUSE 1
 #endif
+/* Patch only q55..56 when a compact source renderer retains its exact view. */
+#ifndef PGL_SOURCE_CONTEXT_TAIL_PATCH
+#define PGL_SOURCE_CONTEXT_TAIL_PATCH 1
+#endif
+#if PGL_SOURCE_CONTEXT_TAIL_PATCH != 0 && PGL_SOURCE_CONTEXT_TAIL_PATCH != 1
+#error "PGL_SOURCE_CONTEXT_TAIL_PATCH must be 0 or 1"
+#endif
 /* X2R consumes only the count qword of the generic five-qword batch header. */
 #ifndef PGL_ROAD_HEADER_COMPACT
 #define PGL_ROAD_HEADER_COMPACT 1
@@ -806,6 +813,8 @@ void pglRegisterRoadRenderer(void);
 /* Linked choices: bit0 retained context, bit1 compact batch headers,
    bit2 aligned qword payload copies (also used by pools and cards). */
 unsigned int pglGetRoadSubmissionOptions(void);
+/* Bit0: PGL_SOURCE_CONTEXT_TAIL_PATCH, independent of road context reuse. */
+unsigned int pglGetSourceContextSubmissionOptions(void);
 /* Count is complete quads in one material, split internally into <=32.
    Call in the normal frame chain, outside Begin/End/display lists, after
    flushing pending geometry. Requires identity modelview, finite context,

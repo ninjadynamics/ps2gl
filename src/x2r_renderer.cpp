@@ -51,6 +51,7 @@ CClipRoadX2RRenderer::CClipRoadX2RRenderer(void* code, int codeSize,
     , ContextFirstQuad(contextFirstQuad)
     , HasRoadContext(false)
     , RoadContextUnchanged(false)
+    , SourcePrefixUnchanged(false)
     , RetainedPacket(NULL)
     , RetainedBase(NULL)
     , RetainedEnd(NULL)
@@ -89,8 +90,17 @@ bool CClipRoadX2RRenderer::MatchesSourceContext(const void* context) const
 {
 #if PGL_ROAD_CONTEXT_REUSE
     const unsigned int offset = ContextFirstQuad * 16u;
+#if PGL_SOURCE_CONTEXT_TAIL_PATCH
+    // A material normally changes this tail. Compare it first so that the
+    // prefix is examined only once, below or by SetSourceContext on a miss.
+    const unsigned int prefix = offsetof(PGLRoadContext, color) - offset;
+    return HasRoadContext
+        && memcmp(RoadContext.color, (const char*)context + prefix, 32u) == 0
+        && memcmp((const char*)&RoadContext + offset, context, prefix) == 0;
+#else
     return HasRoadContext && memcmp((const char*)&RoadContext + offset,
         context, sizeof(RoadContext) - offset) == 0;
+#endif
 #else
     (void)context;
     return false;
@@ -106,6 +116,16 @@ void CClipRoadX2RRenderer::SetSourceContext(const void* context, bool unchanged)
 {
     RoadContextUnchanged = unchanged;
     const unsigned int offset = ContextFirstQuad * 16u;
+#if PGL_SOURCE_CONTEXT_TAIL_PATCH
+    const unsigned int prefix = offsetof(PGLRoadContext, color) - offset;
+    // Capture equality before updating the cached public context. This is
+    // only an EE byte proof; InitContext separately proves live VU ownership.
+    SourcePrefixUnchanged = unchanged || (HasRoadContext
+        && memcmp((const char*)&RoadContext + offset, context, prefix) == 0);
+    if (SourcePrefixUnchanged) {
+        if (!unchanged) memcpy(RoadContext.color, (const char*)context + prefix, 32u);
+    } else
+#endif
     if (!unchanged) memcpy((char*)&RoadContext + offset,
         context, sizeof(RoadContext) - offset);
     HasRoadContext = true;
@@ -165,22 +185,57 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     pglInvalidateUnlitContextDelta();
     CImmDrawContext& draw = pGLContext->GetImmDrawContext();
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
-#if PGL_ROAD_CONTEXT_REUSE
+#if PGL_ROAD_CONTEXT_REUSE || PGL_SOURCE_CONTEXT_TAIL_PATCH
     uint32_t rasterKey[27];
     GetRasterContextKey(rasterKey);
     // This is an ordered-chain proof, not a cross-frame VU RAM cache. No
     // intervening packet command may have overwritten context or VIF state.
     // A material bind can change GS settings without changing these inputs;
     // SyncGsContext still fences and sends that material after this returns.
-    if (RetainedContextValid && RoadContextUnchanged
+    if (RetainedContextValid
+#if PGL_SOURCE_CONTEXT_TAIL_PATCH
+        && SourcePrefixUnchanged
+#else
+        && RoadContextUnchanged
+#endif
         && RetainedPacket == &packet && RetainedBase == packet.GetBase()
         && RetainedEnd == packet.GetNextPtr()
         && RetainedFrame == pGLContext->GetFrameNumber()
         && &pGLContext->GetImmGeomManager().GetRendererManager().GetCurRenderer() == this
         && memcmp(RetainedRaster, rasterKey, sizeof(rasterKey)) == 0) {
-        CacheRendererState();
-        pglCountSubmission(PGL_SUBMIT_DELTA_CONTEXTS);
-        return;
+#if PGL_ROAD_CONTEXT_REUSE
+        if (RoadContextUnchanged) {
+            CacheRendererState();
+            pglCountSubmission(PGL_SUBMIT_DELTA_CONTEXTS);
+            return;
+        }
+#endif
+#if PGL_SOURCE_CONTEXT_TAIL_PATCH
+        if (SourcePrefixUnchanged) {
+#if PGL_SUBMISSION_METRICS
+            const unsigned int start = packet.GetByteLength();
+#endif
+            // Every source program reloads q55..56 after --cont. Its entry
+            // matrix (and X2R near value) remains live across MSCNT; the exact
+            // raster key above proves those values need no MSCAL0 reload.
+            // Keep TOP/DBF progressing and fence the prior context readers.
+            packet.Cnt();
+            packet.Stcycl(1, 1);
+            packet.Stmod(Vifs::AddModes::kNone);
+            packet.Flush();
+            packet.Pad96();
+            packet.OpenUnpack(Vifs::UnpackModes::v4_32, 55, Packet::kSingleBuff);
+            pglAddOwnedPayload(packet, RoadContext.color, 8u);
+            packet.CloseUnpack();
+            packet.CloseTag();
+            CacheRendererState();
+            pglCountSubmission(PGL_SUBMIT_DELTA_CONTEXTS);
+#if PGL_SUBMISSION_METRICS
+            pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - start);
+#endif
+            return;
+        }
+#endif
     }
 #endif
 #if PGL_SUBMISSION_METRICS
@@ -257,7 +312,7 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     packet.Offset(kDoubleBufOffset);
     packet.CloseTag();
     CacheRendererState();
-#if PGL_ROAD_CONTEXT_REUSE
+#if PGL_ROAD_CONTEXT_REUSE || PGL_SOURCE_CONTEXT_TAIL_PATCH
     memcpy(RetainedRaster, rasterKey, sizeof(rasterKey));
     RetainedContextValid = true;
 #endif
@@ -321,7 +376,7 @@ void CClipRoadX2RRenderer::DrawCompactGroundQuads(const float* quads, int count,
 #if PGL_ROAD_HEADER_COMPACT
     packet.CloseTag();
 #endif
-#if PGL_ROAD_CONTEXT_REUSE
+#if PGL_ROAD_CONTEXT_REUSE || PGL_SOURCE_CONTEXT_TAIL_PATCH
     RetainedPacket = &packet;
     RetainedBase = packet.GetBase();
     RetainedEnd = packet.GetNextPtr();
@@ -352,6 +407,15 @@ extern "C" unsigned int pglGetRoadSubmissionOptions(void)
     return (PGL_ROAD_CONTEXT_REUSE ? 1u : 0u)
         | (PGL_ROAD_HEADER_COMPACT ? 2u : 0u)
         | (PGL_COMPACT_QWORD_COPY ? 4u : 0u);
+#else
+    return 0;
+#endif
+}
+
+extern "C" unsigned int pglGetSourceContextSubmissionOptions(void)
+{
+#if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
+    return PGL_SOURCE_CONTEXT_TAIL_PATCH ? 1u : 0u;
 #else
     return 0;
 #endif
