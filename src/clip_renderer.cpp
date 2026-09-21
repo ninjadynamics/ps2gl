@@ -36,22 +36,18 @@ using namespace RendererProps;
 // This is a proof about preceding writes in one ordered VIF packet, not a
 // hardware-completion flag or a cache carried across frames. X2/Q/D/G share
 // the same immutable base image; their decoders start immediately after it.
-#if PGL_X2_BASE_PREFIX_REUSE
 static const CGLContext* x2BaseContext;
 static const CVifSCDmaPacket* x2BasePacket;
 static const void* x2BaseImage;
 static unsigned int x2BaseBytes;
-#endif
 static unsigned int x2BaseSkippedUploads, x2BaseSkippedBytes;
 
 extern "C" void pglInvalidateX2BasePrefix(void)
 {
-#if PGL_X2_BASE_PREFIX_REUSE
     x2BaseContext = NULL;
     x2BasePacket = NULL;
     x2BaseImage = NULL;
     x2BaseBytes = 0;
-#endif
 }
 
 extern "C" void pglGetX2BaseReuseStats(unsigned int* uploads, unsigned int* bytes)
@@ -79,7 +75,6 @@ extern "C" void pglGetWindowContextStats(unsigned int* attempts,
     if (globalPins) *globalPins = x2WindowPins;
 }
 
-#if PGL_X2_WINDOW_CONTEXT_REUSE
 static const CGLContext* x2WindowContext;
 static const CClipTriX2Renderer* x2WindowOwner;
 static const CMMTexture* x2WindowTexture;
@@ -103,7 +98,6 @@ static uint64_t X2WindowSettingValue(const uint128_t* settings, int quad)
     memcpy(&value, (const unsigned char*)settings + quad * 16, sizeof(value));
     return value;
 }
-#endif
 
 CClipTriRenderer::CClipTriRenderer()
     : CLinearRenderer(mVsmAddr(GeneralClipTri), mVsmSize(GeneralClipTri), 3, 3,
@@ -347,12 +341,10 @@ void CClipTriX2Renderer::InitContext(GLenum primType, uint32_t rcChanges, bool u
     (void)primType;
     (void)rcChanges;
     (void)userRcChanged;
-#if PGL_X2_CONTEXT_DELTA
     if (ContextDeltaEligible) {
         InitRetainedContext();
         return;
     }
-#endif
     InitUnlitContext();
 }
 
@@ -456,7 +448,6 @@ void CClipTriX2Renderer::InitRetainedContext()
 
 void CClipTriX2Renderer::RememberContextEnd()
 {
-#if PGL_X2_CONTEXT_DELTA
     if (ContextDeltaEligible && ContextInputsValid && !pGLContext->InDListDef()
         && pGLContext->UsesNormalFramePacket()) {
         CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
@@ -465,10 +456,8 @@ void CClipTriX2Renderer::RememberContextEnd()
         ContextPacketEnd = packet.GetNextPtr();
         ContextFrame = pGLContext->GetFrameNumber();
     }
-#endif
 }
 
-#if PGL_X2_PREFIX_SETUP || PGL_X2_WINDOW_CONTEXT_REUSE || PGL_X2_WINDOW_KEY_REUSE
 typedef char X2TexturePrefixQwordCheck[
     sizeof(uint128_t) == 16 && sizeof(tGifTag) == 16 && sizeof(uint64_t) == 8 ? 1 : -1];
 
@@ -497,12 +486,10 @@ static inline void X2TexturePrefixAddress(uint128_t* settings, int quad, uint64_
     // Deliberate bit copy, not a uint64_t lvalue into a differently typed object.
     memcpy((unsigned char*)settings + quad * 16 + 8, &address, sizeof(address));
 }
-#endif
 
 void CClipTriX2Renderer::BuildWindowContext2Settings()
 {
     const GS::CDrawEnv& de = pGLContext->GetImmDrawContext().GetDrawEnv();
-#if PGL_X2_WINDOW_KEY_REUSE
     const uint64_t drawSource[6] = {
         de.GetTestReg(), de.GetFrameReg(), de.GetZBufReg(),
         de.GetXYOffsetReg(), de.GetScissorReg(), de.GetFBAReg()
@@ -519,10 +506,6 @@ void CClipTriX2Renderer::BuildWindowContext2Settings()
         memcmp(Ctx2SourceDraw, drawSource, sizeof(drawSource)) == 0;
     if (reuseTexture) ++x2WindowTexturePrefixReused;
     if (reuseDraw) ++x2WindowDrawTailReused;
-#else
-    const bool reuseTexture = false;
-    const bool reuseDraw = false;
-#endif
     if (!reuseTexture) {
         // Ctx2[0..7]: the window texture's OWN settings block (giftag + 7
         // A+D regs), register addresses rewritten to context 2 — so
@@ -536,7 +519,6 @@ void CClipTriX2Renderer::BuildWindowContext2Settings()
         memcpy(&contextTag, &Ctx2[0], sizeof(contextTag));
         contextTag.NLOOP = 15;
         memcpy(&Ctx2[0], &contextTag, sizeof(contextTag));
-#if PGL_X2_PREFIX_SETUP
         if (X2TexturePrefixHasFixedLayout(Ctx2)) {
             // The fixed ABI needs six address stores; TEXA stays global and
             // every texture value remains the original byte-for-byte copy.
@@ -547,7 +529,6 @@ void CClipTriX2Renderer::BuildWindowContext2Settings()
             X2TexturePrefixAddress(Ctx2, 6, GS::RegAddrs::miptbp1_2);
             X2TexturePrefixAddress(Ctx2, 7, GS::RegAddrs::miptbp2_2);
         } else
-#endif
         {
             uint64_t textureRegisters[14];
             memcpy(textureRegisters, &Ctx2[1], sizeof(textureRegisters));
@@ -567,9 +548,7 @@ void CClipTriX2Renderer::BuildWindowContext2Settings()
             memcpy(&Ctx2[1], textureRegisters, sizeof(textureRegisters));
         }
 
-#if PGL_X2_WINDOW_KEY_REUSE
         memcpy(Ctx2SourceTexture, WinTex->GetSettingsBlock(), sizeof(Ctx2SourceTexture));
-#endif
     }
 
     if (!reuseDraw) {
@@ -621,17 +600,12 @@ void CClipTriX2Renderer::BuildWindowContext2Settings()
         rq[14] = testBase & ~(uint64_t)1;
         rq[15] = GS::RegAddrs::test_1;
         memcpy(&Ctx2[8], rq, sizeof(rq));
-#if PGL_X2_WINDOW_KEY_REUSE
         memcpy(Ctx2SourceDraw, drawSource, sizeof(drawSource));
         Ctx2SourceAlpha = alphaSource;
-#endif
     }
-#if PGL_X2_WINDOW_KEY_REUSE
     Ctx2SourceValid = true;
-#endif
 }
 
-#if PGL_X2_WINDOW_CONTEXT_REUSE
 bool CClipTriX2Renderer::TryReuseWindowContext(CVifSCDmaPacket& packet)
 {
     const unsigned int serial = GS::CTexEnv::GetContext2WriteSerial();
@@ -712,7 +686,6 @@ void CClipTriX2Renderer::RememberWindowContext(const CVifSCDmaPacket& packet)
     memcpy(x2WindowSettings, Ctx2, sizeof(Ctx2));
     x2WindowSerial = GS::CTexEnv::GetContext2WriteSerial();
 }
-#endif
 
 void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block)
 {
@@ -760,9 +733,7 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
     // window no longer touches ctx1.
     if (WinTex && !Ctx2Armed) {
         ++x2WindowAttempts;
-#if PGL_X2_WINDOW_CONTEXT_REUSE
         if (TryReuseWindowContext(packet)) return;
-#endif
         // Path ordering (mirrors SyncGsContext's texture send): wait for
         // path 1 to drain before the path-2 sends below — prior buffers'
         // kicks may still be drawing with the OLD ctx2 state / texture data.
@@ -810,9 +781,7 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
         packet.CloseTag();
 
         ++x2WindowFull;
-#if PGL_X2_WINDOW_CONTEXT_REUSE
         RememberWindowContext(packet);
-#endif
         Ctx2Armed = true;
     }
     (void)block;
@@ -877,7 +846,6 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
     maxVertsPerBuffer -= 3;
     maxVertsPerBuffer -= maxVertsPerBuffer % 6;
 
-#if PGL_X2_SINGLE_MATERIAL_BATCH
     // Raw X2 owns input q5..124 (30 * 4q), followed by planes at q125.
     // Its existing A=30/B=18 output ping-pong fits every <=18-vertex fan.
     // With no window section, moving an activation boundary preserves the
@@ -894,7 +862,6 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
         && block.GetNumStrips() == 1 && !block.StripIsContinued(0)
         && block.GetStripLength(0) > 0 && block.GetStripLength(0) % 3 == 0)
         maxVertsPerBuffer = 30;
-#endif
 
     DrawBlockX2(packet, block, maxVertsPerBuffer);
     RememberContextEnd();
@@ -1049,12 +1016,10 @@ CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
 static void UploadVu1Range(CVifSCDmaPacket& packet, const void* image,
     int imageBytes, unsigned int addr64)
 {
-#if PGL_X2_BASE_PREFIX_REUSE
     // Any overlapping upload destroys the proof before its first MPG. Decoder
     // writes at the exact end of the prefix are disjoint and preserve it.
     if (imageBytes > 0 && addr64 < x2BaseBytes / 8u)
         pglInvalidateX2BasePrefix();
-#endif
     const u64* code = (const u64*)image;
     unsigned int size64 = imageBytes / 8;
 
@@ -1074,7 +1039,6 @@ static void UploadVu1Range(CVifSCDmaPacket& packet, const void* image,
 
 static void LoadX2Base(CVifSCDmaPacket& packet, const void* image, int imageBytes)
 {
-#if PGL_X2_BASE_PREFIX_REUSE
     const bool canonical = image == mVsmAddr(GeneralClipTriX2)
         && imageBytes == mVsmSize(GeneralClipTriX2) && imageBytes > 0;
     if (canonical && !pGLContext->InDListDef()
@@ -1084,24 +1048,18 @@ static void LoadX2Base(CVifSCDmaPacket& packet, const void* image, int imageByte
         x2BaseSkippedBytes += (unsigned int)imageBytes;
         return;
     }
-#endif
     UploadVu1Range(packet, image, imageBytes, 0);
-#if PGL_X2_BASE_PREFIX_REUSE
     if (canonical && !pGLContext->InDListDef()) {
         x2BaseContext = pGLContext;
         x2BasePacket = &packet;
         x2BaseImage = image;
         x2BaseBytes = (unsigned int)imageBytes;
     }
-#endif
 }
 
 void CClipTriX2Renderer::Load()
 {
     ContextInputsValid = false;
-#if !PGL_X2_BASE_PREFIX_REUSE
-    CBaseRenderer::Load();
-#else
     pglInvalidateUnlitContextDelta();
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     LoadX2Base(packet, MicrocodePacket, MicrocodePacketSize);
@@ -1112,7 +1070,6 @@ void CClipTriX2Renderer::Load()
     packet.Pad128();
     packet.CloseTag();
     pglAddToMetric(kMetricsRendererUpload);
-#endif
 }
 
 void CClipTriX2DRenderer::Load()
@@ -1176,7 +1133,6 @@ void CClipTriX2DRenderer::DrawLinearArrays(CGeometryBlock& block)
 void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems,
     bool directPacket)
 {
-#if PGL_WALL_PACKET_DIRECT
     if (directPacket) {
         // Exact X2Q/C only. The unchanged X2 io loop and both decoders read
         // q0.x; neither reads the legacy strip ADC q1..4. Keep one activation
@@ -1198,9 +1154,6 @@ void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems,
         packet.CloseTag();
         return;
     }
-#else
-    (void)directPacket;
-#endif
     XferPrefixes(packet);
     packet.Cnt();
     {
@@ -1219,7 +1172,6 @@ void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems,
     packet.CloseTag();
 }
 
-#if PGL_WALL_PACKET_DIRECT
 /* The caller proves a whole aligned V4_32 stream and TTE. These are the same
    borrowed REF bytes as XferVectors, with no format expansion or masked lanes;
    one tag carries NOP+UNPACK and no redundant mask-setting CNT is needed. */
@@ -1232,18 +1184,13 @@ static inline void XferWallFloatVectors(CVifSCDmaPacket& packet,
     packet.CloseUnpack(qwords);
     pglCountSubmission(PGL_SUBMIT_REF_BYTES, qwords * 16u);
 }
-#endif
 
 void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
     CGeometryBlock& block, int maxElemsPerBuffer)
 {
-#if PGL_WALL_PACKET_DIRECT
     const bool directPacket = DescriptorElements == 4 && DescriptorColorWords == 4
         && (DescriptorColorDivisor == 1 || DescriptorColorDivisor == 2)
         && VifDoubleBuffered && packet.GetTTE();
-#else
-    const bool directPacket = false;
-#endif
     packet.Cnt();
     {
         packet.Stcycl(1, 1); // both descriptor streams unpack contiguously
@@ -1269,7 +1216,6 @@ void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
                 n = room;
             // Whole descriptor offsets preserve both initial alignments.
             // Unaligned input keeps the existing edge-copy transfer exactly.
-#if PGL_WALL_PACKET_DIRECT
             if (directPacket && (((uintptr_t)geo | (uintptr_t)col) & 15u) == 0u) {
                 const bool paired = DescriptorColorDivisor == 2;
                 XferWallFloatVectors(packet, geo + idx * 4, (unsigned int)n,
@@ -1278,7 +1224,6 @@ void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
                     (unsigned int)(paired ? n >> 1 : n),
                     DescriptorColorOffset + (paired ? elemsInBuffer >> 1 : elemsInBuffer));
             } else
-#endif
             {
                 // Geometry keeps one qword per element. X2C has one color
                 // qword per two elements; legacy X2D colors use byte UNPACK.

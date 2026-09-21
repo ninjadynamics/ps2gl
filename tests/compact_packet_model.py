@@ -204,7 +204,8 @@ def source_contracts():
     assert 'return packet.Add(source, floatCount);' in helper
     assert '(floatCount & 3u) == 0u' in helper
     assert 'pglAddOwnedPayload(packet' in decal and 'pglAddOwnedPayload(packet' in road
-    assert '#if !PGL_DECAL_HEADER_COMPACT\n        packet.Add(independentAdc, 16);' in decal
+    assert 'packet.Add(independentAdc, 16);' not in decal
+    assert 'pglCloseOwnedV4Unpack(packet, 1u);' in decal
     reads = re.findall(r'\b(?:ilw\.\w+|lq)\s+\w+,\s*([0-4])\(buffer_top\)', vu)
     assert reads and set(reads) == {'0'}, reads
     assert 'iaddiu setup_ptr, buffer_top, 5' in vu

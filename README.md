@@ -24,6 +24,18 @@ Finally, ps2gl is still quite young, and developers who decide to use it can exp
 
 ## Documentation
 
+HyperSolar's September 2026 renderer cleanup promotes the current render paths
+and removes their compile-time A/B switches. Aligned transfers, retained X2
+contexts, compact city renderers, descriptor copies, clipping options and the
+RGBA32 entrance mip block layout now use their previously enabled paths.
+Runtime admission checks, unsupported-input fallbacks, packet ownership and
+capability-query bit assignments are retained. Submission and frame-phase
+metrics remain independently configurable.
+
+The VU images and their private context layouts are unchanged. Historical
+reviews and host models under `tests/` may still compare the former options;
+those comparisons remain useful correctness references, not build switches.
+
 The API documentation for ps2gl is generated from source comments using a wonderful program called [doxygen](http://www.doxygen.org). The full documentation for both the external API (gl* and pgl*) and the internal implementation is included:
 
 - [Public API (gl* and pgl*)](https://ps2dev.github.io/ps2gl/modules.html)

@@ -80,7 +80,7 @@ def check_admission():
     assert 'Core::MakePtrNormal(runs)' in preflight
     assert 'Core::MakePtrNormal(context)' in preflight
     assert 'run.format != PGL_DECAL_RUN_NDC_TRIANGLES' in preflight
-    assert '!PGL_DECAL_PROJECTED_RUNS' in preflight
+    assert 'run.format != PGL_DECAL_RUN_QUADS' in preflight
     assert 'return false' not in publish.split('#else\n    (void)context;', 1)[0]
     assert publish.index('SyncGsContext();') < publish.index('for (int i = 0; i < runCount;')
     assert 'ownedPayloads + batchOffset' in publish

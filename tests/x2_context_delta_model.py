@@ -184,8 +184,7 @@ def source_contracts():
         assert 'ContextDeltaEligible = true;' in (ROOT / 'src' / name).read_text()
     glow = (ROOT / 'src/x2g_renderer.cpp').read_text()
     assert 'ContextDeltaEligible = true;' not in glow
-    header = (ROOT / 'include/GL/ps2gl.h').read_text()
-    assert '#define PGL_X2_CONTEXT_DELTA 1' in header
+    assert '#if PGL_X2_CONTEXT_DELTA' not in code
     return 18
 
 

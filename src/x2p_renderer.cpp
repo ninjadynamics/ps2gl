@@ -9,7 +9,6 @@ typedef char PoolQuadSize[sizeof(PGLPoolQuad) == 64u ? 1 : -1];
 typedef char PoolQuadUv[offsetof(PGLPoolQuad, uv) == 32u ? 1 : -1];
 typedef char PoolQuadColor[offsetof(PGLPoolQuad, color) == 48u ? 1 : -1];
 
-#if PGL_CITY_POOLS_VU1
 extern "C" {
 void vsmGeneralClipPoolX2P_CodeStart();
 void vsmGeneralClipPoolX2P_CodeEnd();
@@ -35,21 +34,14 @@ void CClipPoolX2PRenderer::DrawPoolQuads(const PGLPoolQuad* quads, int count)
 {
     DrawCompactGroundQuads((const float*)quads, count, 16, 24);
 }
-#endif
 
 void pglRegisterPoolRenderer(void)
 {
-#if PGL_CITY_POOLS_VU1
     if (pGLContext) CClipPoolX2PRenderer::Register();
-#endif
 }
 
 unsigned int pglGetPoolSubmissionOptions(void)
 {
-#if PGL_CITY_POOLS_VU1
     return pGLContext && pGLContext->GetImmGeomManager().GetRendererManager().GetPoolRenderer()
         ? 1u : 0u;
-#else
-    return 0;
-#endif
 }

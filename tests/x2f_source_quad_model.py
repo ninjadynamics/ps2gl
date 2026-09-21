@@ -158,8 +158,8 @@ def check_source_contract():
     assert sum(15<<shift for shift in (18,6,0))==0x3c03cf
     cpp=(ROOT/'src/x2f_renderer.cpp').read_text()
     assert 'const float outputOptions[3]' in cpp
-    assert 'PGL_CITY_SOURCE_CLIP_DISPATCH ? 1.0f : 0.0f' in cpp
-    assert 'PGL_CITY_SOURCE_CLIP_DISPATCH ? 4u : 0u' in cpp
+    assert '60.0f,\n        36.0f,\n        1.0f' in cpp
+    assert 'return 15u;' in cpp
 
 def check_dispatch_boundaries(old,new):
     # Each fixture contains one actual authored quad, independently varied

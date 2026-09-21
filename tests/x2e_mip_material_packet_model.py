@@ -92,7 +92,7 @@ def admission_cases():
     for invariant in ('format | (materials ? 2u : 0u)',
                       'materials[i] << (i * 2)', 'materials[i] << ((i - 8) * 2)',
                       'if (materials) materials += batch;',
-                      'PGL_DECAL_HEADER_COMPACT ? 1u : 5u'):
+                      'pglCloseOwnedV4Unpack(packet, 1u);'):
         assert invariant in writer, invariant
     return cases
 

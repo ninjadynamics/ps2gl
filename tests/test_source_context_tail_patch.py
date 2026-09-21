@@ -246,10 +246,8 @@ class SourceContextTailTests(unittest.TestCase):
             # programs keep their writable arenas relative to the input half.
             self.assertNotRegex(body, r'\b(?:sq|isw)(?:\.[xyzw]+)?\s+[^\n]*\(VI00\)')
 
-    def test_source_ownership_and_gate_contract(self):
+    def test_source_ownership_and_retained_context_contract(self):
         text = (ROOT / 'src/x2r_renderer.cpp').read_text()
-        header = (ROOT / 'include/GL/ps2gl.h').read_text()
-        self.assertIn('#define PGL_SOURCE_CONTEXT_TAIL_PATCH 1', header)
         proof = text.split('if (RetainedContextValid', 1)[1].split('if (RoadContextUnchanged)', 1)[0]
         for guard in ('RetainedPacket == &packet', 'RetainedBase == packet.GetBase()',
                       'RetainedEnd == packet.GetNextPtr()',
@@ -266,7 +264,7 @@ class SourceContextTailTests(unittest.TestCase):
         for forbidden in ('packet.Ref(', 'packet.Mscal(', 'packet.Base(', 'packet.Offset('):
             self.assertNotIn(forbidden, patch)
         self.assertIn('RetainedContextValid = false;', text.split('void CClipRoadX2RRenderer::Load()', 1)[1])
-        self.assertEqual(text.count('#if PGL_ROAD_CONTEXT_REUSE || PGL_SOURCE_CONTEXT_TAIL_PATCH'), 3)
+        self.assertIn('RetainedFrame = pGLContext->GetFrameNumber();', text)
 
 
 if __name__ == '__main__':

@@ -91,31 +91,26 @@ class SourceFixedBatchCountTests(unittest.TestCase):
                 sweeps += 1
         self.assertEqual(sweeps, 128)
 
-    def test_source_gate_and_original_wide_contract(self):
+    def test_source_fixed_count_and_original_wide_contract(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / 'src/immgmanager.cpp').read_text()
         source = source.split('bool CImmGeomManager::DrawSourceViewQuads(', 1)[1]
         source = source.split('bool CImmGeomManager::DrawPoolQuads(', 1)[0]
-        header = (root / 'include/GL/ps2gl.h').read_text()
         options = (root / 'src/x2r_renderer.cpp').read_text()
         guard = source.index('count > INT_MAX / (int)quadBytes')
-        division = source.index('#if PGL_SOURCE_FIXED_BATCH_COUNT')
+        division = source.index('const uint64_t batches = batchLimit == 32u')
         self.assertLess(guard, division)
         self.assertEqual(source.count('batchLimit = 24;'), 2)
         self.assertEqual(source.count('batchLimit = 32;'), 1)
         self.assertIn('const uint64_t batches = batchLimit == 32u\n'
                       '        ? ((unsigned int)count + 31u) / 32u\n'
                       '        : ((unsigned int)count + 23u) / 24u;', source)
-        self.assertIn('#else\n    const uint64_t batches = '
-                      '((uint64_t)count + batchLimit - 1u) / batchLimit;\n#endif', source)
+        self.assertNotIn('((uint64_t)count + batchLimit - 1u) / batchLimit', source)
         self.assertIn('const uint64_t words = ((uint64_t)count * (quadBytes / 16u) '
                       '+ batches * 16u + 272u) * 4u;', source)
         self.assertIn('words > UINT_MAX', source)
         self.assertIn('const uint64_t writeEnd = (uint64_t)writeBegin + words * sizeof(uint32_t);', source)
-        self.assertIn('#define PGL_SOURCE_FIXED_BATCH_COUNT 1', header)
-        self.assertIn('PGL_SOURCE_FIXED_BATCH_COUNT != 0 && PGL_SOURCE_FIXED_BATCH_COUNT != 1', header)
-        self.assertIn('PGL_SOURCE_CONTEXT_TAIL_PATCH ? 1u : 0u', options)
-        self.assertIn('PGL_SOURCE_FIXED_BATCH_COUNT ? 2u : 0u', options)
+        self.assertIn('unsigned int pglGetSourceContextSubmissionOptions(void)\n{\n    return 3u;', options)
 
 
 if __name__ == '__main__':

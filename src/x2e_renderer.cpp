@@ -25,7 +25,6 @@ typedef char DecalColorOffset[offsetof(PGLDecalQuad, colors) == 3u * 16u ? 1 : -
 typedef char DecalZwOffset[offsetof(PGLDecalQuad, zw) == 5u * 16u ? 1 : -1];
 typedef char DecalErrorOffset[offsetof(PGLDecalQuad, depth) == 7u * 16u ? 1 : -1];
 
-#if PGL_CITY_ENTRANCES_VU1
 extern "C" {
 void vsmGeneralClipDecalX2E_CodeStart();
 void vsmGeneralClipDecalX2E_CodeEnd();
@@ -75,9 +74,8 @@ void CClipDecalX2ERenderer::SetDecalContext(const PGLDecalContext& context, bool
     RegionMaterials = regionMaterials;
     // Public source clip.z/w remain zero. Only this linked module chooses the
     // private decoder path; old applications do not need a new descriptor ABI.
-    DecalContext.clip[2] = PGL_DECAL_XY_REUSE ? 1.0f : 0.0f;
-    DecalContext.clip[3] = PGL_DECAL_TRIVIAL_ACCEPT
-        ? (PGL_DECAL_CLIP_PREFIX_REUSE ? 3.0f : 1.0f) : 0.0f;
+    DecalContext.clip[2] = 1.0f;
+    DecalContext.clip[3] = 3.0f;
     pGLContext->SetRendererContextChanged(true);
 }
 
@@ -198,29 +196,14 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     const float* source = (const float*)records;
-#if !PGL_DECAL_HEADER_COMPACT
-    static const float independentAdc[16] = { 1024.0f };
-#endif
-#if PGL_DECAL_PAYLOAD_REUSE
     unsigned int batchIndex = 0;
-#else
-    (void)ownedPayloads;
-    (void)reusePayload;
-#endif
     pglCountSubmission(PGL_SUBMIT_BLOCKS);
-#if PGL_DECAL_HEADER_COMPACT
     // Admission reserves the complete material in the <=65000q frame chain.
     // Keep MSCNT/TOP alternation unchanged; only close CNT for a real REF.
     packet.Cnt();
     packet.Stcycl(1, 1);
-#endif
     while (count > 0) {
         const int batch = count > 16 ? 16 : count;
-#if !PGL_DECAL_HEADER_COMPACT
-        packet.Cnt();
-        packet.Stcycl(1, 1);
-#endif
-#if PGL_DECAL_PAYLOAD_REUSE
         if (reusePayload) {
             packet.Pad128();
             packet.CloseTag();
@@ -236,18 +219,12 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
             pglCountSubmission(PGL_SUBMIT_REF_BYTES,
                 (unsigned int)batch * sizeof(PGLDecalQuad));
         } else
-#endif
         {
             packet.Pad96();
             packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
-#if PGL_DECAL_PAYLOAD_REUSE
             const float* owned = pglAddOwnedPayload(packet,
                 source, (unsigned int)batch * 36u);
             if (ownedPayloads) ownedPayloads[batchIndex] = owned;
-#else
-            pglAddOwnedPayload(packet, source,
-                (unsigned int)batch * 36u);
-#endif
             pglCloseOwnedV4Unpack(packet, (unsigned int)batch * 9u);
             pglCountSubmission(PGL_SUBMIT_EDGE_BYTES,
                 (unsigned int)batch * sizeof(PGLDecalQuad));
@@ -267,26 +244,16 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
             packet += low;
             packet += high;
         } else packet += (uint64_t)0;
-#if !PGL_DECAL_HEADER_COMPACT
-        packet.Add(independentAdc, 16);
-#endif
-        pglCloseOwnedV4Unpack(packet, PGL_DECAL_HEADER_COMPACT ? 1u : 5u);
+        pglCloseOwnedV4Unpack(packet, 1u);
         packet.Mscnt();
         packet.Pad128();
-#if !PGL_DECAL_HEADER_COMPACT
-        packet.CloseTag();
-#endif
         pglCountSubmission(PGL_SUBMIT_BUFFERS);
-#if PGL_DECAL_PAYLOAD_REUSE
         ++batchIndex;
-#endif
         source += batch * 36;
         if (materials) materials += batch;
         count -= batch;
     }
-#if PGL_DECAL_HEADER_COMPACT
     packet.CloseTag();
-#endif
 }
 
 void CClipDecalX2ERenderer::DrawLinearArrays(CGeometryBlock& block)
@@ -297,28 +264,14 @@ void CClipDecalX2ERenderer::DrawLinearArrays(CGeometryBlock& block)
     fprintf(stderr, "ps2gl: decal renderer requires pglDrawDecalQuads\n");
     abort();
 }
-#endif
 
 extern "C" void pglRegisterDecalRenderer(void)
 {
-#if PGL_CITY_ENTRANCES_VU1
     if (pGLContext) CClipDecalX2ERenderer::Register();
-#endif
 }
 
 extern "C" unsigned int pglGetDecalSubmissionOptions(void)
 {
-#if PGL_CITY_ENTRANCES_VU1
-    return (PGL_DECAL_PAYLOAD_REUSE ? 1u : 0u)
-        | (PGL_DECAL_HEADER_COMPACT ? 2u : 0u)
-        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u)
-        | (PGL_DECAL_XY_REUSE ? 8u : 0u)
-        | (PGL_DECAL_PROJECTED_RUNS ? 16u : 0u)
-        | (PGL_DECAL_TRIVIAL_ACCEPT ? 32u : 0u)
-        | (PGL_DECAL_TRIVIAL_ACCEPT && PGL_DECAL_CLIP_PREFIX_REUSE ? 64u : 0u)
-        | (PGL_COMPACT_FIXED_UNPACK_COUNT ? 128u : 0u)
-        | 256u; // per-record atlas materials in the ordinary16-record batch
-#else
-    return 0u;
-#endif
+    // Retain the public capability ABI, including per-record atlas materials.
+    return 511u;
 }

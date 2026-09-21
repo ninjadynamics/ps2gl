@@ -1126,14 +1126,10 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
    offsets cover only the exact admitted shape, not arbitrary rectangles. */
 static const int kMip32Widths[4] = {64, 32, 16, 8};
 static const int kMip32Heights[4] = {128, 64, 32, 16};
-#if PGL_MIP32_LOCAL_LEVELS
 /* L1 uses blocks128..143/160..175. L2 uses144..147/152..155 and L3
    uses148/150, so L2/L3 share page4 without overwriting L1. This removes
    their trilinear page alternation; L0/L1 still occupy separate pages. */
 static const unsigned int kMip32Blocks[4] = {0, 128, 144, 148};
-#else
-static const unsigned int kMip32Blocks[4] = {0, 128, 192, 224};
-#endif
 
 /* The caller owns every input buffer on failure. On success all four
    free()-compatible, qword-aligned DMA buffers belong to their descriptors;
@@ -1205,7 +1201,7 @@ extern "C" unsigned int pgl_create_mip32(void** levels, const int* lw,
         mlist[i]->SetFreeImageOnExit(true);
     pgl_mips_register(entry, id, mlist, 3, pack);
     printf("[MIP32] id=%u base_tbp=%u mxl=3 pack_pages=8 lodk=%d local-levels=%d\n",
-           (unsigned int)id, packTbp, kbias, PGL_MIP32_LOCAL_LEVELS);
+           (unsigned int)id, packTbp, kbias, 1);
     for (int i = 0; i < 4; i++)
         printf("[MIP32]   L%d %dx%d tbp=%u tbw=1 page=%u block=%u\n", i, lw[i], lh[i],
                packTbp + kMip32Blocks[i], kMip32Blocks[i] / 32u, kMip32Blocks[i]);

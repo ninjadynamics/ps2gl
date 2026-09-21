@@ -150,16 +150,14 @@ class CompactFixedUnpackCount(unittest.TestCase):
     def test_source_contract(self):
         root = Path(__file__).resolve().parents[1]
         helper = (root / 'include/ps2gl/owned_payload.h').read_text()
-        header = (root / 'include/GL/ps2gl.h').read_text()
         road = (root / 'src/x2r_renderer.cpp').read_text()
         decal = (root / 'src/x2e_renderer.cpp').read_text()
-        self.assertIn('#define PGL_COMPACT_FIXED_UNPACK_COUNT 1', header)
-        self.assertIn('#if PGL_COMPACT_FIXED_UNPACK_COUNT\n    packet.CloseUnpack(qwords);', helper)
-        self.assertIn('#else\n    (void)qwords;\n    packet.CloseUnpack();', helper)
-        for source, family, bit in ((road, 'ROAD', 8), (decal, 'DECAL', 128)):
+        self.assertIn('packet.CloseUnpack(qwords);', helper)
+        self.assertNotIn('packet.CloseUnpack();', helper)
+        for source, options in ((road, 15), (decal, 511)):
             self.assertEqual(source.count('pglCloseOwnedV4Unpack('), 2)
-            self.assertIn(f'PGL_{family}_HEADER_COMPACT ? 1u : 5u', source)
-            self.assertIn(f'PGL_COMPACT_FIXED_UNPACK_COUNT ? {bit}u : 0u', source)
+            self.assertIn('pglCloseOwnedV4Unpack(packet, 1u);', source)
+            self.assertIn(f'return {options}u;', source)
             self.assertIn('packet.Stcycl(1, 1);', source)
         self.assertIn('(unsigned int)batch * (unsigned int)floatsPerQuad / 4u', road)
         self.assertIn('pglCloseOwnedV4Unpack(packet, (unsigned int)batch * 9u);', decal)

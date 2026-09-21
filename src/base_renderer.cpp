@@ -38,13 +38,13 @@ extern "C" unsigned int pglGetContextOptimizationFlags(void)
         | (1 << 14) | (1 << 15)
         | (1 << 16) | (1 << 17)
         | (1 << 18) | (1 << 19)
-        | (PGL_UNLIT_DELTA_SPECIALIZE << 20) | (1 << 21)
+        | (1 << 20) | (1 << 21)
         | (1 << 22) | (PGL_SUBMISSION_METRICS << 23)
         | (1 << 24) | (1 << 25)
-        | (1 << 26) | (PGL_X2_BASE_PREFIX_REUSE << 27)
-        | (PGL_X2_SINGLE_MATERIAL_BATCH << 28)
-        | (PGL_CITY_ROADS_VU1 << 29)
-        | (PGL_CITY_ENTRANCES_VU1 << 30);
+        | (1 << 26) | (1 << 27)
+        | (1 << 28)
+        | (1 << 29)
+        | (1 << 30);
 }
 
 // A proof about the last context written to this ordered VIF chain, not a
@@ -92,14 +92,12 @@ bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
     GLenum primType, uint32_t changes, bool userChanged, bool originalClip) const
 {
     const uint32_t allowed = RendererCtxtFlags::Xform | RendererCtxtFlags::CurMaterial;
-#if PGL_UNLIT_DELTA_SPECIALIZE
     // These checks need no GL-state pointer chasing. In particular, a full
     // context or a new owner cannot reuse anything regardless of lighting.
     if (changes == 0 || (changes & ~allowed) != 0 || userChanged
         || unlitContextOwner != this || unlitContextPacket != &packet
         || unlitContextOriginalClip != originalClip || unlitContextPrim != primType)
         return false;
-#endif
     CGLContext& context = *pGLContext;
     const bool doLighting = context.GetImmLighting().GetLightingEnabled();
     if (doLighting) {
@@ -113,12 +111,6 @@ bool CBaseRenderer::CanUseUnlitContextDelta(const CVifSCDmaPacket& packet,
     // are never interpreted as a partial update. Any GS change also falls
     // back: draw-buffer/layout transitions can change clip/depth fields.
     return
-#if !PGL_UNLIT_DELTA_SPECIALIZE
-        changes != 0 && (changes & ~allowed) == 0 && !userChanged
-        && unlitContextOwner == this && unlitContextPacket == &packet
-        && unlitContextOriginalClip == originalClip
-        && unlitContextPrim == primType &&
-#endif
         !context.InDListDef()
         && context.GetGsContextChanged() == 0
         && unlitContextLightingEnabled == doLighting
@@ -165,13 +157,9 @@ bool CBaseRenderer::CanUseUnlitGsContextDelta(const CVifSCDmaPacket& packet,
     return memcmp(key, unlitGsContextKey, sizeof(key)) == 0;
 }
 
-#if PGL_UNLIT_DELTA_SPECIALIZE
 template <bool Lighting>
 inline __attribute__((always_inline))
 void CBaseRenderer::AddSpecializedContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
-#else
-void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t changes)
-#endif
 {
 #if !defined(kContextStart) || kMaterialEmission != 58 || kMaterialAmbient != 59 || kMaterialDiffuse != 60 || \
     kMaterialSpecular != 61 || kVertexXfrm != 62
@@ -190,11 +178,7 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
         // material words, including alpha and currently unread specular.
         CImmMaterial& material = context.GetMaterialManager().GetImmMaterial();
         const float maxColorValue = GetMaxColorValue(context.GetTexManager().GetTexEnabled());
-#if PGL_UNLIT_DELTA_SPECIALIZE
         const bool doLighting = Lighting;
-#else
-        const bool doLighting = context.GetImmLighting().GetLightingEnabled();
-#endif
         cpu_vec_4 emission;
         if (doLighting)
             emission = material.GetEmission() * maxColorValue;
@@ -212,7 +196,6 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
     packet.CloseUnpack();
 }
 
-#if PGL_UNLIT_DELTA_SPECIALIZE
 // Keep the lit copy out of the unlit writer's instruction footprint. Both
 // instantiate the same packet source; the restart stays in CLinearRenderer.
 __attribute__((noinline))
@@ -231,7 +214,6 @@ void CBaseRenderer::AddUnlitContextDelta(CVifSCDmaPacket& packet, uint32_t chang
     }
     AddSpecializedContextDelta<false>(packet, changes);
 }
-#endif
 
 void CBaseRenderer::NoteUnlitContext(const CVifSCDmaPacket& packet, GLenum primType,
     bool originalClip)
@@ -780,7 +762,6 @@ void CBaseRenderer::XferVectors(CVifSCDmaPacket& packet, unsigned int* dataStart
     mErrorIf((unsigned int)vecDataStart & (4 - 1),
         "XferVectors only works with word-aligned data");
 
-#if PGL_ALIGNED_VECTOR_TRANSFER
     if ((((uintptr_t)vecDataStart | (uintptr_t)vecDataEnd) & 15u) == 0u) {
         /* Same packet as the generic path with both edge counts zero.
          * Keep the mask, double-buffer bit, REF alias and UNPACK count; the
@@ -798,7 +779,6 @@ void CBaseRenderer::XferVectors(CVifSCDmaPacket& packet, unsigned int* dataStart
         pglCountSubmission(PGL_SUBMIT_REF_BYTES, numVectors * wordsPerVec * 4u);
         return;
     }
-#endif
 
     int numWordsToPrepend      = 0;
     unsigned int* refXferStart = vecDataStart;

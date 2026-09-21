@@ -676,8 +676,8 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.21 12:22]\n");
     printf("[PS2-PACKETS] normal=cached\n");
     printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",
-        1, PGL_ALIGNED_VECTOR_TRANSFER,
-        PS2S_DIRECT_PACKET_TAGS);
+        1, 1,
+        1);
 
     ps2sInit();
     pGLContext = new CGLContext(immBufferVertexSize, immDrawBufferQwordSize);

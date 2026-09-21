@@ -5,7 +5,6 @@
 #include "ps2gl/immgmanager.h"
 #include <string.h>
 
-#if PGL_CITY_SOURCE_QUADS
 extern "C" {
 void vsmGeneralClipQuadX2F_CodeStart();
 void vsmGeneralClipQuadX2F_CodeEnd();
@@ -52,16 +51,16 @@ void CClipQuadX2FRenderer::DrawLinearArrays(CGeometryBlock& block)
     // lands these exact small integers in an already-live VF.
     // Each activation owns its copied prefix; no new VF/VI lifetime or loads.
     const float outputOptions[3] = {
-        PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT ? 60.0f : 30.0f,
-        PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT ? 36.0f : 18.0f,
-        PGL_CITY_SOURCE_CLIP_DISPATCH ? 1.0f : 0.0f
+        60.0f,
+        36.0f,
+        1.0f
     };
     memcpy((unsigned char*)&Pfx[0] + 4, outputOptions, sizeof(outputOptions));
     // Private absolute q1..22 holds the per-quad cache. The double-buffered
     // input can fill q5..124 as XYZ/STQ/RGBA (ten complete ABCD quads),
     // ending before the unchanged clip planes at q125. No source restart or
     // paired-material ordering boundary exists in this single-material path.
-    const int cornersPerBuffer = PGL_CITY_SOURCE_TEN_QUADS ? 40 : 32;
+    const int cornersPerBuffer = 40;
     packet.Cnt();
     packet.Stcycl(1, InputQuadsPerVert);
     packet.Pad128();
@@ -97,24 +96,15 @@ void CClipQuadX2FRenderer::DrawLinearArrays(CGeometryBlock& block)
     }
     RememberContextEnd();
 }
-#endif
 
 void pglRegisterClipQuadX2FRenderer(void)
 {
-#if PGL_CITY_SOURCE_QUADS
     if (pGLContext) CClipQuadX2FRenderer::Register();
-#endif
 }
 
 unsigned int pglGetSourceQuadSubmissionOptions(void)
 {
-#if PGL_CITY_SOURCE_QUADS
     if (!pGLContext || !pGLContext->GetImmGeomManager().GetRendererManager()
         .GetSourceQuadRenderer()) return 0u;
-    return 1u | (PGL_CITY_SOURCE_SINGLE_MATERIAL_OUTPUT ? 2u : 0u)
-        | (PGL_CITY_SOURCE_CLIP_DISPATCH ? 4u : 0u)
-        | (PGL_CITY_SOURCE_TEN_QUADS ? 8u : 0u);
-#else
-    return 0u;
-#endif
+    return 15u;
 }

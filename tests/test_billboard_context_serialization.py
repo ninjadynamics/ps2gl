@@ -60,7 +60,7 @@ class BillboardContextSerializationTests(unittest.TestCase):
             '\n    } else {', 1)[0]
         self.assertEqual(branch.count('pglAddOwnedPayload('), 1)
         self.assertIn('(const float*)&RoadContext + ContextFirstQuad * 4u, 32u', branch)
-        self.assertIn('PGL_CITY_BILLBOARD_CORNER_REUSE ? 1u : 0u', branch)
+        self.assertIn('const uint32_t reuse = 1u;', branch)
         self.assertIn('memcpy((char*)billboardContext + 5u * 16u + 12u, '
                       '&reuse, sizeof(reuse));', branch)
         self.assertNotIn('billboardContext[', branch)

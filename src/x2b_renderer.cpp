@@ -13,7 +13,6 @@ typedef char BillboardAxisOffset[offsetof(PGLBillboardContext, axisU) == 96u ? 1
 typedef char BillboardAlphaSize[sizeof(PGLBillboardAlphaQuad) == 64u ? 1 : -1];
 typedef char BillboardAlphaOffset[offsetof(PGLBillboardAlphaQuad, alpha) == 48u ? 1 : -1];
 
-#if PGL_CITY_BILLBOARDS_VU1
 extern "C" {
 void vsmGeneralClipBillboardX2B_CodeStart();
 void vsmGeneralClipBillboardX2B_CodeEnd();
@@ -34,9 +33,7 @@ void CClipBillboardX2BRenderer::Register()
     pglRegisterCustomPrimType(PGL_CLIP_BILLBOARD_QUADS_X2B, PGL_CLIP_BILLBOARD_X2B_PROP,
         ~(pglU64_t)0xffffffff, PGL_DONT_MERGE_CONTIGUOUS);
 }
-#endif
 
-#if PGL_CITY_BILLBOARD_CORNER_ALPHA
 extern "C" {
 void vsmGeneralClipBillboardX2A_CodeStart();
 void vsmGeneralClipBillboardX2A_CodeEnd();
@@ -57,31 +54,20 @@ void CClipBillboardAlphaX2ARenderer::Register()
     pglRegisterCustomPrimType(PGL_CLIP_BILLBOARD_QUADS_X2A, PGL_CLIP_BILLBOARD_X2A_PROP,
         ~(pglU64_t)0xffffffff, PGL_DONT_MERGE_CONTIGUOUS);
 }
-#endif
 
 void pglRegisterBillboardRenderer(void)
 {
     if (!pGLContext) return;
-#if PGL_CITY_BILLBOARDS_VU1
     CClipBillboardX2BRenderer::Register();
-#endif
-#if PGL_CITY_BILLBOARD_CORNER_ALPHA
     CClipBillboardAlphaX2ARenderer::Register();
-#endif
 }
 
 unsigned int pglGetBillboardSubmissionOptions(void)
 {
     unsigned int options = 0;
     if (!pGLContext) return options;
-#if PGL_CITY_BILLBOARDS_VU1
     if (pGLContext->GetImmGeomManager().GetRendererManager().GetBillboardRenderer()) options |= 1u;
-#endif
-#if PGL_CITY_BILLBOARD_CORNER_ALPHA
     if (pGLContext->GetImmGeomManager().GetRendererManager().GetBillboardAlphaRenderer()) options |= 2u;
-#endif
-#if PGL_CITY_BILLBOARD_CORNER_REUSE
     if (options & 3u) options |= 4u;
-#endif
     return options;
 }

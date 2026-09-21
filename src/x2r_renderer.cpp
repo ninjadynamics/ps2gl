@@ -25,7 +25,6 @@ typedef char RoadYOffset[offsetof(PGLRoadContext, sourceY) == 55u * 16u ? 1 : -1
 typedef char RoadGiftagSize[sizeof(tGifTag) == 16u ? 1 : -1];
 typedef char RoadMatrixBytes[sizeof(cpu_mat_44) == 16u * sizeof(float) ? 1 : -1];
 
-#if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
 extern "C" {
 void vsmGeneralClipRoadX2R_CodeStart();
 void vsmGeneralClipRoadX2R_CodeEnd();
@@ -88,23 +87,13 @@ bool CClipRoadX2RRenderer::MatchesRoadContext(const PGLRoadContext& context) con
 
 bool CClipRoadX2RRenderer::MatchesSourceContext(const void* context) const
 {
-#if PGL_ROAD_CONTEXT_REUSE
     const unsigned int offset = ContextFirstQuad * 16u;
-#if PGL_SOURCE_CONTEXT_TAIL_PATCH
     // A material normally changes this tail. Compare it first so that the
     // prefix is examined only once, below or by SetSourceContext on a miss.
     const unsigned int prefix = offsetof(PGLRoadContext, color) - offset;
     return HasRoadContext
         && memcmp(RoadContext.color, (const char*)context + prefix, 32u) == 0
         && memcmp((const char*)&RoadContext + offset, context, prefix) == 0;
-#else
-    return HasRoadContext && memcmp((const char*)&RoadContext + offset,
-        context, sizeof(RoadContext) - offset) == 0;
-#endif
-#else
-    (void)context;
-    return false;
-#endif
 }
 
 void CClipRoadX2RRenderer::SetRoadContext(const PGLRoadContext& context, bool unchanged)
@@ -116,7 +105,6 @@ void CClipRoadX2RRenderer::SetSourceContext(const void* context, bool unchanged)
 {
     RoadContextUnchanged = unchanged;
     const unsigned int offset = ContextFirstQuad * 16u;
-#if PGL_SOURCE_CONTEXT_TAIL_PATCH
     const unsigned int prefix = offsetof(PGLRoadContext, color) - offset;
     // Capture equality before updating the cached public context. This is
     // only an EE byte proof; InitContext separately proves live VU ownership.
@@ -125,7 +113,6 @@ void CClipRoadX2RRenderer::SetSourceContext(const void* context, bool unchanged)
     if (SourcePrefixUnchanged) {
         if (!unchanged) memcpy(RoadContext.color, (const char*)context + prefix, 32u);
     } else
-#endif
     if (!unchanged) memcpy((char*)&RoadContext + offset,
         context, sizeof(RoadContext) - offset);
     HasRoadContext = true;
@@ -185,7 +172,6 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     pglInvalidateUnlitContextDelta();
     CImmDrawContext& draw = pGLContext->GetImmDrawContext();
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
-#if PGL_ROAD_CONTEXT_REUSE || PGL_SOURCE_CONTEXT_TAIL_PATCH
     uint32_t rasterKey[27];
     GetRasterContextKey(rasterKey);
     // This is an ordered-chain proof, not a cross-frame VU RAM cache. No
@@ -193,24 +179,17 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     // A material bind can change GS settings without changing these inputs;
     // SyncGsContext still fences and sends that material after this returns.
     if (RetainedContextValid
-#if PGL_SOURCE_CONTEXT_TAIL_PATCH
         && SourcePrefixUnchanged
-#else
-        && RoadContextUnchanged
-#endif
         && RetainedPacket == &packet && RetainedBase == packet.GetBase()
         && RetainedEnd == packet.GetNextPtr()
         && RetainedFrame == pGLContext->GetFrameNumber()
         && &pGLContext->GetImmGeomManager().GetRendererManager().GetCurRenderer() == this
         && memcmp(RetainedRaster, rasterKey, sizeof(rasterKey)) == 0) {
-#if PGL_ROAD_CONTEXT_REUSE
         if (RoadContextUnchanged) {
             CacheRendererState();
             pglCountSubmission(PGL_SUBMIT_DELTA_CONTEXTS);
             return;
         }
-#endif
-#if PGL_SOURCE_CONTEXT_TAIL_PATCH
         if (SourcePrefixUnchanged) {
 #if PGL_SUBMISSION_METRICS
             const unsigned int start = packet.GetByteLength();
@@ -235,9 +214,7 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
 #endif
             return;
         }
-#endif
     }
-#endif
 #if PGL_SUBMISSION_METRICS
     const unsigned int start = packet.GetByteLength();
 #endif
@@ -268,7 +245,7 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
         // Add does not publish/send this payload before CloseUnpack below.
         float* const billboardContext = pglAddOwnedPayload(packet,
             (const float*)&RoadContext + ContextFirstQuad * 4u, 32u);
-        const uint32_t reuse = PGL_CITY_BILLBOARD_CORNER_REUSE ? 1u : 0u;
+        const uint32_t reuse = 1u;
         memcpy((char*)billboardContext + 5u * 16u + 12u, &reuse, sizeof(reuse));
     } else {
         pglAddOwnedPayload(packet, (const float*)&RoadContext + ContextFirstQuad * 4u,
@@ -312,10 +289,8 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
     packet.Offset(kDoubleBufOffset);
     packet.CloseTag();
     CacheRendererState();
-#if PGL_ROAD_CONTEXT_REUSE || PGL_SOURCE_CONTEXT_TAIL_PATCH
     memcpy(RetainedRaster, rasterKey, sizeof(rasterKey));
     RetainedContextValid = true;
-#endif
     pglCountSubmission(PGL_SUBMIT_FULL_CONTEXTS);
 #if PGL_SUBMISSION_METRICS
     pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - start);
@@ -331,23 +306,14 @@ void CClipRoadX2RRenderer::DrawCompactGroundQuads(const float* quads, int count,
     int floatsPerQuad, int quadsPerBuffer)
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
-#if !PGL_ROAD_HEADER_COMPACT
-    static const float independentAdc[16] = { 1024.0f };
-#endif
     pglCountSubmission(PGL_SUBMIT_BLOCKS);
-#if PGL_ROAD_HEADER_COMPACT
     // A whole material already fits the normal <=65000q frame chain. One
     // CNT can therefore own all activations; MSCNT and alternating TOP halves
     // retain exactly the same VIF/VU producer-consumer synchronization.
     packet.Cnt();
     packet.Stcycl(1, 1);
-#endif
     while (count > 0) {
         const int batch = count > quadsPerBuffer ? quadsPerBuffer : count;
-#if !PGL_ROAD_HEADER_COMPACT
-        packet.Cnt();
-        packet.Stcycl(1, 1);
-#endif
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
         pglAddOwnedPayload(packet, quads,
@@ -359,30 +325,20 @@ void CClipRoadX2RRenderer::DrawCompactGroundQuads(const float* quads, int count,
         packet += batch;
         packet += 0;
         packet += (uint64_t)0;
-#if !PGL_ROAD_HEADER_COMPACT
-        packet.Add(independentAdc, 16);
-#endif
-        pglCloseOwnedV4Unpack(packet, PGL_ROAD_HEADER_COMPACT ? 1u : 5u);
+        pglCloseOwnedV4Unpack(packet, 1u);
         packet.Mscnt();
         packet.Pad128();
-#if !PGL_ROAD_HEADER_COMPACT
-        packet.CloseTag();
-#endif
         pglCountSubmission(PGL_SUBMIT_BUFFERS);
         pglCountSubmission(PGL_SUBMIT_EDGE_BYTES,
             (unsigned int)batch * (unsigned int)floatsPerQuad * sizeof(float));
         quads += batch * floatsPerQuad;
         count -= batch;
     }
-#if PGL_ROAD_HEADER_COMPACT
     packet.CloseTag();
-#endif
-#if PGL_ROAD_CONTEXT_REUSE || PGL_SOURCE_CONTEXT_TAIL_PATCH
     RetainedPacket = &packet;
     RetainedBase = packet.GetBase();
     RetainedEnd = packet.GetNextPtr();
     RetainedFrame = pGLContext->GetFrameNumber();
-#endif
 }
 
 void CClipRoadX2RRenderer::DrawLinearArrays(CGeometryBlock& block)
@@ -393,33 +349,18 @@ void CClipRoadX2RRenderer::DrawLinearArrays(CGeometryBlock& block)
     fprintf(stderr, "ps2gl: compact renderer requires its owned descriptor API\n");
     abort();
 }
-#endif
 
 extern "C" void pglRegisterRoadRenderer(void)
 {
-#if PGL_CITY_ROADS_VU1
     if (pGLContext) CClipRoadX2RRenderer::Register();
-#endif
 }
 
 extern "C" unsigned int pglGetRoadSubmissionOptions(void)
 {
-#if PGL_CITY_ROADS_VU1
-    return (PGL_ROAD_CONTEXT_REUSE ? 1u : 0u)
-        | (PGL_ROAD_HEADER_COMPACT ? 2u : 0u)
-        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u)
-        | (PGL_COMPACT_FIXED_UNPACK_COUNT ? 8u : 0u);
-#else
-    return 0;
-#endif
+    return 15u;
 }
 
 extern "C" unsigned int pglGetSourceContextSubmissionOptions(void)
 {
-#if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
-    return (PGL_SOURCE_CONTEXT_TAIL_PATCH ? 1u : 0u)
-        | (PGL_SOURCE_FIXED_BATCH_COUNT ? 2u : 0u);
-#else
-    return 0;
-#endif
+    return 3u;
 }

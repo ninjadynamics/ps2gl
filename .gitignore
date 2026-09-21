@@ -2,12 +2,15 @@
 *.vo
 *.a
 *.elf
+*.d
+*.orig
+
+# Host guard/model caches; checked-in VU1 .vcl/.vsm sources stay visible.
+*.pyc
+__pycache__/
+# Interrupted VU preprocessing can leave these temporary sources behind.
+/vu1/*_pp[1-4].vcl
 
 deps_*
 objs_*
 prebuilddone
-*.o
-*.vo
-*.a
-*.elf
-*.orig

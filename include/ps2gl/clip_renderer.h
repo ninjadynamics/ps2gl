@@ -101,10 +101,8 @@ protected:
     void RememberContextEnd();
 
     void BuildWindowContext2Settings();
-#if PGL_X2_WINDOW_CONTEXT_REUSE
     bool TryReuseWindowContext(CVifSCDmaPacket& packet);
     void RememberWindowContext(const CVifSCDmaPacket& packet);
-#endif
     void BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block);
     void XferPrefixes(CVifSCDmaPacket& packet);
     void DrawBlockX2(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
