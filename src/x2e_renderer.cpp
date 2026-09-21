@@ -230,7 +230,7 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
             pglAddOwnedPayload(packet, source,
                 (unsigned int)batch * 36u);
 #endif
-            packet.CloseUnpack();
+            pglCloseOwnedV4Unpack(packet, (unsigned int)batch * 9u);
             pglCountSubmission(PGL_SUBMIT_EDGE_BYTES,
                 (unsigned int)batch * sizeof(PGLDecalQuad));
         }
@@ -242,7 +242,7 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
 #if !PGL_DECAL_HEADER_COMPACT
         packet.Add(independentAdc, 16);
 #endif
-        packet.CloseUnpack();
+        pglCloseOwnedV4Unpack(packet, PGL_DECAL_HEADER_COMPACT ? 1u : 5u);
         packet.Mscnt();
         packet.Pad128();
 #if !PGL_DECAL_HEADER_COMPACT
@@ -286,7 +286,8 @@ extern "C" unsigned int pglGetDecalSubmissionOptions(void)
         | (PGL_DECAL_XY_REUSE ? 8u : 0u)
         | (PGL_DECAL_PROJECTED_RUNS ? 16u : 0u)
         | (PGL_DECAL_TRIVIAL_ACCEPT ? 32u : 0u)
-        | (PGL_DECAL_TRIVIAL_ACCEPT && PGL_DECAL_CLIP_PREFIX_REUSE ? 64u : 0u);
+        | (PGL_DECAL_TRIVIAL_ACCEPT && PGL_DECAL_CLIP_PREFIX_REUSE ? 64u : 0u)
+        | (PGL_COMPACT_FIXED_UNPACK_COUNT ? 128u : 0u);
 #else
     return 0u;
 #endif

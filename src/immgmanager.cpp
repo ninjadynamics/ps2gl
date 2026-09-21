@@ -824,7 +824,16 @@ bool CImmGeomManager::DrawSourceViewQuads(const void* context, const void* quads
     // command padding. Each activation needs <=16q overhead beyond its source
     // descriptors. Keep another 16q for the ordinary EndGeometry trailer.
     if (!DirectTextureValid(&GLContext.GetTexManager().GetCurTexture())) return false;
+#if PGL_SOURCE_FIXED_BATCH_COUNT
+    // The count guard above limits count to INT_MAX/48 or INT_MAX/64.
+    // Both numerators fit unsigned int; these formats use only 32 or 24.
+    // Keep the following footprint and alias arithmetic at its original width.
+    const uint64_t batches = batchLimit == 32u
+        ? ((unsigned int)count + 31u) / 32u
+        : ((unsigned int)count + 23u) / 24u;
+#else
     const uint64_t batches = ((uint64_t)count + batchLimit - 1u) / batchLimit;
+#endif
     const uint64_t words = ((uint64_t)count * (quadBytes / 16u) + batches * 16u + 272u) * 4u;
     CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
     if (words > UINT_MAX || !packet.GetTTE() || packet.HasOpenTag()

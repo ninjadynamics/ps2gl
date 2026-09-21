@@ -112,12 +112,17 @@
 #ifndef PGL_COMPACT_QWORD_COPY
 #define PGL_COMPACT_QWORD_COPY 1
 #endif
+/* Compact V4_32 streams already know their exact STCYCL(1,1) vector count. */
+#ifndef PGL_COMPACT_FIXED_UNPACK_COUNT
+#define PGL_COMPACT_FIXED_UNPACK_COUNT 1
+#endif
 #if (PGL_DECAL_HEADER_COMPACT != 0 && PGL_DECAL_HEADER_COMPACT != 1) || \
     (PGL_DECAL_XY_REUSE != 0 && PGL_DECAL_XY_REUSE != 1) || \
     (PGL_DECAL_PROJECTED_RUNS != 0 && PGL_DECAL_PROJECTED_RUNS != 1) || \
     (PGL_DECAL_TRIVIAL_ACCEPT != 0 && PGL_DECAL_TRIVIAL_ACCEPT != 1) || \
     (PGL_DECAL_CLIP_PREFIX_REUSE != 0 && PGL_DECAL_CLIP_PREFIX_REUSE != 1) || \
-    (PGL_COMPACT_QWORD_COPY != 0 && PGL_COMPACT_QWORD_COPY != 1)
+    (PGL_COMPACT_QWORD_COPY != 0 && PGL_COMPACT_QWORD_COPY != 1) || \
+    (PGL_COMPACT_FIXED_UNPACK_COUNT != 0 && PGL_COMPACT_FIXED_UNPACK_COUNT != 1)
 #error "Compact packet copy/header switches must be 0 or 1"
 #endif
 
@@ -192,6 +197,13 @@
 #endif
 #if PGL_SOURCE_CONTEXT_TAIL_PATCH != 0 && PGL_SOURCE_CONTEXT_TAIL_PATCH != 1
 #error "PGL_SOURCE_CONTEXT_TAIL_PATCH must be 0 or 1"
+#endif
+/* Source format/count admission proves a fixed 24- or 32-record batch limit. */
+#ifndef PGL_SOURCE_FIXED_BATCH_COUNT
+#define PGL_SOURCE_FIXED_BATCH_COUNT 1
+#endif
+#if PGL_SOURCE_FIXED_BATCH_COUNT != 0 && PGL_SOURCE_FIXED_BATCH_COUNT != 1
+#error "PGL_SOURCE_FIXED_BATCH_COUNT must be 0 or 1"
 #endif
 /* X2R consumes only the count qword of the generic five-qword batch header. */
 #ifndef PGL_ROAD_HEADER_COMPACT
@@ -636,8 +648,8 @@ void pglSetClipNear(float near_z);
    dual-context wall+window compound kick runs. Contract per descriptor
    (one wall rectangle):
      GEO   = 3 "vertices" via glVertexPointer(4, GL_FLOAT, 0, geo):
-             [ax az bx bz] [y0 y1 uL uR] [vB 0 0 0]  (q2 .yzw reserved:
-             the per-face fade id will ride .y at game integration)
+             [ax az bx bz] [y0 y1 uL uR] [vB pad pad pad]
+             (q2 .yzw are ignored by the decoder and may carry CPU-only facts)
      COLOR = 3 byte-vectors via glColorPointer(4, GL_UNSIGNED_BYTE, 0, col):
              [footRGBA] [topRGBA] [pad]              (0..255 each)
      glDrawArrays(PGL_CLIP_TRIANGLES_X2D, firstDesc * 3, numDescs * 3)
@@ -819,7 +831,8 @@ GLboolean pglDrawBillboardAlphaQuads(const PGLBillboardContext* context,
 #define PGL_CLIP_ROAD_X2R_PROP ((pglU64_t)1 << 38)
 void pglRegisterRoadRenderer(void);
 /* Linked choices: bit0 retained context, bit1 compact batch headers,
-   bit2 aligned qword payload copies (also used by pools and cards). */
+   bit2 aligned qword payload copies, bit3 fixed UNPACK counts
+   (the stream choices also apply to pools and cards). */
 unsigned int pglGetRoadSubmissionOptions(void);
 /* Bit0: PGL_SOURCE_CONTEXT_TAIL_PATCH, independent of road context reuse. */
 unsigned int pglGetSourceContextSubmissionOptions(void);
@@ -890,7 +903,8 @@ void pglRegisterDecalRenderer(void);
    bit 3 = exact VU corner XY product reuse,
    bit 4 = ordered compact/projected runs in one decal program,
    bit 5 = exact four-corner all-inside classification,
-   bit 6 = reuse the proven plane prefix after a failed quad certificate. */
+   bit 6 = reuse the proven plane prefix after a failed quad certificate,
+   bit 7 = fixed UNPACK counts. */
 unsigned int pglGetDecalSubmissionOptions(void);
 /* Submit the whole base sweep followed by the optional whole glow sweep.
    Call after draining pending geometry, in the normal frame chain, outside

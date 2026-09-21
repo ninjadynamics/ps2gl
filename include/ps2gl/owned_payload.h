@@ -31,4 +31,19 @@ static inline float* pglAddOwnedPayload(CVifSCDmaPacket& packet,
     return packet.Add(source, floatCount);
 }
 
+/* Only for V4_32 payloads under STCYCL(1,1), with all payload words present.
+ * Each qword is exactly one UNPACK vector. Preserve the normal NUM-byte write
+ * and open-code reset; only omit generic format decoding and integer divides.
+ */
+static inline void pglCloseOwnedV4Unpack(CVifSCDmaPacket& packet,
+    unsigned int qwords)
+{
+#if PGL_COMPACT_FIXED_UNPACK_COUNT
+    packet.CloseUnpack(qwords);
+#else
+    (void)qwords;
+    packet.CloseUnpack();
+#endif
+}
+
 #endif

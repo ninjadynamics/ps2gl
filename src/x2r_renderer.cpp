@@ -352,7 +352,8 @@ void CClipRoadX2RRenderer::DrawCompactGroundQuads(const float* quads, int count,
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
         pglAddOwnedPayload(packet, quads,
             (unsigned int)batch * (unsigned int)floatsPerQuad);
-        packet.CloseUnpack();
+        pglCloseOwnedV4Unpack(packet,
+            (unsigned int)batch * (unsigned int)floatsPerQuad / 4u);
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kDoubleBuff);
         packet += batch;
@@ -361,7 +362,7 @@ void CClipRoadX2RRenderer::DrawCompactGroundQuads(const float* quads, int count,
 #if !PGL_ROAD_HEADER_COMPACT
         packet.Add(independentAdc, 16);
 #endif
-        packet.CloseUnpack();
+        pglCloseOwnedV4Unpack(packet, PGL_ROAD_HEADER_COMPACT ? 1u : 5u);
         packet.Mscnt();
         packet.Pad128();
 #if !PGL_ROAD_HEADER_COMPACT
@@ -406,7 +407,8 @@ extern "C" unsigned int pglGetRoadSubmissionOptions(void)
 #if PGL_CITY_ROADS_VU1
     return (PGL_ROAD_CONTEXT_REUSE ? 1u : 0u)
         | (PGL_ROAD_HEADER_COMPACT ? 2u : 0u)
-        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u);
+        | (PGL_COMPACT_QWORD_COPY ? 4u : 0u)
+        | (PGL_COMPACT_FIXED_UNPACK_COUNT ? 8u : 0u);
 #else
     return 0;
 #endif
@@ -415,7 +417,8 @@ extern "C" unsigned int pglGetRoadSubmissionOptions(void)
 extern "C" unsigned int pglGetSourceContextSubmissionOptions(void)
 {
 #if PGL_CITY_ROADS_VU1 || PGL_CITY_POOLS_VU1 || PGL_CITY_BILLBOARDS_VU1 || PGL_CITY_BILLBOARD_CORNER_ALPHA
-    return PGL_SOURCE_CONTEXT_TAIL_PATCH ? 1u : 0u;
+    return (PGL_SOURCE_CONTEXT_TAIL_PATCH ? 1u : 0u)
+        | (PGL_SOURCE_FIXED_BATCH_COUNT ? 2u : 0u);
 #else
     return 0;
 #endif
