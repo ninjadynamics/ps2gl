@@ -1122,11 +1122,18 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
 
 /* RGBA32 four-level pyramid in one eight-page owner. PSMCT32 pages are
    64x32 texels (GS manual 8.1-8.3); with TBW=1 the 32x64 L1 still spans
-   TWO pages. These page-aligned offsets cover the exact admitted shape,
-   not arbitrary rectangles or the P2 64x64 block-packed layouts above. */
+   TWO pages. TBP/DBP may start at any 256-byte block (manual 8.5). These
+   offsets cover only the exact admitted shape, not arbitrary rectangles. */
 static const int kMip32Widths[4] = {64, 32, 16, 8};
 static const int kMip32Heights[4] = {128, 64, 32, 16};
-static const unsigned int kMip32Pages[4] = {0, 4, 6, 7};
+#if PGL_MIP32_LOCAL_LEVELS
+/* L1 uses blocks128..143/160..175. L2 uses144..147/152..155 and L3
+   uses148/150, so L2/L3 share page4 without overwriting L1. This removes
+   their trilinear page alternation; L0/L1 still occupy separate pages. */
+static const unsigned int kMip32Blocks[4] = {0, 128, 144, 148};
+#else
+static const unsigned int kMip32Blocks[4] = {0, 128, 192, 224};
+#endif
 
 /* The caller owns every input buffer on failure. On success all four
    free()-compatible, qword-aligned DMA buffers belong to their descriptors;
@@ -1183,13 +1190,13 @@ extern "C" unsigned int pgl_create_mip32(void** levels, const int* lw,
     const unsigned int packWords = pack->GetWordAddr();
     base.UploadPacked(packWords);
     for (int i = 1; i < 4; i++)
-        mlist[i - 1]->UploadPacked(packWords + kMip32Pages[i] * 2048u);
+        mlist[i - 1]->UploadPacked(packWords + kMip32Blocks[i] * 64u);
 
     const unsigned int packTbp = packWords / 64u;
     base.SetMipLevels(3, kbias, min_filter);
-    base.SetMiptbp(SS_MIPTBP1(packTbp + kMip32Pages[1] * 32u, 1,
-                            packTbp + kMip32Pages[2] * 32u, 1,
-                            packTbp + kMip32Pages[3] * 32u, 1), 0);
+    base.SetMiptbp(SS_MIPTBP1(packTbp + kMip32Blocks[1], 1,
+                            packTbp + kMip32Blocks[2], 1,
+                            packTbp + kMip32Blocks[3], 1), 0);
 
     /* UploadPacked has completed every source transfer. Ownership changes
        together with final publication; rejected inputs remain caller-owned. */
@@ -1197,11 +1204,11 @@ extern "C" unsigned int pgl_create_mip32(void** levels, const int* lw,
     for (int i = 0; i < 3; i++)
         mlist[i]->SetFreeImageOnExit(true);
     pgl_mips_register(entry, id, mlist, 3, pack);
-    printf("[MIP32] id=%u base_tbp=%u mxl=3 pack_pages=8 lodk=%d\n",
-           (unsigned int)id, packTbp, kbias);
+    printf("[MIP32] id=%u base_tbp=%u mxl=3 pack_pages=8 lodk=%d local-levels=%d\n",
+           (unsigned int)id, packTbp, kbias, PGL_MIP32_LOCAL_LEVELS);
     for (int i = 0; i < 4; i++)
-        printf("[MIP32]   L%d %dx%d tbp=%u tbw=1 page=%u\n", i, lw[i], lh[i],
-               packTbp + kMip32Pages[i] * 32u, kMip32Pages[i]);
+        printf("[MIP32]   L%d %dx%d tbp=%u tbw=1 page=%u block=%u\n", i, lw[i], lh[i],
+               packTbp + kMip32Blocks[i], kMip32Blocks[i] / 32u, kMip32Blocks[i]);
     return (unsigned int)id;
 }
 

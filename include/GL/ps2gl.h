@@ -92,6 +92,14 @@
 #ifndef PGL_DECAL_HEADER_COMPACT
 #define PGL_DECAL_HEADER_COMPACT 1
 #endif
+/* Place RGBA32 entrance L2/L3 in unused blocks beside L1. Same texels,
+ * sampler and pinned eight-page owner; OFF retains whole-page mip offsets. */
+#ifndef PGL_MIP32_LOCAL_LEVELS
+#define PGL_MIP32_LOCAL_LEVELS 1
+#endif
+#if PGL_MIP32_LOCAL_LEVELS != 0 && PGL_MIP32_LOCAL_LEVELS != 1
+#error "PGL_MIP32_LOCAL_LEVELS must be 0 or 1"
+#endif
 /* Reuse exact X/Z edge and Y-height products inside the decal VU decoder. */
 #ifndef PGL_DECAL_XY_REUSE
 #define PGL_DECAL_XY_REUSE 1
