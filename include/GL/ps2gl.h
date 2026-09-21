@@ -895,6 +895,11 @@ typedef struct PGLDecalRun {
     GLuint format;
 } PGLDecalRun;
 
+typedef struct PGLDecalRegionV {
+    GLint min_v;
+    GLint max_v;
+} PGLDecalRegionV;
+
 #define PGL_CLIP_DECAL_QUADS_X2E ((GLenum)0x80000000 | 7)
 #define PGL_CLIP_DECAL_X2E_PROP ((pglU64_t)1 << 39)
 void pglRegisterDecalRenderer(void);
@@ -904,7 +909,8 @@ void pglRegisterDecalRenderer(void);
    bit 4 = ordered compact/projected runs in one decal program,
    bit 5 = exact four-corner all-inside classification,
    bit 6 = reuse the proven plane prefix after a failed quad certificate,
-   bit 7 = fixed UNPACK counts. */
+   bit 7 = fixed UNPACK counts,
+   bit 8 = per-record mip material CLAMP in the X2E output stream. */
 unsigned int pglGetDecalSubmissionOptions(void);
 /* Submit the whole base sweep followed by the optional whole glow sweep.
    Call after draining pending geometry, in the normal frame chain, outside
@@ -936,6 +942,26 @@ GLboolean pglDrawDecalQuads(const PGLDecalContext* context,
    fallback. Projected records require linked decal option bit4. */
 GLboolean pglDrawDecalRuns(const PGLDecalContext* context,
     const PGLDecalRun* runs, GLsizei runCount, GLuint baseTexture, GLuint glowTexture);
+/* The same atomic pair with one inclusive base-level V region per run.
+   Regions apply only to admitted 64x128 PSM32 packed mip textures; U repeats.
+   At least one material must have that pack. All regions/ranges and the
+   additional ordered texture settings are admitted before either sweep.
+   The GS shifts V bounds for each mip level. Source UVs remain unchanged. */
+GLboolean pglDrawDecalRunsRegionV(const PGLDecalContext* context,
+    const PGLDecalRun* runs, const PGLDecalRegionV* regions, GLsizei runCount,
+    GLuint baseTexture, GLuint glowTexture);
+/* Same atomic pair, with one byte per record selecting atlas cell 0..3.
+   materials[i] addresses runs[i].count bytes. Each cell covers32 base-level
+   rows of the admitted64x128 PSM32 pack. VU1 writes ordered CLAMP_1 settings
+   alongside geometry; different cells can share one16-record activation.
+   Non-mipped passes ignore cells. All metadata is validated and copied before
+   return. No descriptor, geometry, UV or texture-layout change is involved.
+   Requires linked decal option bit8; FALSE publishes nothing. */
+GLboolean pglDrawDecalRunsMaterials(const PGLDecalContext* context,
+    const PGLDecalRun* runs, const unsigned char* const* materials,
+    GLsizei runCount, GLuint baseTexture, GLuint glowTexture);
+int pgl_texture_has_mips32(unsigned int name);
+int pgl_texture_region_clamp_v(unsigned int name, int min_v, int max_v);
 
 // custom state
 

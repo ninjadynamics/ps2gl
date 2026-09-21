@@ -87,7 +87,7 @@ def check_admission():
     assert 'batchOffset += ((unsigned int)run.count + 15u) / 16u;' in publish
     writer = (root / 'src/x2e_renderer.cpp').read_text().split(
         'void CClipDecalX2ERenderer::DrawDecalRecords(', 1)[1].split('\nvoid CClipDecal', 1)[0]
-    assert 'packet += format;' in writer
+    assert 'packet += format | (materials ? 2u : 0u);' in writer
     assert 'source += batch * 36;' in writer
     assert 'Core::MakePtrNormal(ownedPayloads[batchIndex])' in writer
     return count, 14

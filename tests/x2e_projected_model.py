@@ -43,7 +43,7 @@ def s16(v):
 
 
 def run(mem, vf, vi, start='e_projected_record_lid', stop='e_decode_lid', packets=None,
-        max_steps=10000):
+        max_steps=10000, hooks=None, stop_on_end=False):
     pc = labels[start]
     stop = labels[stop]
     top = int(vi[2])
@@ -75,11 +75,17 @@ def run(mem, vf, vi, start='e_projected_record_lid', stop='e_decode_lid', packet
                 if op == 'lq':
                     writes.append((rn(a[0]), m, mem[address, m].copy()))
                 elif op == 'sq':
+                    if hooks is not None:
+                        hooks.before_store(address)
                     mem[address, m] = oldvf[rn(a[0]), m]
                 elif op == 'ilw':
                     vi[rn(a[0])] = int(mem[address].view(np.uint32)[m[0]]) & 65535
                 else:
                     mem[address].view(np.uint32)[m] = oldvi[rn(a[0])]
+            elif op == 'xtop':
+                vi[rn(a[0])] = top
+            elif op == 'fcset':
+                clip = int(a[0], 0)
             elif op == 'loi':
                 imm = np.array(int(a[0], 16), dtype=np.uint32).view(np.float32)[()]
             elif op == 'div':
@@ -95,10 +101,10 @@ def run(mem, vf, vi, start='e_projected_record_lid', stop='e_decode_lid', packet
             elif op == 'mfir':
                 value = np.array(s16(oldvi[rn(a[1])]), dtype=np.int32).view(np.float32)[()]
                 writes.append((rn(a[0]), m, np.full(len(m), value, dtype=np.float32)))
-            elif op in ('iadd', 'isub', 'iaddiu', 'isubiu', 'ior'):
+            elif op in ('iadd', 'isub', 'iaddiu', 'isubiu', 'ior', 'iand'):
                 av = oldvi[rn(a[1])]
                 bv = int(a[2], 0) if op.endswith('iu') else oldvi[rn(a[2])]
-                v = (av - bv) if op.startswith('isub') else (av | bv) if op == 'ior' else av + bv
+                v = (av - bv) if op.startswith('isub') else (av | bv) if op == 'ior' else (av & bv) if op == 'iand' else av + bv
                 vi[rn(a[0])] = v & 65535
             elif op == 'b':
                 branch = labels[a[0]]
@@ -114,6 +120,8 @@ def run(mem, vf, vi, start='e_projected_record_lid', stop='e_decode_lid', packet
             elif op == 'xgkick':
                 address = oldvi[rn(a[0])]
                 kicks.append(address)
+                if hooks is not None:
+                    hooks.kick(address, mem)
                 if packets is not None:
                     count = int(mem[address].view(np.uint32)[0]) & 0x7fff
                     assert address in (top + 224, top + 315)
@@ -136,7 +144,10 @@ def run(mem, vf, vi, start='e_projected_record_lid', stop='e_decode_lid', packet
                     value = abs(av) if op == 'abs' else av
                 elif op.startswith('ftoi'):
                     scale = 16 if op == 'ftoi4' else 1
-                    value = np.trunc(av.astype(np.float64) * scale).astype(np.int32).view(np.float32)
+                    value = av.copy()
+                    value[m] = np.trunc(av[m].astype(np.float64) * scale).astype(np.int32).view(np.float32)
+                elif op == 'itof0':
+                    value = av.view(np.int32).astype(np.float32)
                 else:
                     base, lane = re.fullmatch(r'(add|sub|mul|max|minii)([xyzwqi]?)', op).groups()
                     if lane == 'q':
@@ -158,6 +169,8 @@ def run(mem, vf, vi, start='e_projected_record_lid', stop='e_decode_lid', packet
             vf[dst, mask] = value
         assert vi[0] == 0
         assert np.array_equal(vf[0], [0, 0, 0, 1])
+        if stop_on_end and any(op == 'nop[e]' for op, _, _ in parsed[pc]):
+            break
         newpc = pending if pending is not None else pc + 1
         pending = branch
         pc = newpc
@@ -218,6 +231,7 @@ def check():
                 memory[top + 214].view(np.uint32)[:] = [top + 5, 2, 0, material]
                 initial_output = top + (225 if not arena else 316) + count * 3
                 memory[top + 215].view(np.uint32)[:2] = [initial_output, count]
+                memory[top + 220].view(np.uint32)[2:] = [0, 1]
                 regs = np.zeros((32, 4), dtype=F)
                 regs[0] = [0, 0, 0, 1]
                 regs[1, :3] = gs
@@ -268,6 +282,7 @@ def check_activations():
                     memory[top + 5:top + 5 + count * 9] = records.reshape(count * 9, 4)
                     memory[top + 214].view(np.uint32)[:] = [top + 5, count, 0, material]
                     memory[top + 215].view(np.uint32)[:2] = [top + 225, 0]
+                    memory[top + 220].view(np.uint32)[2:] = [0, 1]
                     regs = np.zeros((32, 4), dtype=F)
                     regs[0] = [0, 0, 0, 1]
                     regs[1, :3] = gs

@@ -940,9 +940,10 @@ void pglTextureFromGsMemArea(pgl_area_handle_t tex_area_handle)
    the base texture's GL name, so the game can RELEASE a whole mip pyramid when
    a stage/scene switch swaps textures. Without this the locked slots +
    CMMTextures leak (~14 pages per swap), and the only escape was a full GS
-   layout reinit. The current city needs 20 entries: one floor, eight wall
-   bases, eight window tiles, refinery, road and sidewalk. Keep headroom for
-   scene transitions, and reject overflow BEFORE creating a pyramid. */
+   layout reinit. The current city needs 23 entries: one floor, eight wall
+   bases, eight window tiles, refinery, road, sidewalk, crossing and two
+   RGBA32 atlases. Keep headroom for scene transitions, and reject overflow
+   BEFORE creating a pyramid. */
 #define PGL_MIP_REGISTRY_MAX 32
 /* NOTE: the identifier "mips" is unusable here — the MIPS GCC target
    predefines it as a macro (`#define mips 1`), like `unix`/`linux`. */
@@ -1117,6 +1118,129 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
                pack ? kPackPsmct16[i].block : -1);
 
     return (unsigned int)id;
+}
+
+/* RGBA32 four-level pyramid in one eight-page owner. PSMCT32 pages are
+   64x32 texels (GS manual 8.1-8.3); with TBW=1 the 32x64 L1 still spans
+   TWO pages. These page-aligned offsets cover the exact admitted shape,
+   not arbitrary rectangles or the P2 64x64 block-packed layouts above. */
+static const int kMip32Widths[4] = {64, 32, 16, 8};
+static const int kMip32Heights[4] = {128, 64, 32, 16};
+static const unsigned int kMip32Pages[4] = {0, 4, 6, 7};
+
+/* The caller owns every input buffer on failure. On success all four
+   free()-compatible, qword-aligned DMA buffers belong to their descriptors;
+   pgl_delete_mips releases L1-L3 and the pack, then glDeleteTextures frees L0.
+   No ordinary Load() may allocate a private slot for an uploaded descriptor. */
+extern "C" unsigned int pgl_create_mip32(void** levels, const int* lw,
+                                         const int* lh, int count, int kbias,
+                                         int min_filter)
+{
+    if (!levels || !lw || !lh || count != 4 ||
+        (min_filter != 4 && min_filter != 5) || kbias < -2048 || kbias > 2047) {
+        printf("pgl_create_mip32: unsupported pyramid or sampler\n");
+        return 0;
+    }
+    for (int i = 0; i < 4; i++) {
+        if (!levels[i] || ((unsigned int)levels[i] & 15u) != 0 ||
+            lw[i] != kMip32Widths[i] || lh[i] != kMip32Heights[i]) {
+            printf("pgl_create_mip32: requires aligned 64x128 four-level pyramid\n");
+            return 0;
+        }
+    }
+    SMipRegistryEntry* entry = pgl_mips_available();
+    if (!entry) return 0;
+
+    /* Reserve before creating a GL name or transferring source ownership.
+       Both the base and hidden levels share this one pinned allocation. */
+    GS::CMemArea* pack = new GS::CMemArea(64, 256, GS::kPsm32, GS::kAlignPage);
+    pack->Alloc();
+    if (!pack->IsAllocated()) {
+        delete pack;
+        return 0;
+    }
+    pack->Lock();
+
+    CTexManager& tm = pGLContext->GetTexManager();
+    GLuint id = 0;
+    tm.GenTextures(1, &id);
+    if (!id) {
+        pack->Unlock();
+        delete pack;
+        return 0;
+    }
+    tm.BindTexture(id);
+    CMMTexture& base = tm.GetNamedTexture(id);
+    CMMTexture* mlist[3] = {0};
+    base.SetImage((uint128_t*)levels[0], 64, 128, GS::kPsm32);
+    base.SetUseTexAlpha(true);
+    base.SetWrapMode(GS::TexWrapMode::kRepeat, GS::TexWrapMode::kRepeat);
+    for (int i = 1; i < 4; i++) {
+        mlist[i - 1] = new CMMTexture(GS::kContext1);
+        mlist[i - 1]->SetImage((uint128_t*)levels[i], lw[i], lh[i], GS::kPsm32);
+    }
+
+    const unsigned int packWords = pack->GetWordAddr();
+    base.UploadPacked(packWords);
+    for (int i = 1; i < 4; i++)
+        mlist[i - 1]->UploadPacked(packWords + kMip32Pages[i] * 2048u);
+
+    const unsigned int packTbp = packWords / 64u;
+    base.SetMipLevels(3, kbias, min_filter);
+    base.SetMiptbp(SS_MIPTBP1(packTbp + kMip32Pages[1] * 32u, 1,
+                            packTbp + kMip32Pages[2] * 32u, 1,
+                            packTbp + kMip32Pages[3] * 32u, 1), 0);
+
+    /* UploadPacked has completed every source transfer. Ownership changes
+       together with final publication; rejected inputs remain caller-owned. */
+    base.SetFreeImageOnExit(true);
+    for (int i = 0; i < 3; i++)
+        mlist[i]->SetFreeImageOnExit(true);
+    pgl_mips_register(entry, id, mlist, 3, pack);
+    printf("[MIP32] id=%u base_tbp=%u mxl=3 pack_pages=8 lodk=%d\n",
+           (unsigned int)id, packTbp, kbias);
+    for (int i = 0; i < 4; i++)
+        printf("[MIP32]   L%d %dx%d tbp=%u tbw=1 page=%u\n", i, lw[i], lh[i],
+               packTbp + kMip32Pages[i] * 32u, kMip32Pages[i]);
+    return (unsigned int)id;
+}
+
+/* Once-per-pass admission for a live RGBA32 packed atlas. A slot wipe makes
+   this false; callers must reload the pyramid rather than reuse stale TBPs. */
+extern "C" int pgl_texture_has_mips32(unsigned int name)
+{
+    CMMTexture* tex = pGLContext->GetTexManager().FindNamedTexture(name);
+    if (!tex || tex->GetPSM() != GS::kPsm32 || tex->GetW() != 64 ||
+        tex->GetH() != 128) return 0;
+    for (int i = 0; i < PGL_MIP_REGISTRY_MAX; i++) {
+        SMipRegistryEntry& entry = MipRegistry[i];
+        if (entry.baseId == name)
+            return entry.count == 3 && entry.pack && entry.pack->IsAllocated() &&
+                entry.pack->IsLocked() && entry.pack->GetPageLength() == 8 &&
+                tex->GetImageGsAddr() == entry.pack->GetWordAddr();
+    }
+    return 0;
+}
+
+/* Inclusive base-level texel limits; the GS shifts REGION_CLAMP bounds at
+   each mip level (GS manual 3.4.5). Callers admit the packed atlas once per
+   pass, then change bounds only between ordered material spans. SetRegion
+   also selects U REGION_REPEAT: mask=63/fix=0 is identical to full-width
+   REPEAT for this 64-wide image, including negative/repeated coordinates. */
+extern "C" int pgl_texture_region_clamp_v(unsigned int name, int min_v, int max_v)
+{
+    CMMTexture* tex = pGLContext->GetTexManager().FindNamedTexture(name);
+    if (!tex || tex->GetPSM() != GS::kPsm32 || tex->GetW() != 64 ||
+        tex->GetH() != 128 || min_v < 0 || max_v < min_v || max_v >= 128)
+        return 0;
+    /* A pending custom draw may read live texture settings when constructed.
+       Finish that construction before changing either material's CLAMP. */
+    pGLContext->GetImmGeomManager().Flush();
+    tex->ClearRegion();
+    tex->SetWrapMode(GS::TexWrapMode::kRepeat, GS::TexWrapMode::kClamp);
+    tex->SetRegion(0, (uint32_t)min_v, 64, (uint32_t)(max_v - min_v + 1));
+    pGLContext->TextureChanged();
+    return 1;
 }
 
 /* 8-bit (PSMT8) MIPMAPPED texture: the PSMT8 twin of pgl_create_mip16 above.

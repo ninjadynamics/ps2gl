@@ -948,10 +948,47 @@ bool CImmGeomManager::DrawDecalQuads(const PGLDecalContext* context,
 bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
     const PGLDecalRun* runs, int runCount, GLuint baseTexture, GLuint glowTexture)
 {
+    return DrawDecalRunsRegionV(context, runs, NULL, runCount, baseTexture, glowTexture);
+}
+
+static void DirectDecalRegionV(CMMTexture* texture, const PGLDecalRegionV& region)
+{
+    // Admission proved a resident context-1 64x128 PSM32 pack and the bounds.
+    // No pending Geometry exists in this direct API. The next SyncGsContext
+    // fences preceding VU output and owns a complete settings copy, including
+    // CLAMP_1/TEX1_1/MIPTBP1_1/2_1. No microcode texture prefix replaces it.
+    texture->ClearRegion();
+    texture->SetWrapMode(GS::TexWrapMode::kRepeat, GS::TexWrapMode::kClamp);
+    texture->SetRegion(0, (uint32_t)region.min_v, 64,
+        (uint32_t)(region.max_v - region.min_v + 1));
+}
+
+bool CImmGeomManager::DrawDecalRunsRegionV(const PGLDecalContext* context,
+    const PGLDecalRun* runs, const PGLDecalRegionV* regions, int runCount,
+    GLuint baseTexture, GLuint glowTexture)
+{
+    return DrawDecalRunsSampling(context, runs, regions, NULL, runCount,
+        baseTexture, glowTexture);
+}
+
+bool CImmGeomManager::DrawDecalRunsMaterials(const PGLDecalContext* context,
+    const PGLDecalRun* runs, const unsigned char* const* materials, int runCount,
+    GLuint baseTexture, GLuint glowTexture)
+{
+    if (!materials || !(pglGetDecalSubmissionOptions() & 256u)) return false;
+    return DrawDecalRunsSampling(context, runs, NULL, materials, runCount,
+        baseTexture, glowTexture);
+}
+
+bool CImmGeomManager::DrawDecalRunsSampling(const PGLDecalContext* context,
+    const PGLDecalRun* runs, const PGLDecalRegionV* regions,
+    const unsigned char* const* materials, int runCount,
+    GLuint baseTexture, GLuint glowTexture)
+{
 #if PGL_CITY_ENTRANCES_VU1
     // Admit the complete pair before any packet, texture or material mutation.
     // Generated descriptor values/headroom are an explicit caller contract.
-    if (!context || !runs || runCount <= 0 || runCount > 512
+    if (!context || !runs || (regions && materials) || runCount <= 0 || runCount > 512
         || (((uintptr_t)context | (uintptr_t)runs) & 3u)
         || (uintptr_t)runs > ~(uintptr_t)0 - (uintptr_t)runCount * sizeof(*runs)
         || (uintptr_t)context > ~(uintptr_t)0 - sizeof(*context)
@@ -962,6 +999,13 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
         || GetUserPrimReqMask(PGL_CLIP_DECAL_QUADS_X2E) != ~(uint64_t)0xffffffff
         || GLContext.GetImmLighting().GetLightingEnabled()
         || !GLContext.GetTexManager().GetTexEnabled()) return false;
+
+    if (regions && (((uintptr_t)regions & 3u)
+        || (uintptr_t)regions > ~(uintptr_t)0 - (uintptr_t)runCount * sizeof(*regions)))
+        return false;
+    if (materials && (((uintptr_t)materials & 3u)
+        || (uintptr_t)materials > ~(uintptr_t)0
+            - (uintptr_t)runCount * sizeof(*materials))) return false;
 
     uint64_t records = 0;
     uint64_t batches = 0;
@@ -975,6 +1019,16 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
                 && run.format != PGL_DECAL_RUN_NDC_TRIANGLES)
             || (!PGL_DECAL_PROJECTED_RUNS && run.format != PGL_DECAL_RUN_QUADS))
             return false;
+        if (regions && (regions[i].min_v < 0
+            || regions[i].max_v < regions[i].min_v || regions[i].max_v >= 128))
+            return false;
+        if (materials) {
+            if (!materials[i] || (uintptr_t)materials[i] > ~(uintptr_t)0
+                - (uintptr_t)run.count) return false;
+            for (int j = 0; j < run.count; ++j) {
+                if (materials[i][j] > 3u) return false;
+            }
+        }
         records += (unsigned int)run.count;
         batches += ((unsigned int)run.count + 15u) / 16u;
     }
@@ -1007,6 +1061,19 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
     if (!DirectTextureValid(textures.FindNamedTexture(baseTexture))
         || (glowTexture && !DirectTextureValid(textures.FindNamedTexture(glowTexture))))
         return false;
+    CMMTexture* regionTextures[2] = { NULL, NULL };
+    unsigned int regionPasses = 0;
+    if (regions || materials) {
+        const GLuint names[2] = { baseTexture, glowTexture };
+        for (unsigned int material = 0; material < 2; ++material) {
+            if (names[material] && pgl_texture_has_mips32(names[material])) {
+                regionTextures[material] = textures.FindNamedTexture(names[material]);
+                if (regionTextures[material]->GetContext() != GS::kContext1) return false;
+                ++regionPasses;
+            }
+        }
+        if (!regionPasses) return false;
+    }
 
     // Retain the two-copy bound even when glow reuses the owned base payload:
     // each sweep needs <=9q/descriptor and <=16q/activation. A deliberately
@@ -1015,8 +1082,14 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
     // Both textures were checked before this reservation, so a later lookup
     // or incompatible second material cannot cause partial fallback.
     const uint64_t passes = glowTexture ? 2u : 1u;
+    // Additional region changes need only an ordered resident PSM32 texture
+    // sync: seven GS registers + GIF tag, CNT/VIF padding and the VIF fence.
+    // 32q bounds each change; the original 512q/sweep owns its first sync.
+    // The packed-owner proof excludes image/CLUT uploads on these changes.
+    const uint64_t regionWords = (uint64_t)(regions ? regionPasses : 0u) *
+        (unsigned int)(runCount - 1) * 32u * 4u;
     const uint64_t words = (passes * (records * 9u + batches * 16u + 512u)
-        + 16u) * 4u;
+        + 16u) * 4u + regionWords;
     CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
     if (words > UINT_MAX || !packet.GetTTE() || packet.HasOpenTag()
         || !packet.CanReserveWords((unsigned int)words)) return false;
@@ -1039,11 +1112,28 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
     const uint64_t contextEnd = (uint64_t)contextBegin + sizeof(*context);
     if (((uint64_t)runBegin < writeEnd && runEnd > writeBegin)
         || ((uint64_t)contextBegin < writeEnd && contextEnd > writeBegin)) return false;
+    if (regions) {
+        const uintptr_t regionBegin = (uintptr_t)Core::MakePtrNormal(regions);
+        const uint64_t regionEnd = (uint64_t)regionBegin
+            + (uint64_t)runCount * sizeof(*regions);
+        if ((uint64_t)regionBegin < writeEnd && regionEnd > writeBegin) return false;
+    }
+    if (materials) {
+        const uintptr_t materialBegin = (uintptr_t)Core::MakePtrNormal(materials);
+        const uint64_t materialEnd = (uint64_t)materialBegin
+            + (uint64_t)runCount * sizeof(*materials);
+        if ((uint64_t)materialBegin < writeEnd && materialEnd > writeBegin) return false;
+    }
     for (int i = 0; i < runCount; ++i) {
         const uintptr_t sourceBegin = (uintptr_t)Core::MakePtrNormal(runs[i].records);
         const uint64_t sourceEnd = (uint64_t)sourceBegin
             + (uint64_t)runs[i].count * sizeof(PGLDecalQuad);
         if ((uint64_t)sourceBegin < writeEnd && sourceEnd > writeBegin) return false;
+        if (materials) {
+            const uintptr_t materialBegin = (uintptr_t)Core::MakePtrNormal(materials[i]);
+            const uint64_t materialEnd = (uint64_t)materialBegin + runs[i].count;
+            if ((uint64_t)materialBegin < writeEnd && materialEnd > writeBegin) return false;
+        }
     }
 
     for (unsigned int pass = 0; pass < (unsigned int)passes; ++pass) {
@@ -1053,7 +1143,18 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
             draw.SetBlendMode(GL_SRC_ALPHA, GL_ONE);
         }
         textures.BindTexture(pass ? glowTexture : baseTexture);
-        renderer->SetDecalContext(*context, pass != 0);
+        if (regionTextures[pass]) {
+            PGLDecalRegionV firstRegion;
+            if (regions) firstRegion = regions[0];
+            else {
+                firstRegion.min_v = (int)materials[0][0] * 32;
+                firstRegion.max_v = firstRegion.min_v + 31;
+            }
+            DirectDecalRegionV(regionTextures[pass], firstRegion);
+            GLContext.TextureChanged();
+        }
+        renderer->SetDecalContext(*context, pass != 0,
+            materials && regionTextures[pass]);
         PrimChanged(PGL_CLIP_DECAL_QUADS_X2E);
         DrawingLinearArray();
         SyncColorMaterial(false);
@@ -1067,21 +1168,36 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
 #endif
         for (int i = 0; i < runCount; ++i) {
             const PGLDecalRun& run = runs[i];
+            if (i && regions && regionTextures[pass]
+                && (regions[i].min_v != regions[i - 1].min_v
+                    || regions[i].max_v != regions[i - 1].max_v)) {
+                DirectDecalRegionV(regionTextures[pass], regions[i]);
+                GLContext.TextureChanged();
+                SyncGsContext();
+            }
 #if PGL_DECAL_PAYLOAD_REUSE
             renderer->DrawDecalRecords(run.records, run.count, run.format,
-                glowTexture ? ownedPayloads + batchOffset : NULL, pass != 0);
+                glowTexture ? ownedPayloads + batchOffset : NULL, pass != 0,
+                materials && regionTextures[pass] ? materials[i] : NULL);
 #else
-            renderer->DrawDecalRecords(run.records, run.count, run.format, NULL, false);
+            renderer->DrawDecalRecords(run.records, run.count, run.format, NULL, false,
+                materials && regionTextures[pass] ? materials[i] : NULL);
 #endif
 #if PGL_DECAL_PAYLOAD_REUSE
             batchOffset += ((unsigned int)run.count + 15u) / 16u;
 #endif
         }
+        // PATH1 changed CLAMP without changing the texture object's sampler.
+        // Force the next GS texture use (including the glow sweep) to restore
+        // its complete cached settings after the normal completion fence.
+        if (materials && regionTextures[pass]) GLContext.TextureChanged();
     }
     return true;
 #else
     (void)context;
     (void)runs;
+    (void)regions;
+    (void)materials;
     (void)runCount;
     (void)baseTexture;
     (void)glowTexture;
@@ -1095,6 +1211,24 @@ GLboolean pglDrawDecalRuns(const PGLDecalContext* context,
     if (!pGLContext) return GL_FALSE;
     return pGLContext->GetImmGeomManager().DrawDecalRuns(
         context, runs, runCount, baseTexture, glowTexture) ? GL_TRUE : GL_FALSE;
+}
+
+GLboolean pglDrawDecalRunsRegionV(const PGLDecalContext* context,
+    const PGLDecalRun* runs, const PGLDecalRegionV* regions, GLsizei runCount,
+    GLuint baseTexture, GLuint glowTexture)
+{
+    if (!pGLContext || !regions) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawDecalRunsRegionV(
+        context, runs, regions, runCount, baseTexture, glowTexture) ? GL_TRUE : GL_FALSE;
+}
+
+GLboolean pglDrawDecalRunsMaterials(const PGLDecalContext* context,
+    const PGLDecalRun* runs, const unsigned char* const* materials, GLsizei runCount,
+    GLuint baseTexture, GLuint glowTexture)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawDecalRunsMaterials(
+        context, runs, materials, runCount, baseTexture, glowTexture) ? GL_TRUE : GL_FALSE;
 }
 
 GLboolean pglDrawDecalQuads(const PGLDecalContext* context,

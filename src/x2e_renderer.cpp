@@ -48,6 +48,7 @@ CClipDecalX2ERenderer::CClipDecalX2ERenderer()
     Capabilities = PGL_CLIP_DECAL_X2E_PROP;
     Requirements = PGL_CLIP_DECAL_X2E_PROP;
     memset(&DecalContext, 0, sizeof(DecalContext));
+    RegionMaterials = false;
 }
 
 bool CClipDecalX2ERenderer::IsCodeValid() const
@@ -66,10 +67,12 @@ void CClipDecalX2ERenderer::Register()
         ~(pglU64_t)0xffffffff, PGL_DONT_MERGE_CONTIGUOUS);
 }
 
-void CClipDecalX2ERenderer::SetDecalContext(const PGLDecalContext& context, bool glow)
+void CClipDecalX2ERenderer::SetDecalContext(const PGLDecalContext& context, bool glow,
+    bool regionMaterials)
 {
     memcpy(&DecalContext, &context, sizeof(DecalContext));
     DecalContext.depth[3] = glow ? 1.0f : 0.0f;
+    RegionMaterials = regionMaterials;
     // Public source clip.z/w remain zero. Only this linked module chooses the
     // private decoder path; old applications do not need a new descriptor ABI.
     DecalContext.clip[2] = PGL_DECAL_XY_REUSE ? 1.0f : 0.0f;
@@ -131,6 +134,20 @@ void CClipDecalX2ERenderer::InitContext(GLenum primType, uint32_t rcChanges,
     // renderer's mutable DecalContext is allowed.
     pglAddOwnedPayload(packet, (const float*)&DecalContext,
         sizeof(DecalContext) / sizeof(float));
+    if (RegionMaterials) {
+        // Private q9..13 are unused by the ordinary decal program. One
+        // PACKED CLAMP_1 primitive precedes each material's geometry tag.
+        // EOP=0 keeps it in the same PATH1 packet as the EOP=1 vertex tag.
+        packet += (uint64_t)1 | ((uint64_t)1 << 60);
+        packet += (uint64_t)0x08;
+        for (unsigned int material = 0; material < 4; ++material) {
+            const uint64_t minV = material * 32u;
+            const uint64_t maxV = minV + 31u;
+            // U REPEAT, V REGION_CLAMP. The GS scales V bounds per mip.
+            packet += (uint64_t)8 | (minV << 24) | (maxV << 34);
+            packet += (uint64_t)0;
+        }
+    }
     packet.CloseUnpack();
 
     packet.Pad96();
@@ -176,7 +193,8 @@ void CClipDecalX2ERenderer::InitContext(GLenum primType, uint32_t rcChanges,
 }
 
 void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
-    unsigned int format, const float** ownedPayloads, bool reusePayload)
+    unsigned int format, const float** ownedPayloads, bool reusePayload,
+    const unsigned char* materials)
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     const float* source = (const float*)records;
@@ -237,8 +255,18 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kDoubleBuff);
         packet += batch;
-        packet += format;
-        packet += (uint64_t)0;
+        packet += format | (materials ? 2u : 0u);
+        if (materials) {
+            // Each VI load is16bits. Keep eight two-bit cells in each word;
+            // format bit1 enables the private material decoder.
+            unsigned int low = 0, high = 0;
+            for (int i = 0; i < batch; ++i) {
+                if (i < 8) low |= (unsigned int)materials[i] << (i * 2);
+                else high |= (unsigned int)materials[i] << ((i - 8) * 2);
+            }
+            packet += low;
+            packet += high;
+        } else packet += (uint64_t)0;
 #if !PGL_DECAL_HEADER_COMPACT
         packet.Add(independentAdc, 16);
 #endif
@@ -253,6 +281,7 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
         ++batchIndex;
 #endif
         source += batch * 36;
+        if (materials) materials += batch;
         count -= batch;
     }
 #if PGL_DECAL_HEADER_COMPACT
@@ -287,7 +316,8 @@ extern "C" unsigned int pglGetDecalSubmissionOptions(void)
         | (PGL_DECAL_PROJECTED_RUNS ? 16u : 0u)
         | (PGL_DECAL_TRIVIAL_ACCEPT ? 32u : 0u)
         | (PGL_DECAL_TRIVIAL_ACCEPT && PGL_DECAL_CLIP_PREFIX_REUSE ? 64u : 0u)
-        | (PGL_COMPACT_FIXED_UNPACK_COUNT ? 128u : 0u);
+        | (PGL_COMPACT_FIXED_UNPACK_COUNT ? 128u : 0u)
+        | 256u; // per-record atlas materials in the ordinary16-record batch
 #else
     return 0u;
 #endif

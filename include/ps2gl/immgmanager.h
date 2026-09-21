@@ -104,6 +104,16 @@ public:
         const PGLDecalQuad* quads, int count, GLuint baseTexture, GLuint glowTexture);
     bool DrawDecalRuns(const PGLDecalContext* context,
         const PGLDecalRun* runs, int runCount, GLuint baseTexture, GLuint glowTexture);
+    bool DrawDecalRunsRegionV(const PGLDecalContext* context,
+        const PGLDecalRun* runs, const PGLDecalRegionV* regions, int runCount,
+        GLuint baseTexture, GLuint glowTexture);
+    bool DrawDecalRunsMaterials(const PGLDecalContext* context,
+        const PGLDecalRun* runs, const unsigned char* const* materials,
+        int runCount, GLuint baseTexture, GLuint glowTexture);
+    bool DrawDecalRunsSampling(const PGLDecalContext* context,
+        const PGLDecalRun* runs, const PGLDecalRegionV* regions,
+        const unsigned char* const* materials, int runCount,
+        GLuint baseTexture, GLuint glowTexture);
     void Normal(cpu_vec_xyz normal);
     void TexCoord(float u, float v);
     void Color(cpu_vec_xyzw color);

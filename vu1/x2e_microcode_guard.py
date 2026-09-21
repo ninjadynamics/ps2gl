@@ -62,9 +62,26 @@ def check(text):
             stores = [i for i in range(pc) if re.search(r"\bsq(?:\.[xyzw]+)?\s", code[i], re.I)]
             if not stores or pc - stores[-1] < 4:
                 raise ValueError(f"PC{pc}: latest SQ is too close to XGKICK")
+            # The optional prefix immediately precedes this kick's vertex
+            # tag. Other polygon writers also use negative SQ offsets.
+            bases = []
+            for store_pc, offset in zip(stores[-3:], (-2, -1, 0)):
+                store = re.search(r'\bsq\s+VF\d+,' + str(offset) + r'\((VI\d+)\)',
+                                  code[store_pc], re.I)
+                if not store:
+                    raise ValueError(f"PC{pc}: missing bounded regional prefix/tag stores")
+                bases.append(store.group(1))
+            if len(bases) != 3 or len(set(bases)) != 1:
+                raise ValueError(f"PC{pc}: regional prefix and vertex tag bases differ")
             kicks += 1
-    if stops != 2 or kicks != 2:
+    if stops != 2 or kicks != 3:
         raise ValueError(f"review changed entry/continuation or output structure: E={stops}, XGKICK={kicks}")
+    # The third kick is the optional material-boundary path. All three use
+    # the same bounded prefix/geometry writer, ahead of the unchanged E exit.
+    for prefix in ('e_output_begin_lid', 'e_output_new_material_lid',
+                   'e_descriptor_material_store_lid'):
+        if prefix not in labels:
+            raise ValueError(f"missing material control boundary {prefix}")
     return len(code), padded, branches
 
 

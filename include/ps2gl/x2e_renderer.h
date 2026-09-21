@@ -5,6 +5,7 @@
 
 class CClipDecalX2ERenderer : public CLinearRenderer {
     PGLDecalContext DecalContext;
+    bool RegionMaterials;
 
 public:
     // More than the normal 65,000-qword frame packet can hold even when only
@@ -13,9 +14,11 @@ public:
     CClipDecalX2ERenderer();
     static void Register();
     bool IsCodeValid() const;
-    void SetDecalContext(const PGLDecalContext& context, bool glow);
+    void SetDecalContext(const PGLDecalContext& context, bool glow,
+        bool regionMaterials = false);
     void DrawDecalRecords(const void* records, int count, unsigned int format,
-        const float** ownedPayloads, bool reusePayload);
+        const float** ownedPayloads, bool reusePayload,
+        const unsigned char* materials = NULL);
     virtual void Load();
     virtual void InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged);
     virtual void DrawLinearArrays(CGeometryBlock& block);

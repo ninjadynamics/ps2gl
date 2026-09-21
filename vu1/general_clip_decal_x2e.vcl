@@ -17,7 +17,11 @@
      ; 0..4 header;5..148 descriptors16*9q;149..160 decoded4corners*3q;
      ; 161..184 polyA;185..208 polyB;209..213 planes;214..221 controls;
      ; outputA tag224/data225..314 (30v), B315/data316..369 (18v).
-     ; 370..471 unused. Polygon vertex=[homogeneousPos,UV/glow/0,RGBA].
+     ; Regional output adds prefix222..223 before A and prefix315..316
+     ; before B tag317/data318..371; the30/18 vertex capacities are unchanged.
+     ; Material controls372..373;374..471 unused. Private global q9 is a
+     ; PACKED CLAMP_1/EOP0 tag and q10..13 contain the four atlas CLAMP values.
+     ; Polygon vertex=[homogeneousPos,UV/glow/0,RGBA].
      ; Each descriptor q0 endpointsAxAzBxBz;q1 ylo/yhi/u0/u1;
      ; q2 v0/v1/glowA/glowB;q3RGBA A/D;q4RGBA B/C;
      ; q5 Za/Wa/Zb/Wb;q6 Zc/Wc/Zd/Wd;
@@ -26,7 +30,10 @@
      ; Source ABC then ACD; strict >=0 last->first clipping; identity passes
      ; retain the original polygon anchor. FMA does not replace EE lerps.
      ; Final depth preserves the accepted base-NDC then glow-NDC sequence.
-     ; Header q0.y selects 0=compact quads or1=already projected triangles.
+     ; Header q0.y bit0 selects compact quads or projected triangles; bit1
+     ; enables atlas materials. q0.z/w then hold eight two-bit cells each in
+     ; their low16bits. VU integer registers are16bit and have no shift op.
+     ; ITOF0 followed by exact quarter scaling and FTOI0 extracts those cells.
      ; Projected records are3 vertices *3q: [x,y,baseZ,glowZ], [S,T,Q,glowA],
      ; baseRGBA. They have the same9q stride and use the ordinary raw-X2
      ; identity-derived q62..65 transform before the shared final GS writer.
@@ -54,6 +61,8 @@ kEACap              .equ 30
 kEBTag              .equ 315
 kEBData             .equ 316
 kEBCap              .equ 18
+kEMaterial          .equ 372
+kENextMaterial      .equ 373
 
      .init_vf_all
      .init_vi_all
@@ -210,10 +219,24 @@ es_valid_lid\@:
      .endm
 
      .macro e_kick
+     ilw.z ek_region\@, kEReuse(buffer_top)
      iadd arena_used, out_count, out_count
      iadd arena_used, arena_used, out_count
      isub arena_tag, next_output, arena_used
      isubiu arena_tag, arena_tag, 1
+     iadd kick_ptr\@, arena_tag, vi00
+     ibeq ek_region\@, vi00, ek_tag_lid\@
+     ; Preserve the original final empty EOP1 kick as an ownership fence,
+     ; but never read a material table entry for an empty arena.
+     ibeq out_count, vi00, ek_tag_lid\@
+     ilw.x ek_cell\@, kEMaterial(buffer_top)
+     iaddiu ek_cell\@, ek_cell\@, 10
+     lq ek_clamp\@, 0(ek_cell\@)
+     lq ek_prefix\@, 9(vi00)
+     sq ek_prefix\@, -2(arena_tag)
+     sq ek_clamp\@, -1(arena_tag)
+     isubiu kick_ptr\@, arena_tag, 2
+ek_tag_lid\@:
      lq gif_tag_p, kGifTag(vi00)
      mtir eop_p, gif_tag_px
      ior eop_p, eop_p, out_count
@@ -226,13 +249,14 @@ ek_fence_lid\@:
      nop iaddiu arena_a, buffer_top, kEATag
      nop iaddiu next_output, buffer_top, kEAData
      nop iaddiu out_count, vi00, 0
-     nop xgkick arena_tag
+     nop xgkick kick_ptr\@
      .endraw
      --barrier
      b ek_after_lid\@
 ek_after_lid\@:
      ibne arena_tag, arena_a, ek_ready_lid\@
      iaddiu next_output, buffer_top, kEBData
+     iadd next_output, next_output, ek_region\@
 ek_ready_lid\@:
      .endm
 
@@ -293,6 +317,22 @@ e_count_valid_lid:
      ftoi0.w setup_accept, pl_guard
      mtir setup_flag, setup_accept[w]
      isw.y setup_flag, kEReuse(buffer_top)
+     ilw.y setup_format, 0(buffer_top)
+     iaddiu setup_mask, vi00, 1
+     iand setup_kind, setup_format, setup_mask
+     isw.w setup_kind, kEReuse(buffer_top)
+     iaddiu setup_mask, vi00, 2
+     iand setup_region, setup_format, setup_mask
+     isw.z setup_region, kEReuse(buffer_top)
+     ibeq setup_region, vi00, e_material_setup_done_lid
+     lq setup_ids, 0(buffer_top)
+     itof0.zw setup_ids, setup_ids
+     sq.zw setup_ids, kEMaterial(buffer_top)
+     iaddiu setup_ids_left, vi00, 8
+     isw.y setup_ids_left, kEMaterial(buffer_top)
+     iaddiu setup_no_cell, vi00, 4
+     isw.x setup_no_cell, kEMaterial(buffer_top)
+e_material_setup_done_lid:
      ; Keep independent plane setup after the private control store. VCL
      ; does not model its memory dependency with the first decoder ILW.
      b e_planes_ready_lid
@@ -316,7 +356,7 @@ e_planes_ready_lid:
      b e_decode_lid
 
 e_decode_lid:
-     ilw.y record_format, 0(buffer_top)
+     ilw.w record_format, kEReuse(buffer_top)
      ibne record_format, vi00, e_projected_record_lid
      ilw.x desc_ptr, kEDesc(buffer_top)
      ilw.x reuse_flag, kEReuse(buffer_top)
@@ -635,6 +675,25 @@ e_material_ready_lid:
 e_output_begin_lid:
      ilw.x next_output, kEOut(buffer_top)
      ilw.y out_count, kEOut(buffer_top)
+     ilw.z em_region, kEReuse(buffer_top)
+     ibeq em_region, vi00, e_output_material_ready_lid
+     lq em_ids, kEMaterial(buffer_top)
+     ftoi0.z em_integer, em_ids
+     mtir em_cell, em_integer[z]
+     iaddiu em_mask, vi00, 3
+     iand em_cell, em_cell, em_mask
+     isw.x em_cell, kENextMaterial(buffer_top)
+     ilw.x em_old_cell, kEMaterial(buffer_top)
+     ibeq em_cell, em_old_cell, e_output_material_ready_lid
+     ; Only emitted geometry changes the buffered arena's material. Keep the
+     ; OLD cell live until its prefix and vertices have been kicked together.
+     ibeq out_count, vi00, e_output_new_material_lid
+     e_kick
+e_output_new_material_lid:
+     ilw.x em_new_cell, kENextMaterial(buffer_top)
+     isw.x em_new_cell, kEMaterial(buffer_top)
+     b e_output_material_ready_lid
+e_output_material_ready_lid:
      iadd arena_used, out_count, out_count
      iadd arena_used, arena_used, out_count
      isub arena_tag, next_output, arena_used
@@ -680,6 +739,23 @@ e_next_triangle_lid:
      b e_triangle_lid
 e_next_descriptor_lid:
      isw.z vi00, kEDesc(buffer_top)
+     ilw.z md_region, kEReuse(buffer_top)
+     ibeq md_region, vi00, e_descriptor_material_done_lid
+     lq md_ids, kEMaterial(buffer_top)
+     ; Both input integers are0..65535. Exact power-of-two scaling retains
+     ; all16 significant bits; truncation later is the logical right shift.
+     loi 0.25
+     muli.z md_ids, md_ids, i
+     ilw.y md_left, kEMaterial(buffer_top)
+     isubiu md_left, md_left, 1
+     ibne md_left, vi00, e_descriptor_material_store_lid
+     mr32.z md_ids, md_ids
+     iaddiu md_left, vi00, 8
+e_descriptor_material_store_lid:
+     sq.z md_ids, kEMaterial(buffer_top)
+     isw.y md_left, kEMaterial(buffer_top)
+     b e_descriptor_material_done_lid
+e_descriptor_material_done_lid:
      ilw.x desc_ptr, kEDesc(buffer_top)
      iaddiu desc_ptr, desc_ptr, 9
      isw.x desc_ptr, kEDesc(buffer_top)

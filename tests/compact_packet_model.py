@@ -45,7 +45,7 @@ class Packet:
         self.word(0x6C008000 | ((count & 255) << 16) | qword_address)
 
 
-def sweep(packet, source, compact, reuse, owned=None, format=0):
+def sweep(packet, source, compact, reuse, owned=None, format=0, materials=None):
     count = len(source) // 144
     owned = [] if owned is None else owned
     if compact:
@@ -69,7 +69,14 @@ def sweep(packet, source, compact, reuse, owned=None, format=0):
             owned.append(len(packet.memory))
             packet.memory += source[consumed:consumed + batch * 144]
         packet.unpack(0, 1 if compact else 5)
-        packet.memory += struct.pack('<4I', batch, format, 0, 0)
+        low = high = 0
+        if materials is not None:
+            cells = materials[consumed // 144:consumed // 144 + batch]
+            assert len(cells) == batch and all(0 <= cell < 4 for cell in cells)
+            low = sum(cell << (2 * i) for i, cell in enumerate(cells[:8]))
+            high = sum(cell << (2 * i) for i, cell in enumerate(cells[8:]))
+        packet.memory += struct.pack('<4I', batch,
+                                     format | (2 if materials is not None else 0), low, high)
         if not compact:
             packet.memory += struct.pack('<16f', 1024.0, *([0.0] * 15))
         packet.word(0x17000000)  # MSCNT
@@ -84,7 +91,7 @@ def sweep(packet, source, compact, reuse, owned=None, format=0):
     return owned
 
 
-def execute(packet, capture_format=False):
+def execute(packet, capture_format=False, capture_header=False):
     # Traverse source-chain DMA separately from the packet construction model.
     data = packet.memory
     stream = bytearray()
@@ -118,6 +125,8 @@ def execute(packet, capture_format=False):
             sample = (count, bytes(memory[top][80:80 + count * 144]))
             if capture_format:
                 sample += (U32.unpack_from(memory[top], 4)[0],)
+            if capture_header:
+                sample += (struct.unpack_from('<4I', memory[top], 0),)
             snapshots.append(sample)
             top ^= 1
             continue
