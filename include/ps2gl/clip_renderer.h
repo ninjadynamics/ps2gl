@@ -106,6 +106,7 @@ protected:
     void BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& block);
     void XferPrefixes(CVifSCDmaPacket& packet);
     void DrawBlockX2(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxVertsPerBuffer);
+    bool TryDrawIndependentSpans(CVifSCDmaPacket& packet, CGeometryBlock& block);
 
     // shared ctor body for X2 and the descriptor variant below: identical
     // caps, different microcode + custom-prim property bit

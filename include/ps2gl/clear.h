@@ -7,6 +7,14 @@
 #ifndef ps2gl_clear_h
 #define ps2gl_clear_h
 
+// Independent clear-only A/B. Rebuild ps2gl after changing this switch.
+#ifndef PGL_CLEAR_PAGE_STRIPS
+#define PGL_CLEAR_PAGE_STRIPS 1
+#endif
+#if PGL_CLEAR_PAGE_STRIPS != 0 && PGL_CLEAR_PAGE_STRIPS != 1
+#error "PGL_CLEAR_PAGE_STRIPS must be 0 or 1"
+#endif
+
 #include "GL/gl.h"
 
 #include "ps2s/drawenv.h"
@@ -23,6 +31,10 @@ class CClearEnv {
 
     GS::CDrawEnv* pDrawEnv;
     CSprite* pSprite;
+    int Width, Height;
+    GS::tPSM FramePsm, DepthPsm;
+
+    bool CanUsePageStrips() const;
 
 public:
     CClearEnv();

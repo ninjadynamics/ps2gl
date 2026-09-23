@@ -18,6 +18,24 @@
 #error "Packet optimization/metrics switches must be 0 or 1"
 #endif
 
+/* Independent raw-X2 triangle runs retain the 30-vertex input ceiling.
+ * Rebuild ps2gl after changing this experimental packet-splitting gate. */
+#ifndef PGL_RAW_X2_MULTI_SPAN
+#define PGL_RAW_X2_MULTI_SPAN 1
+#endif
+#if PGL_RAW_X2_MULTI_SPAN != 0 && PGL_RAW_X2_MULTI_SPAN != 1
+#error "PGL_RAW_X2_MULTI_SPAN must be 0 or 1"
+#endif
+
+/* Explicit fully masked depth draws may suppress GS texture sampling while
+ * retaining their original renderer, VU inputs and texture state tracking. */
+#ifndef PGL_MASKED_DEPTH_NO_TEXTURE
+#define PGL_MASKED_DEPTH_NO_TEXTURE 1
+#endif
+#if PGL_MASKED_DEPTH_NO_TEXTURE != 0 && PGL_MASKED_DEPTH_NO_TEXTURE != 1
+#error "PGL_MASKED_DEPTH_NO_TEXTURE must be 0 or 1"
+#endif
+
 /* Five frame-boundary scopes, enabled explicitly by the application. No
  * clocks in the vertex loops; quiet applications never read CP0 Count. */
 #ifndef PGL_FRAME_PHASE_METRICS
@@ -25,6 +43,43 @@
 #endif
 #if PGL_FRAME_PHASE_METRICS != 0 && PGL_FRAME_PHASE_METRICS != 1
 #error "PGL_FRAME_PHASE_METRICS must be 0 or 1"
+#endif
+
+/* Presentation-only A/B: use the first 1.0 ms of supported NTSC/PAL/480p
+ * blanking instead of the initial 0.5 ms cutoff. Completion/ownership checks
+ * remain mandatory in both paths. Rebuild ps2gl after changing this switch. */
+#ifndef PGL_PRESENT_EXTENDED_BLANK
+#define PGL_PRESENT_EXTENDED_BLANK 1
+#endif
+#if PGL_PRESENT_EXTENDED_BLANK != 0 && PGL_PRESENT_EXTENDED_BLANK != 1
+#error "PGL_PRESENT_EXTENDED_BLANK must be 0 or 1"
+#endif
+
+/* Correlated normal-frame diagnostics only; never used for pacing. Runtime
+ * collection follows pglSetFramePhaseMetrics. OFF removes the IRQ sampling. */
+#ifndef PGL_PRESENT_TIMELINE_METRICS
+#define PGL_PRESENT_TIMELINE_METRICS 1
+#endif
+#if PGL_PRESENT_TIMELINE_METRICS != 0 && PGL_PRESENT_TIMELINE_METRICS != 1
+#error "PGL_PRESENT_TIMELINE_METRICS must be 0 or 1"
+#endif
+
+/* Three read-only status words at the first serviced, unready frame edge.
+ * OFF removes all per-frame storage/sampling; rebuild ps2gl for this gate. */
+#ifndef PGL_PRESENT_PIPE_METRICS
+#define PGL_PRESENT_PIPE_METRICS 0
+#endif
+#if PGL_PRESENT_PIPE_METRICS != 0 && PGL_PRESENT_PIPE_METRICS != 1
+#error "PGL_PRESENT_PIPE_METRICS must be 0 or 1"
+#endif
+
+/* One read-only Count stamp after normal packet Send returns. Independent
+ * of pipeline snapshots; OFF removes its per-frame storage and hooks. */
+#ifndef PGL_PRESENT_SEND_METRICS
+#define PGL_PRESENT_SEND_METRICS 0
+#endif
+#if PGL_PRESENT_SEND_METRICS != 0 && PGL_PRESENT_SEND_METRICS != 1
+#error "PGL_PRESENT_SEND_METRICS must be 0 or 1"
 #endif
 
 /********************************************
@@ -98,7 +153,8 @@ extern void pglGetWindowContextStats(unsigned int* attempts, unsigned int* reuse
 extern void pglGetDrawEnvStats(unsigned int* lastFrame, unsigned int* highWater,
     unsigned int* over100Frames, unsigned int* growths, unsigned int* heapBytes);
 /* Main-thread frame-boundary elapsed CPU cycles. FINISH waits for the previous
- * normal chain's GS SIGNAL; VSYNC waits/drains vblank; SEND includes cache
+ * normal chain's GS SIGNAL and raster FINISH; VSYNC measures a presentation
+ * join (or standalone vblank wait); SEND includes cache
  * writeback, existing DMA-channel readiness wait and DMA start, not completion
  * of the submitted chain. These are not GPU execution times.
  * Count increments every EE CPU cycle (EE Core Manual p70); subtraction wraps
@@ -117,6 +173,97 @@ typedef struct {
 } PGLFramePhaseStats;
 extern GLboolean pglSetFramePhaseMetrics(GLboolean enabled);
 extern GLboolean pglTakeFramePhaseMetrics(PGLFramePhaseStats phases[PGL_FRAME_PHASE_COUNT]);
+/* Aggregate IRQ/main presentation evidence, enabled with frame-phase metrics.
+ * A notReady edge is phase-admitted with its minimum cadence satisfied, but
+ * lacks the owned normal SIGNAL or FINISH. lateEdges are rejected VSINTs.
+ * The two join counters classify calls, not necessarily distinct frames.
+ * displayFields closes the previous serviced refresh, after same-blank rescue;
+ * repeatedFields counts those with no publication. emptyQueueEdges observes
+ * a refresh with no pending submission. Cadence >1 intentionally repeats.
+ * windows30 counts valid rolling 30-observation windows closed in this report;
+ * worstRepeat30 is their largest repeat count (undefined if windows30 is zero).
+ * History survives snapshots but not metric/layout resets. These are serviced
+ * VSINT observations, not physical refresh counts if interrupts coalesce.
+ * blankTicks reports the linked library's cutoff at 576 kHz. extendedBlank
+ * counts publications beyond the old 288-tick cutoff; expiredReady counts
+ * owned, completed requests whose opened phase permit is invalid/expired. */
+typedef struct {
+    unsigned int queued, presented, atVsync, afterCompletion;
+    unsigned int notReadyEdges, lateEdges, joinReady, joinWait;
+    unsigned int displayFields, repeatedFields, emptyQueueEdges;
+    unsigned int windows30, worstRepeat30;
+    unsigned int blankTicks, extendedBlank, expiredReady;
+} PGLPresentationStats;
+/* Snapshot and reset under interrupt exclusion; no per-frame logging. */
+extern GLboolean pglTakePresentationMetrics(PGLPresentationStats* stats);
+/* Whole normal-frame samples, accumulated only on their owned publication.
+ * Queue is sampled before Send (including cache writeback/DMA readiness).
+ * SIGNAL/FINISH are IRQ observations, not hardware execution timestamps.
+ * Presentation time is the admission check immediately before DISPFB stores.
+ * Durations use read-only CP0 Count cycles; phase uses Timer1 ticks. A pending
+ * record survives Take; metric/layout reset invalidates it. Bootstrap and
+ * cadence !=1 have no sample. Samples lasting >=1 second are discarded;
+ * unobserved full Count wraps cannot be reconstructed from 32-bit stamps.
+ * groups[0] publishes at its first serviced opportunity, groups[1] later.
+ * Neither initially not-ready nor same-blank rescue alone counts as a miss. */
+typedef struct {
+    pglU64_t queueToSignalCycles, queueToFinishCycles, queueToReadyCycles;
+    pglU64_t readyToPresentCycles, postPresentToQueueCycles, budgetCycles;
+    unsigned int samples, postPresentSamples, budgetSamples;
+    unsigned int maxReadyCycles, maxWaitCycles;
+} PGLPresentationTimingGroup;
+enum {
+    PGL_PRESENT_TRACE_HAS_POST = 1, PGL_PRESENT_TRACE_HAS_BUDGET = 2
+};
+typedef struct {
+    unsigned int sequence, queuePhase, readyPhase, edgePhase, flags;
+    unsigned int queueToSignalCycles, queueToFinishCycles, queueToReadyCycles;
+    unsigned int readyToPresentCycles, postPresentToQueueCycles, budgetCycles;
+    unsigned int missedEdges, rejectMask;
+} PGLPresentationTimingSample;
+typedef struct {
+    unsigned int report;
+    PGLPresentationTimingGroup groups[2];
+    /* Overlapping mode/rewind/phase-cutoff/Count-expiry/FIELD rejection events,
+     * counted when rejected, independently of completed-frame cohorts. */
+    unsigned int rejectReasons[5];
+    /* Missed cohort only: budget row, observed-ready latency column;
+     * three bins per axis: <1 ms, 1..<3 ms, >=3 ms. */
+    unsigned int missedJoint[9], unknownBudget, discarded;
+    unsigned int worstValid;
+    PGLPresentationTimingSample worst;
+} PGLPresentationTimingStats;
+extern GLboolean pglTakePresentationTimingMetrics(PGLPresentationTimingStats* stats);
+enum {
+    PGL_PRESENT_PIPE_VALID = 1,
+    PGL_PRESENT_PIPE_SIGNAL_SEEN = 2,
+    PGL_PRESENT_PIPE_FINISH_SEEN = 4
+};
+typedef struct {
+    unsigned int report, sequence, flags;
+    unsigned int vifStatus, gifStatus, dmaControl;
+} PGLPresentationPipelineSample;
+/* Sequential VIF1_STAT/GIF_STAT/D1_CHCR reads, not an atomic hardware edge or
+ * exclusive GPU timer. A timing Take seals its worst-missed pipeline sample;
+ * consume it with the same report/sequence before the next timing Take.
+ * Absent samples return false without writing output. Existing timing ABI
+ * and flags stay unchanged when this independent diagnostic is OFF. */
+extern unsigned int pglGetPresentationPipelineOptions(void);
+extern GLboolean pglTakePresentationPipelineMetrics(unsigned int report,
+    unsigned int sequence, PGLPresentationPipelineSample* sample);
+enum { PGL_PRESENT_SEND_VALID = 1 };
+typedef struct {
+    unsigned int report, sequence, flags, queueToSendReturnCycles;
+} PGLPresentationSendSample;
+/* Queue-to-Send-return includes cache writeback, DMA-channel readiness and
+ * submission together, not DMA completion or an exclusive cache timer. It
+ * may end after a completion IRQ/publication. One extra Count read per owned
+ * normal sample; no wait or interrupt masking. A timing Take seals the same
+ * worst-missed request; consume by report/sequence before the next Take.
+ * Invalid/absent or >=1-second samples return false without writing output. */
+extern unsigned int pglGetPresentationSendOptions(void);
+extern GLboolean pglTakePresentationSendMetrics(unsigned int report,
+    unsigned int sequence, PGLPresentationSendSample* sample);
 /* Optional main-thread allocation observer. Successful growth/free reports
  * old/new total requested heap bytes, excluding allocator overhead. Installing
  * a different non-NULL observer reports existing storage as 0 -> heapBytes;
@@ -156,6 +303,19 @@ extern GLboolean pglUsesCachedImmediateGeometry(void);
  * bit30=owned complete base/glow decal pair packets.
  * Query once per report, not per vertex. */
 extern unsigned int pglGetContextOptimizationFlags(void);
+
+/* Bit 0 reports the linked masked-depth sampling implementation.
+ * Begin returns false without changing state when unsupported. On success,
+ * keep draw/texture state fixed until End; modelview/source arrays may change.
+ * End drains pending geometry before restoring the ordinary GS giftag. */
+extern unsigned int pglGetMaskedDepthTextureOptions(void);
+/* Cumulative scope attempts, admitted scopes, and emitted TME-off giftags. */
+extern void pglGetMaskedDepthTextureCounts(unsigned int out[3]);
+/* Bit 0 reports clear strips; cumulative calls, striped clears, sprites. */
+extern unsigned int pglGetClearPageStripOptions(void);
+extern void pglGetClearPageStripCounts(unsigned int out[3]);
+extern GLboolean pglBeginMaskedDepthNoTexture(void);
+extern void pglEndMaskedDepthNoTexture(void);
 /* Cumulative unsigned counters within one explicit, non-nestable sample.
  * Read does not flush or mutate rendering. Packet bytes refer to the normal
  * VIF chain, excluding REF payload; context bytes are a subset of that chain.
@@ -179,6 +339,16 @@ extern void pglFinish(void);
 extern void pglWaitForVU1(void);
 extern void pglWaitForVSync(void);
 extern void pglSwapBuffers(void);
+// Join the previous frame's queued vblank publication, then recycle its retired
+// front buffer and CPU packet ownership. The following pglRenderGeometry arms
+// its own publication before EE preparation starts again. intervals>=1 applies
+// to that following submission; the first call bootstraps the display once.
+// Reserves EE Timer1 for hardware scan-phase admission until pglFinish(). Do
+// not use Timer1 for profiling/alarms while this presentation API is active.
+extern void pglSwapBuffersOnVSync(unsigned int intervals);
+// Retire a queued display publication before replacing framebuffer storage.
+// Idempotent; does not rotate CPU packet/draw ownership or schedule a new flip.
+extern void pglWaitForPresentation(void);
 
 // gs memory allocation
 
@@ -309,6 +479,10 @@ void pglSetRenderingFinishedCallback(void (*cb)(void));
  * be seen on the next snapshot; this is not a synchronization/fence API. */
 void pglGetRenderProgress(unsigned int* pendingSignals,
     unsigned int* normalAcknowledged, unsigned int* immediateAcknowledged);
+/* Main-thread diagnostic identity only: the next normal RenderGeometry chain
+ * and current context lifetime. Neither reserves a chain nor supplies a fence.
+ * Associate caller preparation only if no normal submission intervenes. */
+void pglGetNextNormalSubmission(unsigned int* sequence, unsigned int* contextEpoch);
 
 // general
 
@@ -341,6 +515,18 @@ void pglRegisterCustomPrimType(GLenum primType,
    projection with pglSetClipNear (default 1.0, eye units). */
 #define PGL_CLIP_TRIANGLES ((GLenum)0x80000000 | 0)
 #define PGL_CLIP_TRI_PROP ((pglU64_t)1 << 32)
+/* Jet-only full-depth encoding of the same unlit triangle pipeline. Registered
+   by pglRegisterClipTriRenderer; no additional VU image. Requires immediate
+   Z24 GL_FILL, zero depth offset, lighting/fog disabled, and finite source vertices clipped exactly
+   to the positive eye near plane. The caller must keep projected Z in
+   [0, 2^31) (near=1/far=2048 and 0.05<=eye W<=far is the intended envelope).
+   XYZ2 preserves depth above the Z24 buffer maximum until GS rasterization;
+   XYZF2 would discard its upper bits before the GS. Side clipping, geometry,
+   STQ and ADC are unchanged. Do not use as a fog-capable general primitive. */
+#define PGL_CLIP_TRIANGLES_XYZ2 ((GLenum)0x80000000 | 13)
+/* Query before selecting the optional alias; unsupported state keeps the
+   caller's ordinary rendering path. Does not validate vertex/range ownership. */
+GLboolean pglCanDrawClipTriXYZ2(void);
 void pglRegisterClipTriRenderer(void);
 void pglSetClipNear(float near_z);
 
@@ -440,6 +626,10 @@ void pglSetClipNear(float near_z);
 void pglRegisterClipTriX2DRenderer(void);
 void pglClipX2DSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 void pglClipX2SetWindowTexture(GLuint texId, float r, float g, float b, float a);
+/* bit0: exact noncontinued raw-X2 runs, window section disabled, at most30
+   vertices per activation. Retain source arrays through frame completion and
+   flush the final pending block before changing any owned draw state. */
+unsigned int pglGetRawX2SubmissionOptions(void);
 
 /* Exact vertical wall corners, including trapezoids, with arbitrary per-corner
    UV and FLOAT RGBA. No color normalization or geometry arithmetic occurs in
@@ -738,6 +928,8 @@ GLboolean pglDrawDecalRunsMaterials(const PGLDecalContext* context,
     const PGLDecalRun* runs, const unsigned char* const* materials,
     GLsizei runCount, GLuint baseTexture, GLuint glowTexture);
 int pgl_texture_has_mips32(unsigned int name);
+// Live packed entrance atlas: the RGBA32 pyramid or its exact PSMT8 twin.
+int pgl_texture_has_packed_atlas(unsigned int name);
 int pgl_texture_region_clamp_v(unsigned int name, int min_v, int max_v);
 
 // custom state

@@ -40,13 +40,25 @@ class Program:
                     assert upper[2][0] != lower[2][0], ('same-pair VF writers', len(self.code), pair)
                 self.code.append(pair)
 
-    def run(self, memory, top, forbid_inside=False, wide=False, memory_trace=None):
+    def run(self, memory, top, forbid_inside=False, wide=False, memory_trace=None,
+            instruction_trace=None, compound_windows=False):
         vf = np.zeros((32,4),dtype=F);vf[0,3]=1
         vi = np.zeros(16,dtype=np.int64)
         acc=np.zeros(4,dtype=F);imm=F(0);q=F(0);clip=0
+        q_pending=None;q_cycle=0
         pc=0;pending=None;end_delay=None;stops=0;steps=0;packets=[];stores={}
         in_flight=None;self.kicks=0;self.max_packet=0;self.max_arenas=[0,0]
         while steps<150000:
+            # DIV publishes Q after seven cycles. A following DIV leaves the
+            # previous result readable until its own completion; WAITQ stalls
+            # both halves. The returned count remains issued pairs, not cycles.
+            if q_pending is not None:
+                if self.code[pc][1][0] in ('div','waitq'):
+                    q_cycle=max(q_cycle,q_pending[0])
+                if q_cycle>=q_pending[0]:
+                    q=q_pending[1];q_pending=None
+            if instruction_trace is not None:
+                instruction_trace(vf,vi,memory,pc,steps)
             if forbid_inside:
                 assert pc != self.labels.get("xf_inside_triangle_lid"), "cull-on skipped triangle classification"
             ov=vf.copy(); oi=vi.copy(); oa=acc.copy(); oq=q; oldimm=imm
@@ -82,7 +94,7 @@ class Program:
                     clip=((clip<<6)|bits)&0xffffff
                 elif op=='fcand':vi[reg(args[0])]=int(bool(clip&int(args[1],0)))
                 elif op=='fmand':vi[reg(args[0])]=0 # culling mask is zero in admitted game state
-                elif op=='div':q=F(ov[reg(args[1]),LANES.index(args[1][-1])]/ov[reg(args[2]),LANES.index(args[2][-1])])
+                elif op=='div':q_pending=(q_cycle+7,F(ov[reg(args[1]),LANES.index(args[1][-1])]/ov[reg(args[2]),LANES.index(args[2][-1])]))
                 elif op=='mtir':vi[reg(args[0])]=int(ov[reg(args[1])].view(np.uint32)[LANES.index(args[1][-1])])&65535
                 elif op=='mfir':writes.append((reg(args[0]),m,np.full(len(m),np.array(signed(int(oi[reg(args[1])])),dtype=np.int32).view(F),dtype=F)))
                 elif op in ('iadd','isub','iaddiu','isubiu','ior','iand'):
@@ -103,7 +115,12 @@ class Program:
                     assert count<= ((60 if address==top+180 else 36) if wide else (30 if address==top+180 else 18))
                     # Issuing a new PATH1 kick waits for its predecessor. The
                     # newly kicked bytes remain GIF-owned until the next kick.
-                    in_flight=(address,address+1+count*3)
+                    packet_end=address+1+count*3
+                    if compound_windows and not (int(memory[address].view(np.uint32)[0])&0x8000):
+                        window_tag=int(memory[packet_end].view(np.uint32)[0])
+                        assert (window_tag&0x7fff)==count and (window_tag&0x8000)
+                        packet_end+=1+count*3
+                    in_flight=(address,packet_end)
                     self.kicks+=1;self.max_packet=max(self.max_packet,count)
                     arena=int(address==top+362);self.max_arenas[arena]=max(self.max_arenas[arena],count)
                     packets.append(memory[address+1:address+1+count*3].copy())
@@ -143,11 +160,15 @@ class Program:
             if end_delay==pc:
                 stops+=1;end_delay=None
                 if stops==2:return np.concatenate(packets),steps
-            pc=next_pc;steps+=1
+            pc=next_pc;steps+=1;q_cycle+=1
         raise AssertionError('program did not finish')
 
 def check_source_contract():
     reference=(ROOT/'vu1/general_clip_tri_x2.vcl').read_text()
+    # Canonical X2 has an independent paired-window copy experiment. Its OFF
+    # macro must still be the original macro retained by wall-only X2F.
+    reference=re.sub(r'^ *#if PGL_X2_WINDOW_COPY_TRIANGLES\n.*?^ *#else\n(.*?)^ *#endif\n',
+        r'\1',reference,flags=re.S|re.M)
     candidate=(ROOT/'vu1/general_clip_quad_x2f.vcl').read_text()
     for name in ('pd_plane','pd_sign','cp_edge','clip_pass','emit_mvert','x2_kick_chunk'):
         expression=rf'\.macro\s+{name}\s.*?\.endm'

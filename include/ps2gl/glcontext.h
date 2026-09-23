@@ -165,12 +165,15 @@ class CGLContext {
 
     /// Semaphores signaled by the gs int handler
     static int RenderingFinishedSemaId, ImmediateRenderingFinishedSemaId, VsyncSemaId;
+    static int RasterFinishedSemaId, PresentationSemaId;
 
     static int GsIntHandler(int cause);
+    static void TryPresent(bool atVsync);
 
     void FreeWaitingBuffersAndSwap();
 
     void EndVif1Packet(unsigned short signalNum);
+    void QueuePresentation(unsigned int intervals);
 
     typedef void (*tRenderingFinishedCallback)(void);
     static tRenderingFinishedCallback RenderingFinishedCallback;
@@ -424,7 +427,10 @@ public:
     }
 
     void WaitForVSync();
-    void SwapBuffers();
+    void SwapBuffers(bool displayAlreadyPresented = false);
+    void SwapBuffersOnVSync(unsigned int intervals);
+    void WaitForPresentation();
+    void ResetPresentation();
 
 private:
     // Keep the earlier member offsets intact for header consumers. Consumers

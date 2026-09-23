@@ -94,11 +94,14 @@ public:
  */
 class CMMClut : public GS::CClut {
     GS::CMemArea GsMem;
+    // HyperSolar: resident inside an externally owned pack (never GsMem).
+    bool Packed;
 
 public:
     CMMClut(const void* table, int numEntries = 256)
         : GS::CClut(table, numEntries)
         , GsMem(16, 16, GS::kPsm32, GS::kAlignPage)
+        , Packed(false)
     {
     }
 
@@ -106,7 +109,16 @@ public:
 
     void Load(CVifSCDmaPacket& packet);
     // Match Load's successful residency/MRU touch without admitting an upload.
-    bool TouchIfResident() { return GsMem.IsAllocated(); }
+    bool TouchIfResident() { return Packed || GsMem.IsAllocated(); }
+
+    // HyperSolar: place this palette at an explicit GS word address inside a
+    // pack that another owner allocated and locked, and upload it NOW. Later
+    // Load() calls neither allocate nor upload; the pack owner frees the VRAM.
+    void UploadPacked(uint32_t gsWordAddr);
+    bool IsPacked() const { return Packed; }
+    // HyperSolar: the pack is gone; keep the RAM table and upload packet so
+    // the next ordinary Load allocates GsMem and uploads again.
+    void DetachPacked() { Packed = false; }
 };
 
 /********************************************
@@ -126,6 +138,12 @@ class CMMTexture : public GS::CTexture {
     // models) both sample whichever palette was uploaded last. Letting each
     // texture own its palette makes paletted textures self-contained.
     CMMClut* OwnClut;
+    // HyperSolar: a page-aligned owner holding this texture's packed image
+    // and palette (pgl_create_index8_packed64); released with the texture.
+    GS::CMemArea* OwnPack;
+    // Redefinition/free must not keep a pack, or a palette resident in
+    // storage this texture no longer owns. The palette descriptor survives.
+    void ReleasePackedStorage();
 
 public:
     CMMTexture(GS::tContext context);
@@ -147,6 +165,14 @@ public:
         OwnClut = clut;
     }
     CMMClut* GetOwnClut() const { return OwnClut; }
+
+    // HyperSolar: take ownership of an allocated+locked pack (see OwnPack).
+    // Called once after the packed image/palette uploads; never replaces one.
+    void AdoptPack(GS::CMemArea* pack)
+    {
+        mErrorIf(OwnPack != NULL, "texture already owns a pack");
+        OwnPack = pack;
+    }
 
     void ChangePsm(GS::tPSM psm);
 

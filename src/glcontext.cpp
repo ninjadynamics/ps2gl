@@ -55,6 +55,8 @@ CVifSCDmaPacket *CGLContext::CurPacket, *CGLContext::LastPacket,
 int CGLContext::RenderingFinishedSemaId          = -1;
 int CGLContext::ImmediateRenderingFinishedSemaId = -1;
 int CGLContext::VsyncSemaId                      = -1;
+int CGLContext::RasterFinishedSemaId             = -1;
+int CGLContext::PresentationSemaId               = -1;
 
 CGLContext::tRenderingFinishedCallback CGLContext::RenderingFinishedCallback = NULL;
 
@@ -62,24 +64,310 @@ CGLContext::tRenderingFinishedCallback CGLContext::RenderingFinishedCallback = N
 // Separate counters avoid a shared pending-bit read/modify/write race. They
 // describe our end-of-chain SIGNALs, not mere VIF DMA idleness or CPU returns.
 static volatile unsigned int NormalChainsSubmitted = 0, NormalChainsCompleted = 0;
+static unsigned int NormalContextEpoch = 0;
 static volatile unsigned int ImmediateChainsSubmitted = 0, ImmediateChainsCompleted = 0;
+// Only normal chains emit FINISH. One normal chain may be outstanding, so a
+// raster event cannot acknowledge an immediate upload or another frame.
+static volatile unsigned int NormalFramesFinished = 0;
+
+// Main publishes an immutable DISPFB pair; the IRQ publishes its sequence only
+// after the MMIO writes. Semaphores wake waiters, never establish ownership.
+static uint64_t PresentationFB1, PresentationFB2;
+static bool PresentationHasBuffers;
+static volatile unsigned int PresentationRequested = 0, PresentationCompleted = 0;
+static volatile unsigned int PresentationIntervals = 0;
+static volatile bool PresentationFieldIsEven;
+static unsigned int PresentationNormalSequence;
+static unsigned int PresentationCadence = 1;
+static bool PresentationEnabled;
+// A completion IRQ can finish the same blank's publication after VSINT was
+// serviced. The request, hardware phase and short-lived Count witness prevent
+// that permission surviving into another field or a newly queued frame.
+static bool PresentationApertureOpen;
+static unsigned int PresentationApertureRequest, PresentationApertureClock;
+static unsigned int PresentationAperturePhase;
+static bool PresentationApertureFieldIsEven;
+// EE Timer1: count BUSCLK/256, reset at the VBLANK rising edge in hardware.
+// The GS IRQ may itself be late, so a latched VSINT is not a phase test.
+// The audited NTSC/PAL/480p timing model puts blanking at >=1.430 ms. Admit
+// the first 1.0 ms (576 ticks), leaving >=0.430 ms for two privileged MMIO
+// stores that bypass the GS drawing FIFO. The earlier 0.5 ms cutoff could
+// discard a completed frame despite remaining blank time. GS VSINT itself
+// arrives about 0.19-0.26 ms after the hardware edge. No added wait or delay.
+// These mode timings come from hardware-tested PCSX2, not a Sony guarantee;
+// do not extend this API to custom modes without reviewing their timing.
+// Timing provenance/limits: PS2_SCREEN_TEARING_INVESTIGATION.md.
+static const unsigned int PresentationTimerMode = 0x9e;
+static const unsigned int PresentationEarlyBlankTicks = 288;
+static const unsigned int PresentationBlankTicks = PGL_PRESENT_EXTENDED_BLANK ? 576 : 288;
+static bool PresentationTimerOwned;
+static unsigned int SavedPresentationTimerMode, SavedPresentationTimerCount;
+
+static inline unsigned int ReadEeCycleCount()
+{
+    unsigned int cycles;
+    // EE Core User's Manual p70: CP0 Count advances every CPU cycle. Reading
+    // it dates the aperture; never reset it or use elapsed time as completion.
+    asm volatile("mfc0 %0, $9" : "=r"(cycles) : : "memory");
+    return cycles;
+}
 
 static unsigned int DrawEnvLastFrame, DrawEnvHighWater, DrawEnvOver100Frames;
 static unsigned int DrawEnvGrowths, DrawEnvHeapBytes;
 static void (*DrawEnvHeapObserver)(unsigned int, unsigned int);
 
 #if PGL_FRAME_PHASE_METRICS
-static bool FramePhaseEnabled;
+static volatile bool FramePhaseEnabled;
 static PGLFramePhaseStats FramePhases[PGL_FRAME_PHASE_COUNT];
+static PGLPresentationStats PresentationStats;
+// Close each observed display interval at the next VSINT. Counting at its
+// start would incorrectly classify a later same-blank completion as a repeat.
+// Keep the open interval across reporting snapshots; neither path changes pacing.
+static bool PresentationFieldObserved, PresentationFieldPublished;
+static unsigned int PresentationRepeatHistory, PresentationRepeatCount;
+static unsigned int PresentationHistoryFields;
+#define PGL_PRESENT_COUNT(field) do { if (FramePhaseEnabled) ++PresentationStats.field; } while (0)
 
-static inline unsigned int FramePhaseClock()
+#if PGL_PRESENT_TIMELINE_METRICS
+static const unsigned int PresentationTraceMaxCycles = 294912000u;
+static PGLPresentationTimingStats PresentationTimingStats;
+static unsigned int PresentationTimingReport;
+#if PGL_PRESENT_PIPE_METRICS
+static PGLPresentationPipelineSample PresentationPipelineWorst;
+static PGLPresentationPipelineSample PresentationPipelineTaken;
+#endif
+#if PGL_PRESENT_SEND_METRICS
+static volatile PGLPresentationSendSample PresentationSendWorst;
+static PGLPresentationSendSample PresentationSendTaken;
+#endif
+static bool PreviousPresentationClockValid;
+static unsigned int PreviousPresentationClock;
+static struct {
+    bool active, signalSeen, finishSeen, edgeSeen, badAge;
+    unsigned int request, normal, queueClock, readyClock;
+    unsigned int observedEdges;
+    PGLPresentationTimingSample sample;
+#if PGL_PRESENT_SEND_METRICS
+    volatile unsigned int sendCycles, sendFlags;
+#endif
+#if PGL_PRESENT_PIPE_METRICS
+    PGLPresentationPipelineSample pipeline;
+#endif
+} PresentationTiming;
+
+static void ResetPresentationTimingRecord()
 {
-    unsigned int cycles;
-    // Read-only CP0 Count, independent of PCR0/1 and the raylib system timer.
-    // The compiler barrier brackets the measured work; no timer reset/fence.
-    asm volatile("mfc0 %0, $9" : "=r"(cycles) : : "memory");
-    return cycles;
+    if (FramePhaseEnabled && PresentationTiming.active)
+        ++PresentationTimingStats.discarded;
+    PresentationTiming.active = false;
+    PreviousPresentationClockValid = false;
+#if PGL_PRESENT_SEND_METRICS
+    PresentationTiming.sendFlags = 0;
+#endif
+#if PGL_PRESENT_PIPE_METRICS
+    PresentationTiming.pipeline.flags = 0;
+#endif
 }
+
+static void ArmPresentationTiming(unsigned int request)
+{
+    PresentationTiming.active = false;
+#if PGL_PRESENT_SEND_METRICS
+    PresentationTiming.sendFlags = 0;
+#endif
+    // Bootstrap presents an already retired image; it is not a DMA sample.
+    // Intentional multi-refresh pacing must not enter the missed cohort.
+    if (!FramePhaseEnabled || !PresentationEnabled || PresentationIntervals != 1)
+        return;
+    PresentationTiming.signalSeen = PresentationTiming.finishSeen = false;
+    PresentationTiming.edgeSeen = PresentationTiming.badAge = false;
+    PresentationTiming.observedEdges = 0;
+    PresentationTiming.request = request;
+    PresentationTiming.normal = NormalChainsSubmitted;
+    PresentationTiming.queueClock = ReadEeCycleCount();
+    memset(&PresentationTiming.sample, 0, sizeof(PresentationTiming.sample));
+#if PGL_PRESENT_PIPE_METRICS
+    PresentationTiming.pipeline.flags = 0;
+#endif
+    PGLPresentationTimingSample& sample = PresentationTiming.sample;
+    sample.sequence = NormalChainsSubmitted;
+    sample.queuePhase = *R_EE_T1_COUNT;
+    if (PreviousPresentationClockValid) {
+        const unsigned int elapsed = PresentationTiming.queueClock - PreviousPresentationClock;
+        if (elapsed < PresentationTraceMaxCycles) {
+            sample.flags |= PGL_PRESENT_TRACE_HAS_POST;
+            sample.postPresentToQueueCycles = elapsed;
+        }
+    }
+    PresentationTiming.active = true;
+}
+
+#if PGL_PRESENT_SEND_METRICS
+static void ObservePresentationSendReturn(unsigned int request,
+    unsigned int sequence, unsigned int queueClock, unsigned int clock)
+{
+    const unsigned int elapsed = clock - queueClock;
+    if (PresentationTiming.request != request || PresentationTiming.normal != sequence
+        || elapsed >= PresentationTraceMaxCycles)
+        return;
+    // IRQ may already have completed this record. Publish pending data before
+    // validity, then repair the matching retained worst if it copied invalid.
+    // No next normal submission or timing Take can run until this main-thread
+    // Send call returns, so a matching worst cannot be replaced underneath us.
+    PresentationTiming.sendCycles = elapsed;
+    asm volatile("" : : : "memory");
+    PresentationTiming.sendFlags = PGL_PRESENT_SEND_VALID;
+    asm volatile("" : : : "memory");
+    if (PresentationTimingStats.worstValid
+        && PresentationSendWorst.sequence == sequence) {
+        PresentationSendWorst.queueToSendReturnCycles = elapsed;
+        PresentationSendWorst.flags = PGL_PRESENT_SEND_VALID;
+    }
+}
+#endif
+
+static void ObservePresentationCompletion(bool raster, unsigned int clock)
+{
+    if (!FramePhaseEnabled || !PresentationTiming.active
+        || PresentationTiming.request != PresentationRequested
+        || PresentationTiming.normal != NormalChainsSubmitted)
+        return;
+    PGLPresentationTimingSample& sample = PresentationTiming.sample;
+    if (raster) {
+        if (PresentationTiming.finishSeen) return;
+        PresentationTiming.finishSeen = true;
+        sample.queueToFinishCycles = clock - PresentationTiming.queueClock;
+    } else {
+        if (PresentationTiming.signalSeen) return;
+        PresentationTiming.signalSeen = true;
+        sample.queueToSignalCycles = clock - PresentationTiming.queueClock;
+    }
+    if (PresentationTiming.signalSeen && PresentationTiming.finishSeen) {
+        PresentationTiming.readyClock = clock;
+        sample.queueToReadyCycles = clock - PresentationTiming.queueClock;
+        sample.readyPhase = *R_EE_T1_COUNT;
+    }
+}
+
+static void ObservePresentationEdge(unsigned int clock, unsigned int phase,
+    unsigned int timerMode)
+{
+    if (!FramePhaseEnabled || !PresentationTiming.active
+        || PresentationTiming.request != PresentationRequested)
+        return;
+    if (++PresentationTiming.observedEdges >= 64)
+        PresentationTiming.badAge = true;
+    if (PresentationTiming.edgeSeen) {
+        // This same request survived its previous serviced opportunity.
+        // Initial not-ready + later same-blank rescue does not reach here.
+        ++PresentationTiming.sample.missedEdges;
+        return;
+    }
+    PresentationTiming.edgeSeen = true;
+    PGLPresentationTimingSample& sample = PresentationTiming.sample;
+    sample.edgePhase = phase;
+#if PGL_PRESENT_PIPE_METRICS
+    if (!PresentationTiming.signalSeen || !PresentationTiming.finishSeen) {
+        PGLPresentationPipelineSample& pipeline = PresentationTiming.pipeline;
+        pipeline.sequence = sample.sequence;
+        pipeline.flags = PGL_PRESENT_PIPE_VALID
+            | (PresentationTiming.signalSeen ? PGL_PRESENT_PIPE_SIGNAL_SEEN : 0)
+            | (PresentationTiming.finishSeen ? PGL_PRESENT_PIPE_FINISH_SEEN : 0);
+        // EE manual pp21-23, 73-74, 124, 143-144, 161/164: word-readable
+        // status, no read-clear. Never read VIF CODE/NUM or GIF TAG/CNT here.
+        // These three sequential reads observe the first serviced edge only;
+        // no waits, event acknowledgements or presentation decisions change.
+        pipeline.vifStatus = *(volatile unsigned int*)0x10003c00;
+        pipeline.gifStatus = *(volatile unsigned int*)0x10003020;
+        pipeline.dmaControl = *(volatile unsigned int*)0x10009000;
+    }
+#endif
+    const unsigned int age = clock - PresentationTiming.queueClock;
+    if (age >= PresentationTraceMaxCycles) {
+        PresentationTiming.badAge = true;
+    } else if (timerMode == PresentationTimerMode && phase < PresentationBlankTicks) {
+        sample.flags |= PGL_PRESENT_TRACE_HAS_BUDGET;
+        sample.budgetCycles = age + (PresentationBlankTicks - phase) * 512u;
+    }
+}
+
+static void RecordPresentationRejection(unsigned int mask)
+{
+    if (!FramePhaseEnabled) return;
+    for (unsigned int bit = 0; bit < 5; ++bit) {
+        if (mask & (1u << bit)) ++PresentationTimingStats.rejectReasons[bit];
+    }
+    if (PresentationTiming.active && PresentationTiming.request == PresentationRequested)
+        PresentationTiming.sample.rejectMask |= mask;
+}
+
+static unsigned int PresentationTimingBin(unsigned int cycles)
+{
+    return cycles < 294912u ? 0u : cycles < 884736u ? 1u : 2u;
+}
+
+static void CompletePresentationTiming(unsigned int clock)
+{
+    if (!FramePhaseEnabled) return;
+    PreviousPresentationClock = clock;
+    PreviousPresentationClockValid = true;
+    if (!PresentationTiming.active) return;
+    const unsigned int total = clock - PresentationTiming.queueClock;
+    const bool valid = PresentationTiming.request == PresentationRequested
+        && PresentationTiming.normal == PresentationNormalSequence
+        && PresentationTiming.signalSeen && PresentationTiming.finishSeen
+        && PresentationTiming.edgeSeen && !PresentationTiming.badAge
+        && total < PresentationTraceMaxCycles;
+    PresentationTiming.active = false;
+    if (!valid) {
+        ++PresentationTimingStats.discarded;
+        return;
+    }
+    PGLPresentationTimingSample& sample = PresentationTiming.sample;
+    sample.readyToPresentCycles = clock - PresentationTiming.readyClock;
+    const unsigned int groupIndex = sample.missedEdges != 0 ? 1u : 0u;
+    PGLPresentationTimingGroup& group = PresentationTimingStats.groups[groupIndex];
+    ++group.samples;
+    group.queueToSignalCycles += sample.queueToSignalCycles;
+    group.queueToFinishCycles += sample.queueToFinishCycles;
+    group.queueToReadyCycles += sample.queueToReadyCycles;
+    group.readyToPresentCycles += sample.readyToPresentCycles;
+    if (sample.queueToReadyCycles > group.maxReadyCycles)
+        group.maxReadyCycles = sample.queueToReadyCycles;
+    if (sample.readyToPresentCycles > group.maxWaitCycles)
+        group.maxWaitCycles = sample.readyToPresentCycles;
+    if (sample.flags & PGL_PRESENT_TRACE_HAS_POST) {
+        ++group.postPresentSamples;
+        group.postPresentToQueueCycles += sample.postPresentToQueueCycles;
+    }
+    if (sample.flags & PGL_PRESENT_TRACE_HAS_BUDGET) {
+        ++group.budgetSamples;
+        group.budgetCycles += sample.budgetCycles;
+    }
+    if (groupIndex != 0) {
+        if (sample.flags & PGL_PRESENT_TRACE_HAS_BUDGET) {
+            ++PresentationTimingStats.missedJoint[3u * PresentationTimingBin(sample.budgetCycles)
+                + PresentationTimingBin(sample.queueToReadyCycles)];
+        } else {
+            ++PresentationTimingStats.unknownBudget;
+        }
+        if (!PresentationTimingStats.worstValid
+            || total > PresentationTimingStats.worst.queueToReadyCycles
+                + PresentationTimingStats.worst.readyToPresentCycles) {
+            PresentationTimingStats.worst = sample;
+            PresentationTimingStats.worstValid = 1;
+#if PGL_PRESENT_SEND_METRICS
+            PresentationSendWorst.sequence = sample.sequence;
+            PresentationSendWorst.queueToSendReturnCycles = PresentationTiming.sendCycles;
+            PresentationSendWorst.flags = PresentationTiming.sendFlags;
+#endif
+#if PGL_PRESENT_PIPE_METRICS
+            PresentationPipelineWorst = PresentationTiming.pipeline;
+#endif
+        }
+    }
+}
+#endif
 
 class CFramePhaseScope {
     unsigned int Start;
@@ -89,12 +377,12 @@ public:
     explicit CFramePhaseScope(unsigned int phase)
         : Start(0), Phase(phase), Enabled(FramePhaseEnabled)
     {
-        if (Enabled) Start = FramePhaseClock();
+        if (Enabled) Start = ReadEeCycleCount();
     }
     ~CFramePhaseScope()
     {
         if (!Enabled) return;
-        const unsigned int elapsed = FramePhaseClock() - Start;
+        const unsigned int elapsed = ReadEeCycleCount() - Start;
         PGLFramePhaseStats& stats = FramePhases[Phase];
         stats.cycles += elapsed;
         ++stats.calls;
@@ -104,14 +392,32 @@ public:
 #define PGL_FRAME_SCOPE(phase) CFramePhaseScope phaseScope(phase)
 #else
 #define PGL_FRAME_SCOPE(phase) ((void)0)
+#define PGL_PRESENT_COUNT(field) ((void)0)
 #endif
 
 extern "C" GLboolean pglSetFramePhaseMetrics(GLboolean enabled)
 {
 #if PGL_FRAME_PHASE_METRICS
+    const int interruptsEnabled = DIntr();
     memset(FramePhases, 0, sizeof(FramePhases));
+    memset(&PresentationStats, 0, sizeof(PresentationStats));
+    PresentationFieldObserved = PresentationFieldPublished = false;
+    PresentationRepeatHistory = PresentationRepeatCount = PresentationHistoryFields = 0;
+#if PGL_PRESENT_TIMELINE_METRICS
+    ResetPresentationTimingRecord();
+    memset(&PresentationTimingStats, 0, sizeof(PresentationTimingStats));
+#if PGL_PRESENT_PIPE_METRICS
+    PresentationPipelineWorst.flags = 0;
+    PresentationPipelineTaken.flags = 0;
+#endif
+#if PGL_PRESENT_SEND_METRICS
+    PresentationSendWorst.flags = 0;
+    PresentationSendTaken.flags = 0;
+#endif
+#endif
     FramePhaseEnabled = enabled != GL_FALSE;
-    return FramePhaseEnabled ? GL_TRUE : GL_FALSE;
+    if (interruptsEnabled) EIntr();
+    return enabled != GL_FALSE ? GL_TRUE : GL_FALSE;
 #else
     (void)enabled;
     return GL_FALSE;
@@ -127,6 +433,118 @@ extern "C" GLboolean pglTakeFramePhaseMetrics(PGLFramePhaseStats phases[PGL_FRAM
     return FramePhaseEnabled ? GL_TRUE : GL_FALSE;
 #else
     memset(phases, 0, PGL_FRAME_PHASE_COUNT * sizeof(*phases));
+    return GL_FALSE;
+#endif
+}
+
+extern "C" GLboolean pglTakePresentationMetrics(PGLPresentationStats* stats)
+{
+    if (!stats) return GL_FALSE;
+#if PGL_FRAME_PHASE_METRICS
+    const int interruptsEnabled = DIntr();
+    memcpy(stats, &PresentationStats, sizeof(*stats));
+    stats->blankTicks = PresentationBlankTicks;
+    memset(&PresentationStats, 0, sizeof(PresentationStats));
+    const bool enabled = FramePhaseEnabled;
+    if (interruptsEnabled) EIntr();
+    return enabled ? GL_TRUE : GL_FALSE;
+#else
+    memset(stats, 0, sizeof(*stats));
+    return GL_FALSE;
+#endif
+}
+
+extern "C" GLboolean pglTakePresentationTimingMetrics(PGLPresentationTimingStats* stats)
+{
+    if (!stats) return GL_FALSE;
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+    const int interruptsEnabled = DIntr();
+    memcpy(stats, &PresentationTimingStats, sizeof(*stats));
+    stats->report = ++PresentationTimingReport;
+#if PGL_PRESENT_PIPE_METRICS
+    PresentationPipelineTaken.flags = 0;
+    if (stats->worstValid && (PresentationPipelineWorst.flags & PGL_PRESENT_PIPE_VALID)) {
+        PresentationPipelineTaken = PresentationPipelineWorst;
+        PresentationPipelineTaken.report = stats->report;
+    }
+    PresentationPipelineWorst.flags = 0;
+#endif
+#if PGL_PRESENT_SEND_METRICS
+    PresentationSendTaken.flags = 0;
+    if (stats->worstValid && (PresentationSendWorst.flags & PGL_PRESENT_SEND_VALID)
+        && PresentationSendWorst.sequence == stats->worst.sequence) {
+        PresentationSendTaken.sequence = PresentationSendWorst.sequence;
+        PresentationSendTaken.flags = PresentationSendWorst.flags;
+        PresentationSendTaken.queueToSendReturnCycles = PresentationSendWorst.queueToSendReturnCycles;
+        PresentationSendTaken.report = stats->report;
+    }
+    PresentationSendWorst.flags = 0;
+#endif
+    memset(&PresentationTimingStats, 0, sizeof(PresentationTimingStats));
+    const bool enabled = FramePhaseEnabled;
+    if (interruptsEnabled) EIntr();
+    return enabled ? GL_TRUE : GL_FALSE;
+#else
+    memset(stats, 0, sizeof(*stats));
+    return GL_FALSE;
+#endif
+}
+
+extern "C" unsigned int pglGetPresentationPipelineOptions(void)
+{
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS && PGL_PRESENT_PIPE_METRICS
+    return 1u;
+#else
+    return 0u;
+#endif
+}
+
+extern "C" GLboolean pglTakePresentationPipelineMetrics(unsigned int report,
+    unsigned int sequence, PGLPresentationPipelineSample* sample)
+{
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS && PGL_PRESENT_PIPE_METRICS
+    // Only the main-thread timing Take/reset writes this sealed copy. IRQs
+    // continue collecting into their separate pending/worst records.
+    if (!sample || !(PresentationPipelineTaken.flags & PGL_PRESENT_PIPE_VALID)
+        || PresentationPipelineTaken.report != report
+        || PresentationPipelineTaken.sequence != sequence)
+        return GL_FALSE;
+    *sample = PresentationPipelineTaken;
+    PresentationPipelineTaken.flags = 0;
+    return GL_TRUE;
+#else
+    (void)report;
+    (void)sequence;
+    (void)sample;
+    return GL_FALSE;
+#endif
+}
+
+extern "C" unsigned int pglGetPresentationSendOptions(void)
+{
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS && PGL_PRESENT_SEND_METRICS
+    return 1u;
+#else
+    return 0u;
+#endif
+}
+
+extern "C" GLboolean pglTakePresentationSendMetrics(unsigned int report,
+    unsigned int sequence, PGLPresentationSendSample* sample)
+{
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS && PGL_PRESENT_SEND_METRICS
+    // IRQ never writes the copy sealed by the existing timing Take exclusion.
+    if (!sample || !(PresentationSendTaken.flags & PGL_PRESENT_SEND_VALID)
+        || PresentationSendTaken.report != report
+        || PresentationSendTaken.sequence != sequence)
+        return GL_FALSE;
+    *sample = PresentationSendTaken;
+    PresentationSendTaken.flags = 0;
+    return GL_TRUE;
+#else
+    (void)report;
+    (void)sequence;
+    (void)sample;
     return GL_FALSE;
 #endif
 }
@@ -190,9 +608,35 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
     , CurBuffer(0)
 {
     NormalChainsSubmitted = NormalChainsCompleted = 0;
+    if (++NormalContextEpoch == 0) ++NormalContextEpoch;
     ImmediateChainsSubmitted = ImmediateChainsCompleted = 0;
+    NormalFramesFinished = 0;
+    PresentationRequested = PresentationCompleted = 0;
+    PresentationIntervals = 0;
+    PresentationNormalSequence = 0;
+    PresentationCadence = 1;
+    PresentationEnabled = false;
+    PresentationApertureOpen = false;
+    PresentationTimerOwned = false;
 #if PGL_FRAME_PHASE_METRICS
+    FramePhaseEnabled = false;
     memset(FramePhases, 0, sizeof(FramePhases));
+    memset(&PresentationStats, 0, sizeof(PresentationStats));
+    PresentationFieldObserved = PresentationFieldPublished = false;
+    PresentationRepeatHistory = PresentationRepeatCount = PresentationHistoryFields = 0;
+#if PGL_PRESENT_TIMELINE_METRICS
+    ResetPresentationTimingRecord();
+    memset(&PresentationTimingStats, 0, sizeof(PresentationTimingStats));
+    PresentationTimingReport = 0;
+#if PGL_PRESENT_SEND_METRICS
+    PresentationSendWorst.flags = 0;
+    PresentationSendTaken.flags = 0;
+#endif
+#if PGL_PRESENT_PIPE_METRICS
+    PresentationPipelineWorst.flags = 0;
+    PresentationPipelineTaken.flags = 0;
+#endif
+#endif
 #endif
     pglInvalidateX2BasePrefix();
     // Cached construction avoids UCAB's single read-only cache line being
@@ -260,19 +704,22 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
     VsyncSemaId                      = CreateSema(&newSemaphore);
     RenderingFinishedSemaId          = CreateSema(&newSemaphore);
     ImmediateRenderingFinishedSemaId = CreateSema(&newSemaphore);
+    RasterFinishedSemaId             = CreateSema(&newSemaphore);
+    PresentationSemaId               = CreateSema(&newSemaphore);
     mErrorIf(VsyncSemaId == -1
             || RenderingFinishedSemaId == -1
-            || ImmediateRenderingFinishedSemaId == -1,
+            || ImmediateRenderingFinishedSemaId == -1
+            || RasterFinishedSemaId == -1 || PresentationSemaId == -1,
         "Failed to create ps2gl semaphores.");
 
     // add an interrupt handler for gs "signal" exceptions
 
     AddIntcHandler(INTC_GS, CGLContext::GsIntHandler, 0 /*first handler*/);
     EnableIntc(INTC_GS);
-    // clear any signal/vsync exceptions and wait for the next
-    *(volatile unsigned int*)GS::ControlRegs::csr = 9;
-    // enable signal and vsync exceptions
-    *(volatile unsigned int*)GS::ControlRegs::imr = 0x7600;
+    // Clear and enable SIGNAL, FINISH and VSYNC events. FINISH is observed
+    // independently: a following SIGNAL does not wait for raster completion.
+    *(volatile unsigned int*)GS::ControlRegs::csr = 11;
+    *(volatile unsigned int*)GS::ControlRegs::imr = 0x7400;
 
     // Mask bugged tag mismatch error
     WR_EE_VIF1_ERR(2);
@@ -280,6 +727,13 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
 
 CGLContext::~CGLContext()
 {
+    WaitForPresentation();
+    if (PresentationTimerOwned) {
+        *R_EE_T1_MODE = 0;
+        *R_EE_T1_COUNT = SavedPresentationTimerCount;
+        *R_EE_T1_MODE = SavedPresentationTimerMode;
+        PresentationTimerOwned = false;
+    }
     if (CurDrawEnvPtrs != DrawEnvPtrs0 && CurDrawEnvPtrs != DrawEnvPtrs1)
         free(CurDrawEnvPtrs);
     if (LastDrawEnvPtrs != DrawEnvPtrs0 && LastDrawEnvPtrs != DrawEnvPtrs1)
@@ -467,8 +921,8 @@ void CGLContext::EndVif1Packet(unsigned short signalNum)
     // write our id to the signal register and trigger an
     // exception on the core when this dma chain reaches the end
 
-    tGifTag giftag;
-    giftag.NLOOP = 1;
+    tGifTag giftag = {};
+    giftag.NLOOP = signalNum == 1 ? 2 : 1;
     giftag.EOP   = 1;
     giftag.PRE   = 0;
     giftag.FLG   = 0; // packed
@@ -480,6 +934,10 @@ void CGLContext::EndVif1Packet(unsigned short signalNum)
     Vif1Packet->OpenDirect();
     {
         *Vif1Packet += giftag;
+        if (signalNum == 1) {
+            *Vif1Packet += (uint64_t)0;
+            *Vif1Packet += (uint64_t)0x61; // FINISH: raster event, not a command stall
+        }
         *Vif1Packet += Ps2glSignalId | signalNum;
         *Vif1Packet += (uint64_t)0x60; // signal
     }
@@ -495,16 +953,109 @@ void CGLContext::RenderGeometry()
     // make sure the semaphore we'll signal on completion is zero now
     while (PollSema(RenderingFinishedSemaId) != -1)
         ;
+    while (PollSema(RasterFinishedSemaId) != -1)
+        ;
 
+    // The previous frame must have retired before this untagged FINISH event
+    // is reassigned. The game normally already waited in the presentation path.
+    if (NormalChainsCompleted != NormalChainsSubmitted
+        || NormalFramesFinished != NormalChainsSubmitted
+        || PresentationCompleted != PresentationRequested) {
+        fputs("ps2gl: normal frame submitted before completion\n", stderr);
+        abort();
+    }
+    *(volatile unsigned int*)GS::ControlRegs::csr = 2;
     ++NormalChainsSubmitted;
+    // Arm the frame that is ABOUT TO render, before returning to next-frame
+    // EE preparation. Waiting until EndDrawing would miss a perfectly usable
+    // vblank whenever that preparation crosses its boundary.
+    if (PresentationEnabled)
+        QueuePresentation(PresentationCadence);
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS && PGL_PRESENT_SEND_METRICS
+    const bool captureSend = FramePhaseEnabled && PresentationTiming.active;
+    const unsigned int sendRequest = PresentationRequested;
+    const unsigned int sendSequence = NormalChainsSubmitted;
+    const unsigned int sendQueueClock = PresentationTiming.queueClock;
+#endif
     LastPacket->Send();
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS && PGL_PRESENT_SEND_METRICS
+    if (captureSend)
+        ObservePresentationSendReturn(sendRequest, sendSequence, sendQueueClock, ReadEeCycleCount());
+#endif
+}
+
+void CGLContext::TryPresent(bool atVsync)
+{
+    if (PresentationCompleted == PresentationRequested
+        || !PresentationApertureOpen
+        || PresentationApertureRequest != PresentationRequested
+        || PresentationIntervals != 0
+        || NormalChainsCompleted != PresentationNormalSequence
+        || NormalFramesFinished != PresentationNormalSequence)
+        return;
+
+    // Timer1 resets before the GS FIELD/VSINT transition. A saved permit plus
+    // a low timer value alone could therefore mistake the NEXT blank for this
+    // one. The Count deadline and nondecreasing hardware phase both must hold.
+    // One BUSCLK/256 tick is 512 EE cycles. The deadline merely expires a
+    // phase permit; owned SIGNAL and FINISH above establish raster readiness.
+    const unsigned int clock = ReadEeCycleCount();
+    const unsigned int elapsed = clock - PresentationApertureClock;
+    const unsigned int phase = *R_EE_T1_COUNT;
+    const uint32_t currentCsr = *(volatile uint32_t*)GS::ControlRegs::csr;
+    const bool fieldIsEven = (currentCsr & (1u << 13)) != 0;
+    const unsigned int timerMode = *R_EE_T1_MODE & 0x3ff;
+    if (timerMode != PresentationTimerMode
+        || phase < PresentationAperturePhase || phase >= PresentationBlankTicks
+        || elapsed >= (PresentationBlankTicks - PresentationAperturePhase) * 512u
+        || fieldIsEven != PresentationApertureFieldIsEven) {
+        PGL_PRESENT_COUNT(expiredReady);
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+        if (FramePhaseEnabled) {
+            const unsigned int reasons = (timerMode != PresentationTimerMode ? 1u : 0u)
+                | (phase < PresentationAperturePhase ? 2u : 0u)
+                | (phase >= PresentationBlankTicks ? 4u : 0u)
+                | (elapsed >= (PresentationBlankTicks - PresentationAperturePhase) * 512u ? 8u : 0u)
+                | (fieldIsEven != PresentationApertureFieldIsEven ? 16u : 0u);
+            RecordPresentationRejection(reasons);
+        }
+#endif
+        PresentationApertureOpen = false;
+        return;
+    }
+
+    asm volatile("" ::: "memory");
+    if (PresentationHasBuffers) {
+        *(volatile uint64_t*)GS::ControlRegs::dispfb1 = PresentationFB1;
+        *(volatile uint64_t*)GS::ControlRegs::dispfb2 = PresentationFB2;
+    }
+    PresentationFieldIsEven = fieldIsEven;
+    PresentationApertureOpen = false;
+    PGL_PRESENT_COUNT(presented);
+    if (phase >= PresentationEarlyBlankTicks)
+        PGL_PRESENT_COUNT(extendedBlank);
+#if PGL_FRAME_PHASE_METRICS
+    if (FramePhaseEnabled) PresentationFieldPublished = true;
+#endif
+    if (atVsync)
+        PGL_PRESENT_COUNT(atVsync);
+    else
+        PGL_PRESENT_COUNT(afterCompletion);
+    asm volatile("sync.l" ::: "memory");
+    PresentationCompleted = PresentationRequested;
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+    CompletePresentationTiming(clock);
+#endif
+    iSignalSema(PresentationSemaId);
 }
 
 int CGLContext::GsIntHandler(int cause)
 {
-    // Drain EVERY unmasked event (SIGNAL bit 0 | VSYNC bit 3, per the IMR set
-    // in the ctor) before returning. The GS holds its INTC line asserted while
-    // ANY unmasked CSR event bit is set, and the EE INTC latches EDGES only —
+    // Drain EVERY unmasked event (SIGNAL bit 0 | FINISH bit 1 | VSYNC bit 3).
+    // FINISH and SIGNAL can arrive in either order; neither may consume the
+    // other's acknowledgement. Keep the existing drain-until-clean invariant.
+    // The GS holds its INTC line asserted while any unmasked event is set.
+    // Original simultaneous-event failure mechanism: the EE INTC latches EDGES only —
     // returning with one still pending means the line never drops, no edge is
     // ever latched again, GS interrupts die, and the next WaitSema on this
     // path sleeps forever (the intermittent EE hard freeze on chain-heavy
@@ -514,7 +1065,23 @@ int CGLContext::GsIntHandler(int cause)
     // until CSR reads clean, which proves the line is low and the next event
     // makes a fresh edge.
     uint32_t csr;
-    while ((csr = *(volatile uint32_t*)GS::ControlRegs::csr) & 9) {
+    while ((csr = *(volatile uint32_t*)GS::ControlRegs::csr) & 11) {
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+        // One observation time for both bits if they were latched together;
+        // the order of the handler's branches is not GS execution order.
+        const unsigned int completionClock = FramePhaseEnabled
+            && PresentationTiming.active && (csr & 3) ? ReadEeCycleCount() : 0;
+#endif
+        if (csr & 2) {
+            *(volatile unsigned int*)GS::ControlRegs::csr = 2;
+            if (NormalFramesFinished != NormalChainsSubmitted) {
+                NormalFramesFinished = NormalChainsSubmitted;
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+                ObservePresentationCompletion(true, completionClock);
+#endif
+                iSignalSema(RasterFinishedSemaId);
+            }
+        }
         // signal interrupt?
         if (csr & 1) {
             // is it one of ours?
@@ -523,6 +1090,9 @@ int CGLContext::GsIntHandler(int cause)
                 switch (sigLblId & 0xffff) {
                 case 1:
                     ++NormalChainsCompleted;
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+                    ObservePresentationCompletion(false, completionClock);
+#endif
                     iSignalSema(RenderingFinishedSemaId);
                     if (RenderingFinishedCallback != NULL)
                         RenderingFinishedCallback();
@@ -546,10 +1116,67 @@ int CGLContext::GsIntHandler(int cause)
         }
         // vsync interrupt? (NOT else — both may be pending together)
         if (csr & 8) {
+#if PGL_FRAME_PHASE_METRICS
+            if (FramePhaseEnabled && PresentationEnabled) {
+                if (PresentationFieldObserved) {
+                    ++PresentationStats.displayFields;
+                    const unsigned int repeated = PresentationFieldPublished ? 0u : 1u;
+                    PresentationStats.repeatedFields += repeated;
+                    // A bounded observed-cadence history exposes clustered
+                    // misses without logging every IRQ or changing pacing.
+                    PresentationRepeatCount -= (PresentationRepeatHistory >> 29) & 1u;
+                    PresentationRepeatHistory = ((PresentationRepeatHistory << 1) | repeated)
+                        & 0x3fffffffu;
+                    PresentationRepeatCount += repeated;
+                    if (PresentationHistoryFields < 30)
+                        ++PresentationHistoryFields;
+                    if (PresentationHistoryFields == 30) {
+                        ++PresentationStats.windows30;
+                        if (PresentationRepeatCount > PresentationStats.worstRepeat30)
+                            PresentationStats.worstRepeat30 = PresentationRepeatCount;
+                    }
+                }
+                PresentationFieldObserved = true;
+                PresentationFieldPublished = false;
+                if (PresentationCompleted == PresentationRequested)
+                    ++PresentationStats.emptyQueueEdges;
+            }
+#endif
+            PresentationApertureOpen = false;
+            if (PresentationCompleted != PresentationRequested) {
+                // Date the same-blank permit before sampling its remaining
+                // budget, so setup work cannot extend the admission deadline.
+                const unsigned int apertureClock = ReadEeCycleCount();
+                const unsigned int phase = *R_EE_T1_COUNT;
+                const unsigned int timerMode = *R_EE_T1_MODE & 0x3ff;
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+                ObservePresentationEdge(apertureClock, phase, timerMode);
+#endif
+                if (timerMode == PresentationTimerMode
+                    && phase < PresentationBlankTicks) {
+                    if (PresentationIntervals != 0)
+                        --PresentationIntervals;
+                    PresentationApertureRequest = PresentationRequested;
+                    PresentationApertureClock = apertureClock;
+                    PresentationAperturePhase = phase;
+                    const uint32_t currentCsr = *(volatile uint32_t*)GS::ControlRegs::csr;
+                    PresentationApertureFieldIsEven = (currentCsr & (1u << 13)) != 0;
+                    PresentationApertureOpen = true;
+                    if (PresentationIntervals == 0
+                        && (NormalChainsCompleted != PresentationNormalSequence
+                            || NormalFramesFinished != PresentationNormalSequence))
+                        PGL_PRESENT_COUNT(notReadyEdges);
+                } else {
+                    PGL_PRESENT_COUNT(lateEdges);
+                }
+            }
             iSignalSema(VsyncSemaId);
             // clear the exception and wait for the next
             *(volatile unsigned int*)GS::ControlRegs::csr = 8;
         }
+        // A FINISH/SIGNAL that arrives just after VSINT can still use that
+        // admitted blank. Never demand a second refresh solely for IRQ order.
+        TryPresent((csr & 8) != 0);
     }
 
     ExitHandler();
@@ -563,7 +1190,11 @@ void CGLContext::FinishRenderingGeometry(bool forceImmediateStop)
     //printf("%s(%d)\n", __FUNCTION__, forceImmediateStop);
 
     mWarnIf(forceImmediateStop, "Interrupting currently rendering dma chain not supported yet");
-    WaitSema(RenderingFinishedSemaId);
+    const unsigned int submitted = NormalChainsSubmitted;
+    while (NormalChainsCompleted != submitted)
+        WaitSema(RenderingFinishedSemaId);
+    while (NormalFramesFinished != submitted)
+        WaitSema(RasterFinishedSemaId);
 }
 
 void CGLContext::WaitForVSync()
@@ -571,20 +1202,113 @@ void CGLContext::WaitForVSync()
     PGL_FRAME_SCOPE(PGL_FRAME_VSYNC);
     //printf("%s\n", __FUNCTION__);
 
-    // wait for beginning of v-sync
-    WaitSema(VsyncSemaId);
-    // sometimes if we miss a frame the semaphore gets incremented
-    // more than once (because maxCount is ignored?) which causes the next
-    // call to WaitForVSync to fall through immediately, which is kinda bad,
-    // so make sure the count is zero after waiting.
+    // Standalone wait (e.g. a layout switch), not permission for a later
+    // thread-side flip. Presentation uses the atomic wait+publish path below.
+    const int interruptsEnabled = DIntr();
+    PresentationApertureOpen = false;
+    *(volatile unsigned int*)GS::ControlRegs::csr = 8;
     while (PollSema(VsyncSemaId) != -1)
         ;
+    if (interruptsEnabled) EIntr();
+    WaitSema(VsyncSemaId);
     // sceGsSyncV(0);
     uint32_t csr       = *(volatile uint32_t*)GS::ControlRegs::csr;
     IsCurrentFieldEven = (bool)((csr >> 13) & 1);
 }
 
-void CGLContext::SwapBuffers()
+void CGLContext::QueuePresentation(unsigned int intervals)
+{
+    if (PresentationCompleted != PresentationRequested) {
+        fputs("ps2gl: overwriting an outstanding presentation\n", stderr);
+        abort();
+    }
+    while (PollSema(PresentationSemaId) != -1)
+        ;
+    PresentationHasBuffers = GetDisplayContext().PrepareBufferSwap(
+        &PresentationFB1, &PresentationFB2);
+    const unsigned int request = PresentationRequested + 1;
+    const int interruptsEnabled = DIntr();
+    if (!PresentationTimerOwned) {
+        // The game uses SDK Timer2; legacy ps2gl examples may use Timer1.
+        // Reserve it only for this opt-in API and reject an active owner.
+        SavedPresentationTimerMode = *R_EE_T1_MODE & 0x3ff;
+        SavedPresentationTimerCount = *R_EE_T1_COUNT;
+        if (SavedPresentationTimerMode & 0x80) {
+            if (interruptsEnabled) EIntr();
+            fputs("ps2gl: synchronized presentation requires free EE Timer1\n", stderr);
+            abort();
+        }
+        *R_EE_T1_MODE = 0;
+        *R_EE_T1_COUNT = 0xffff;
+        *R_EE_T1_MODE = PresentationTimerMode | 0xc00; // clear old event flags
+        PresentationTimerOwned = true;
+    }
+    // A new submission needs a future edge, not stale credit. This happens at
+    // DMA submission, NOT after the CPU has spent a frame preparing more work.
+    PresentationApertureOpen = false;
+    *(volatile unsigned int*)GS::ControlRegs::csr = 8;
+    PresentationNormalSequence = NormalChainsSubmitted;
+    PresentationIntervals = intervals ? intervals : 1;
+    asm volatile("sync.l" ::: "memory");
+    PresentationRequested = request;
+#if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS
+    ArmPresentationTiming(request);
+#endif
+    PGL_PRESENT_COUNT(queued);
+    if (interruptsEnabled) EIntr();
+    // FlushCache/Send and all packet preparation run with normal IRQ delivery.
+}
+
+void CGLContext::WaitForPresentation()
+{
+    PGL_FRAME_SCOPE(PGL_FRAME_VSYNC);
+    const unsigned int request = PresentationRequested;
+    if (PresentationCompleted == request)
+        PGL_PRESENT_COUNT(joinReady);
+    else
+        PGL_PRESENT_COUNT(joinWait);
+    while (PresentationCompleted != request)
+        WaitSema(PresentationSemaId);
+}
+
+void CGLContext::ResetPresentation()
+{
+    WaitForPresentation();
+    // Replacing the display buffers establishes a new initial front. The next
+    // swap must bootstrap that pair, not consume an old layout's completed ack.
+    const int interruptsEnabled = DIntr();
+    PresentationApertureOpen = false;
+    PresentationEnabled = false;
+#if PGL_FRAME_PHASE_METRICS
+    PresentationFieldObserved = PresentationFieldPublished = false;
+    PresentationRepeatHistory = PresentationRepeatCount = PresentationHistoryFields = 0;
+#if PGL_PRESENT_TIMELINE_METRICS
+    ResetPresentationTimingRecord();
+#endif
+#endif
+    if (interruptsEnabled) EIntr();
+}
+
+void CGLContext::SwapBuffersOnVSync(unsigned int intervals)
+{
+    if (NormalChainsCompleted != NormalChainsSubmitted
+        || NormalFramesFinished != NormalChainsSubmitted)
+        FinishRenderingGeometry(false);
+    PresentationCadence = intervals ? intervals : 1;
+    if (!PresentationEnabled) {
+        QueuePresentation(PresentationCadence);
+        PresentationEnabled = true;
+    }
+    // Normally the ISR has already displayed this frame during EE preparation.
+    // Consume that exact acknowledgement; do not request a second vblank.
+    WaitForPresentation();
+    IsCurrentFieldEven = PresentationFieldIsEven;
+    // Only CPU bookkeeping follows acknowledgement. No second display write,
+    // and no packet/heap/manager work runs in interrupt context.
+    SwapBuffers(true);
+}
+
+void CGLContext::SwapBuffers(bool displayAlreadyPresented)
 {
     PGL_FRAME_SCOPE(PGL_FRAME_SWAP);
     pglInvalidateX2BasePrefix();
@@ -615,7 +1339,7 @@ void CGLContext::SwapBuffers()
 
     GetImmGeomManager().SwapBuffers();
     GetDListManager().SwapBuffers();
-    GetDisplayContext().SwapBuffers();
+    GetDisplayContext().SwapBuffers(displayAlreadyPresented);
     GetImmDrawContext().SwapBuffers(IsCurrentFieldEven);
 
     // free memory that was waiting til end of frame
@@ -673,7 +1397,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.21 12:22]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.23 21:46]\n");
     printf("[PS2-PACKETS] normal=cached\n");
     printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",
         1, 1,
@@ -738,6 +1462,18 @@ void pglSwapBuffers(void)
     pGLContext->SwapBuffers();
 }
 
+void pglSwapBuffersOnVSync(unsigned int intervals)
+{
+    mErrorIf(pGLContext == NULL, "You need to call pglInit()");
+    pGLContext->SwapBuffersOnVSync(intervals);
+}
+
+void pglWaitForPresentation(void)
+{
+    mErrorIf(pGLContext == NULL, "You need to call pglInit()");
+    pGLContext->WaitForPresentation();
+}
+
 /**
  * Set a function to be called back when rendering finishes.  <b>This
  * function will be called from the interrupt handler; be careful!</b>
@@ -757,6 +1493,12 @@ void pglGetRenderProgress(unsigned int* pendingSignals,
         | (ImmediateChainsSubmitted != immediateDone ? 2u : 0u);
     *normalAcknowledged = normalDone;
     *immediateAcknowledged = immediateDone;
+}
+
+void pglGetNextNormalSubmission(unsigned int* sequence, unsigned int* contextEpoch)
+{
+    *sequence = NormalChainsSubmitted + 1;
+    *contextEpoch = NormalContextEpoch;
 }
 
 /********************************************

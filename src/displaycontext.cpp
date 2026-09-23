@@ -8,6 +8,7 @@
 
 #include "ps2gl/displaycontext.h"
 #include "ps2gl/dlist.h"
+#include "ps2gl/glcontext.h"
 
 #include "ps2s/displayenv.h"
 
@@ -32,11 +33,12 @@ CDisplayContext::CDisplayContext(CGLContext& context)
 // (neighbor-line) weight. When disabled, RC1 is turned off and the blend is
 // restored to the constructor default (RC1 alpha, RC1 off => no effect). RC1's
 // frame-buffer ADDRESS is repointed per swap in SwapBuffers; here we set the
-// initial address (Frame0Mem, matching the SetFB2 calls) plus DBY/geometry/PMODE.
+// current RC2 address plus DBY/geometry/PMODE. A mode/filter change must not
+// silently switch back to Frame0 while the other buffer is being scanned out.
 void CDisplayContext::ApplyFlicker(bool interlaced, int width, int height, int screenX, int screenY)
 {
     if (FlickerEnabled) {
-        DisplayEnv->SetFB1(Frame0Mem->GetWordAddr(), width, 0, 1, Frame0Mem->GetPixFormat());
+        DisplayEnv->SetFB1(DisplayEnv->GetFB2Addr(), width, 0, 1, Frame0Mem->GetPixFormat());
         if (interlaced)
             DisplayEnv->SetDisplay1(width, height * 2, screenX, screenY, 4, 1);
         else
@@ -67,6 +69,9 @@ CDisplayContext::~CDisplayContext()
 void CDisplayContext::SetDisplayBuffers(bool interlaced,
     GS::CMemArea* frame0Mem, GS::CMemArea* frame1Mem)
 {
+    // Retire the old immutable IRQ descriptor before replacing its buffer
+    // ownership. The next normal frame bootstraps presentation on this pair.
+    GLContext.ResetPresentation();
     Frame0Mem = frame0Mem;
     Frame1Mem = frame1Mem;
 
@@ -93,6 +98,10 @@ void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screen
     if (!Frame0Mem)
         return;
 
+    // A submitted frame may have flipped while the EE prepares the next one.
+    // Join that publication before reprogramming the environment, preserving
+    // its actual displayed address rather than the not-yet-rotated CPU pointer.
+    GLContext.WaitForPresentation();
     DisplayIsInterlaced = interlaced;
 
     // overscanMode 0/1/2 maps 1:1 onto GS::DisplayModes ntsc/pal/dtv, which sets
@@ -101,7 +110,7 @@ void CDisplayContext::SetVideoMode(bool interlaced, int overscanMode, int screen
 
     int width  = Frame0Mem->GetWidth();
     int height = Frame0Mem->GetHeight();
-    DisplayEnv->SetFB2(Frame0Mem->GetWordAddr(), width, 0, 0, Frame0Mem->GetPixFormat());
+    DisplayEnv->SetFB2(DisplayEnv->GetFB2Addr(), width, 0, 0, Frame0Mem->GetPixFormat());
 
     if (interlaced)
         // Interlaced (NTSC/PAL): a half-height field buffer fills the visible
@@ -150,13 +159,25 @@ void CDisplayContext::SetDisplayOffset(int screenX, int screenY)
     DisplayEnv->SendDisplayPos();
 }
 
-void CDisplayContext::SwapBuffers()
+bool CDisplayContext::PrepareBufferSwap(uint64_t* fb1, uint64_t* fb2)
+{
+    if (!DisplayIsDblBuffered) return false;
+    DisplayEnv->SetFB2Addr(LastFrameMem->GetWordAddr());
+    if (FlickerEnabled)
+        DisplayEnv->SetFB1Addr(LastFrameMem->GetWordAddr());
+    DisplayEnv->GetFBFlip(fb1, fb2);
+    return true;
+}
+
+void CDisplayContext::SwapBuffers(bool displayAlreadyPresented)
 {
     // flip frame buffer ptrs
     if (DisplayIsDblBuffered) {
         GS::CMemArea* temp = CurFrameMem;
         CurFrameMem        = LastFrameMem;
         LastFrameMem       = temp;
+
+        if (displayAlreadyPresented) return;
 
         // display the last completed frame (which is frame n-2 because we're not
         // drawing immediately but building up a packet)

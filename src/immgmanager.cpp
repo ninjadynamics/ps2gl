@@ -890,7 +890,8 @@ bool CImmGeomManager::DrawDecalRuns(const PGLDecalContext* context,
 
 static void DirectDecalRegionV(CMMTexture* texture, const PGLDecalRegionV& region)
 {
-    // Admission proved a resident context-1 64x128 PSM32 pack and the bounds.
+    // Admission proved a resident context-1 64x128 packed atlas (RGBA32 or its
+    // PSMT8 twin, whose palette is pinned in the same pack) and the bounds.
     // No pending Geometry exists in this direct API. The next SyncGsContext
     // fences preceding VU output and owns a complete settings copy, including
     // CLAMP_1/TEX1_1/MIPTBP1_1/2_1. No microcode texture prefix replaces it.
@@ -1001,7 +1002,7 @@ bool CImmGeomManager::DrawDecalRunsSampling(const PGLDecalContext* context,
     if (regions || materials) {
         const GLuint names[2] = { baseTexture, glowTexture };
         for (unsigned int material = 0; material < 2; ++material) {
-            if (names[material] && pgl_texture_has_mips32(names[material])) {
+            if (names[material] && pgl_texture_has_packed_atlas(names[material])) {
                 regionTextures[material] = textures.FindNamedTexture(names[material]);
                 if (regionTextures[material]->GetContext() != GS::kContext1) return false;
                 ++regionPasses;
@@ -1017,8 +1018,9 @@ bool CImmGeomManager::DrawDecalRunsSampling(const PGLDecalContext* context,
     // Both textures were checked before this reservation, so a later lookup
     // or incompatible second material cannot cause partial fallback.
     const uint64_t passes = glowTexture ? 2u : 1u;
-    // Additional region changes need only an ordered resident PSM32 texture
-    // sync: seven GS registers + GIF tag, CNT/VIF padding and the VIF fence.
+    // Additional region changes need only an ordered resident packed-atlas
+    // texture sync (RGBA32, or PSMT8 whose CLUT is pinned in the same pack):
+    // seven GS registers + GIF tag, CNT/VIF padding and the VIF fence.
     // 32q bounds each change; the original 512q/sweep owns its first sync.
     // The packed-owner proof excludes image/CLUT uploads on these changes.
     const uint64_t regionWords = (uint64_t)(regions ? regionPasses : 0u) *

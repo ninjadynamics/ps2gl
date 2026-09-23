@@ -5,6 +5,7 @@
 	  main directory of this archive for more details.                             */
 
 #include "ps2s/cpu_matrix.h"
+#include "ps2s/drawenv.h"
 #include "ps2s/math.h"
 #include "ps2s/packet.h"
 
@@ -25,6 +26,57 @@
 // Define its base before either the full writer or the delta writer uses it.
 #define kContextStart 0
 #include "vu1_context.h"
+
+static CGLContext* maskedDepthTextureOwner;
+static unsigned int maskedDepthTextureCounts[3];
+
+static bool MaskedDepthTextureStateAdmitted(CGLContext& context)
+{
+    CImmDrawContext& draw = context.GetImmDrawContext();
+    GS::CDrawEnv& env = draw.GetDrawEnv();
+    return !context.InDListDef() && context.GetTexManager().GetTexEnabled()
+        && env.GetFrameBufferDrawMask() == 0xffffffffu
+        && !(env.GetTestReg() & 1u) && !draw.GetAlphaTestEnabled()
+        && draw.GetDepthTestEnabled() && env.GetDepthWriteEnabled()
+        && !draw.GetBlendEnabled() && !draw.GetEdgeAAEnabled()
+        && !draw.GetFogEnabled();
+}
+
+extern "C" unsigned int pglGetMaskedDepthTextureOptions(void)
+{
+    return PGL_MASKED_DEPTH_NO_TEXTURE ? 1u : 0u;
+}
+
+extern "C" void pglGetMaskedDepthTextureCounts(unsigned int out[3])
+{
+    if (out) memcpy(out, maskedDepthTextureCounts, sizeof(maskedDepthTextureCounts));
+}
+
+extern "C" GLboolean pglBeginMaskedDepthNoTexture(void)
+{
+    ++maskedDepthTextureCounts[0];
+#if PGL_MASKED_DEPTH_NO_TEXTURE
+    if (maskedDepthTextureOwner || !MaskedDepthTextureStateAdmitted(*pGLContext))
+        return GL_FALSE;
+    pGLContext->GetImmGeomManager().Flush();
+    maskedDepthTextureOwner = pGLContext;
+    // FRAME/TEST setters only invalidate the GS context. Prim forces the
+    // full VU giftag update and is excluded by both context-delta allowlists.
+    pGLContext->PrimChanged();
+    ++maskedDepthTextureCounts[1];
+    return GL_TRUE;
+#else
+    return GL_FALSE;
+#endif
+}
+
+extern "C" void pglEndMaskedDepthNoTexture(void)
+{
+    if (maskedDepthTextureOwner != pGLContext) return;
+    pGLContext->GetImmGeomManager().Flush();
+    maskedDepthTextureOwner = NULL;
+    pGLContext->PrimChanged();
+}
 
 extern "C" unsigned int pglGetContextOptimizationFlags(void)
 {
@@ -694,6 +746,17 @@ CBaseRenderer::BuildGiftag(GLenum primType)
     bool alpha                   = drawContext.GetBlendEnabled();
     bool edgeAA                  = drawContext.GetEdgeAAEnabled();
     unsigned int nreg            = OutputQuadsPerVert;
+
+    // Keep the original textured program, input transfers and texture sync.
+    // With all color writes masked and ATE disabled, sampled RGBA cannot
+    // affect Z. Only PRIM.TME changes; the exact projected XYZ stays intact.
+    // Custom renderers own their GIF contracts and retain the original path.
+    if (maskedDepthTextureOwner == &glContext
+        && !glContext.GetImmGeomManager().GetRendererManager().IsCurRendererCustom()
+        && MaskedDepthTextureStateAdmitted(glContext)) {
+        useTexture = false;
+        ++maskedDepthTextureCounts[2];
+    }
 
     // GS edge anti-aliasing smooths polygon/line edges.  It does not filter
     // textures; texture shimmer still has to be diagnosed in the STQ path.

@@ -425,6 +425,7 @@ CMMTexture::CMMTexture(GS::tContext context)
     , XferImage(false)
     , IsResident(false)
     , OwnClut(NULL)
+    , OwnPack(NULL)
 {
     // always load the clut
     // FIXME:  this is obviously not the best way to do
@@ -437,6 +438,25 @@ CMMTexture::~CMMTexture()
 {
     delete pImageMem;
     delete OwnClut;   // HyperSolar: free this texture's palette (NULL-safe)
+    OwnClut = NULL;
+    ReleasePackedStorage();
+}
+
+void CMMTexture::ReleasePackedStorage()
+{
+    // A packed palette addresses a pack (this texture's OwnPack or a mip
+    // registry owner). Detach residency only: CurClut may still name this
+    // descriptor, and a redefinition without glColorTable keeps its palette.
+    if (OwnClut && OwnClut->IsPacked())
+        OwnClut->DetachPacked();
+    if (OwnPack) {
+        // Same guarded release as pgl_delete_mips: a layout reset may already
+        // have unbound the slot.
+        if (OwnPack->IsAllocated() && OwnPack->IsLocked())
+            OwnPack->Unlock();
+        delete OwnPack;
+        OwnPack = NULL;
+    }
 }
 
 /**
@@ -444,6 +464,7 @@ CMMTexture::~CMMTexture()
  */
 void CMMTexture::SetImage(uint128_t* imagePtr, uint32_t w, uint32_t h, GS::tPSM psm, uint32_t* clutPtr)
 {
+    ReleasePackedStorage();
     if (pImageMem) {
         // we are being re-initialized
         delete pImageMem;
@@ -465,6 +486,7 @@ void CMMTexture::SetImage(uint128_t* imagePtr, uint32_t w, uint32_t h, GS::tPSM 
  */
 void CMMTexture::SetImage(const GS::CMemArea& area)
 {
+    ReleasePackedStorage();
     CTexEnv::SetPSM(area.GetPixFormat());
     CTexEnv::SetDimensions(area.GetWidth(), area.GetHeight());
     SetImageGsAddr(area.GetWordAddr());
@@ -606,6 +628,14 @@ void CMMTexture::UploadPacked(uint32_t gsWordAddr)
 
 void CMMTexture::Free(void)
 {
+    // HyperSolar: an owned pack (pgl_create_index8_packed64) holds the image
+    // instead of pImageMem. Release it and return to the ordinary managed
+    // path so the next Load reallocates and re-uploads the RAM image and
+    // palette. Registry-owned mip packs are left untouched here.
+    if (OwnPack) {
+        ReleasePackedStorage();
+        XferImage = true;
+    }
     pImageMem->Free();
     IsResident = false;
 }
@@ -623,8 +653,19 @@ void CMMTexture::BindToSlot(GS::CMemSlot& slot)
  * CMMClut
  */
 
+void CMMClut::UploadPacked(uint32_t gsWordAddr)
+{
+    mErrorIf(GsMem.IsAllocated(), "packed clut already owns a private slot");
+    SetGsAddr(gsWordAddr);
+    FlushCache(0);
+    Send(true, false);
+    Packed = true;
+}
+
 void CMMClut::Load(CVifSCDmaPacket& packet)
 {
+    if (Packed)
+        return;
     if (!GsMem.IsAllocated()) {
         GsMem.Alloc();
         SetGsAddr(GsMem.GetWordAddr());
@@ -1225,16 +1266,55 @@ extern "C" int pgl_texture_has_mips32(unsigned int name)
     return 0;
 }
 
+/* PSMT8 entrance twin geometry; see pgl_create_index8_entrance. */
+static const int kEntranceP8Widths[4] = { 64, 32, 16, 8 };
+static const int kEntranceP8Heights[4] = { 128, 64, 32, 16 };
+static const unsigned int kEntranceP8Blocks[4] = { 0, 16, 20, 21 };
+static const unsigned int kEntranceP8ClutBlock = 28;
+
+/* The PSMT8 entrance twin's live contract: exact shape, three hidden levels,
+   one locked eight-page owner starting at the base image, and the base's own
+   palette packed at block 28 of that owner. A general 64x128 PSMT8 texture
+   never qualifies. */
+static int pgl_texture_has_entrance_p8(unsigned int name)
+{
+    CMMTexture* tex = pGLContext->GetTexManager().FindNamedTexture(name);
+    if (!tex || tex->GetPSM() != GS::kPsm8 || tex->GetW() != 64 ||
+        tex->GetH() != 128) return 0;
+    const CMMClut* palette = tex->GetOwnClut();
+    for (int i = 0; i < PGL_MIP_REGISTRY_MAX; i++) {
+        SMipRegistryEntry& entry = MipRegistry[i];
+        if (entry.baseId == name)
+            return entry.count == 3 && entry.pack && entry.pack->IsAllocated() &&
+                entry.pack->IsLocked() && entry.pack->GetPageLength() == 8 &&
+                tex->GetImageGsAddr() == entry.pack->GetWordAddr() &&
+                palette && palette->IsPacked() &&
+                palette->GetGsAddr() == entry.pack->GetWordAddr() + kEntranceP8ClutBlock * 64u;
+    }
+    return 0;
+}
+
+/* Shape-generic admission for a live packed entrance atlas: the original
+   RGBA32 pyramid or its PSMT8 twin. pgl_texture_has_mips32 keeps meaning
+   RGBA32 only. */
+extern "C" int pgl_texture_has_packed_atlas(unsigned int name)
+{
+    return pgl_texture_has_mips32(name) || pgl_texture_has_entrance_p8(name);
+}
+
 /* Inclusive base-level texel limits; the GS shifts REGION_CLAMP bounds at
    each mip level (GS manual 3.4.5). Callers admit the packed atlas once per
    pass, then change bounds only between ordered material spans. SetRegion
    also selects U REGION_REPEAT: mask=63/fix=0 is identical to full-width
-   REPEAT for this 64-wide image, including negative/repeated coordinates. */
+   REPEAT for this 64-wide image, including negative/repeated coordinates.
+   Texel coordinates, and therefore these bounds, do not depend on PSM. */
 extern "C" int pgl_texture_region_clamp_v(unsigned int name, int min_v, int max_v)
 {
     CMMTexture* tex = pGLContext->GetTexManager().FindNamedTexture(name);
-    if (!tex || tex->GetPSM() != GS::kPsm32 || tex->GetW() != 64 ||
-        tex->GetH() != 128 || min_v < 0 || max_v < min_v || max_v >= 128)
+    if (!tex || min_v < 0 || max_v < min_v || max_v >= 128)
+        return 0;
+    if (!(tex->GetPSM() == GS::kPsm32 && tex->GetW() == 64 && tex->GetH() == 128) &&
+        !pgl_texture_has_entrance_p8(name))
         return 0;
     /* A pending custom draw may read live texture settings when constructed.
        Finish that construction before changing either material's CLAMP. */
@@ -1255,12 +1335,95 @@ extern "C" int pgl_texture_region_clamp_v(unsigned int name, int min_v, int max_
 extern "C" unsigned int pgl_create_index8(const void* indices, int w, int h,
                                           const void* clut);
 
+/* PSMT8 twin of the RGBA32 entrance atlas: the exact 64x128 four-level
+   pyramid plus its CT32 CLUT inside ONE eight-page locked owner of the same
+   class as pgl_create_mip32 (build/analysis/entrance_psmt8_pack_audit_*).
+   Relative 256-byte blocks (GS manual pp162/166/171, CLUT p164): L0 at 0
+   (TBW 2; blocks 0..15 and 32..47), L1 at 16 (16..19, 24..27), L2 at 20
+   (20, 22), L3 at 21, CLUT at 28 (28..31). All 47 blocks are disjoint.
+   Sampling TBW is 1 below L0; uploads keep SetDimensions' DBW 2, equivalent
+   because no lower level crosses a 128x64 page. */
+
+static unsigned int pgl_create_index8_entrance(const void** levels, const void* clut,
+                                               int kbias, int min_filter)
+{
+    if (((unsigned int)clut & 15u) != 0 || (min_filter != 4 && min_filter != 5) ||
+        kbias < -2048 || kbias > 2047) {
+        printf("pgl_create_index8_mip: unsupported entrance sampler/palette\n");
+        return 0;
+    }
+    for (int i = 0; i < 4; i++) {
+        if (!levels[i] || ((unsigned int)levels[i] & 15u) != 0) {
+            printf("pgl_create_index8_mip: entrance planes must be 16-byte aligned\n");
+            return 0;
+        }
+    }
+    SMipRegistryEntry* entry = pgl_mips_available();
+    if (!entry) return 0;
+
+    /* Reserve before creating a GL name, exactly like the RGBA32 owner. */
+    GS::CMemArea* pack = new GS::CMemArea(64, 256, GS::kPsm32, GS::kAlignPage);
+    pack->Alloc();
+    if (!pack->IsAllocated()) {
+        delete pack;
+        return 0;
+    }
+    pack->Lock();
+
+    GLuint id = pgl_create_index8(levels[0], 64, 128, clut);
+    if (id == 0) {
+        pack->Unlock();
+        delete pack;
+        return 0;
+    }
+    CTexManager& tm = pGLContext->GetTexManager();
+    CMMTexture& base = tm.GetNamedTexture(id);
+    CMMClut* palette = base.GetOwnClut();
+    if (palette == NULL) {
+        /* glColorTable always installs one; fail closed if it ever does not. */
+        glDeleteTextures(1, &id);
+        pack->Unlock();
+        delete pack;
+        return 0;
+    }
+
+    const unsigned int packWords = pack->GetWordAddr();
+    palette->UploadPacked(packWords + kEntranceP8ClutBlock * 64u);
+    base.SetClut(*palette);
+    base.UploadPacked(packWords + kEntranceP8Blocks[0] * 64u);
+    CMMTexture* mlist[3] = { 0 };
+    for (int i = 1; i < 4; i++) {
+        mlist[i - 1] = new CMMTexture(GS::kContext1);
+        mlist[i - 1]->SetImage((uint128_t*)levels[i], (uint32_t)kEntranceP8Widths[i],
+                               (uint32_t)kEntranceP8Heights[i], GS::kPsm8);
+        mlist[i - 1]->UploadPacked(packWords + kEntranceP8Blocks[i] * 64u);
+    }
+    pgl_mips_register(entry, id, mlist, 3, pack);
+
+    const unsigned int packTbp = packWords / 64u;
+    base.SetMipLevels(3, kbias, min_filter);
+    base.SetMiptbp(SS_MIPTBP1(packTbp + kEntranceP8Blocks[1], 1,
+                            packTbp + kEntranceP8Blocks[2], 1,
+                            packTbp + kEntranceP8Blocks[3], 1), 0);
+    printf("[MIP8E] id=%u base_tbp=%u mxl=3 pack_pages=8 clut_block=%u lodk=%d\n",
+           (unsigned int)id, packTbp, kEntranceP8ClutBlock, kbias);
+    return (unsigned int)id;
+}
+
 extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw,
                                               const int* lh, int count,
                                               const void* clut, int kbias,
                                               int min_filter)
 {
     if (!levels || !clut || count < 1) return 0;
+    if (count == 4) {
+        bool entrance = true;
+        for (int i = 0; i < 4; i++)
+            entrance = entrance && lw[i] == kEntranceP8Widths[i] &&
+                lh[i] == kEntranceP8Heights[i];
+        if (entrance)
+            return pgl_create_index8_entrance(levels, clut, kbias, min_filter);
+    }
     SMipRegistryEntry* entry = pgl_mips_available();
     if (!entry) return 0;
 
@@ -1379,5 +1542,47 @@ extern "C" unsigned int pgl_create_index8(const void* indices, int w, int h,
     glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
     glBindTexture(GL_TEXTURE_2D, 0);
+    return (unsigned int)id;
+}
+
+/* 64x64 PSMT8 image + its CT32 CLUT in ONE page-aligned owner of the ORIGINAL
+   texture's class (owner_psm: 0 = PSMCT32, 2 = PSMCT16 GS codes), so an 8-bit
+   twin never needs a second small slot for its palette. GS manual 8.3
+   (pp164/166; model_p8_packed64_20260923.py): the image at TBW 2 occupies
+   blocks 0..15, the 16x16 CLUT at +16 occupies 16..19, both in page 0. The
+   texture owns the pack: deleting or redefining it releases the pack. */
+extern "C" unsigned int pgl_create_index8_packed64(const void* indices,
+                                                   const void* clut, int owner_psm)
+{
+    if (!indices || !clut || (((unsigned int)indices | (unsigned int)clut) & 15u) != 0 ||
+        (owner_psm != 0 && owner_psm != 2)) {
+        printf("pgl_create_index8_packed64: unsupported input\n");
+        return 0;
+    }
+    GS::CMemArea* pack = new GS::CMemArea(64, 64,
+        owner_psm == 0 ? GS::kPsm32 : GS::kPsm16, GS::kAlignPage);
+    pack->Alloc();
+    if (!pack->IsAllocated()) {
+        delete pack;
+        return 0;
+    }
+    pack->Lock();
+
+    GLuint id = pgl_create_index8(indices, 64, 64, clut);
+    CMMTexture* tex = id ? pGLContext->GetTexManager().FindNamedTexture(id) : NULL;
+    CMMClut* palette = tex ? tex->GetOwnClut() : NULL;
+    if (palette == NULL) {
+        if (id) glDeleteTextures(1, &id);
+        pack->Unlock();
+        delete pack;
+        return 0;
+    }
+    const unsigned int packWords = pack->GetWordAddr();
+    palette->UploadPacked(packWords + 16u * 64u);
+    tex->SetClut(*palette);
+    tex->UploadPacked(packWords);
+    tex->AdoptPack(pack);
+    printf("[TEX8P] id=%u tbp=%u owner_psm=%d clut_block=16\n",
+           (unsigned int)id, packWords / 64u, owner_psm);
     return (unsigned int)id;
 }

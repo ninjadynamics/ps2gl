@@ -16,10 +16,32 @@ import re
 from pathlib import Path
 
 
-X2_INSTRUCTIONS = 806
 X2_MAIN_PC = 6
 VU1_MICRO_CAPACITY = 2048
-X2_VSM_SHA256 = "9bc147d131326d97bc07ee8e9037604a3704935e9f956122b81ef5829874cf49"
+# The X2-only header selects independent reviewed experiments. Hash canonical LF
+# text without trailing whitespace so regeneration and Windows checkout agree.
+_header = Path(__file__).with_name('x2_window_copy_gate.h').read_text()
+
+
+def read_gate(name: str) -> int:
+    match = re.search(r'^#define ' + name + r' ([01])$', _header, re.M)
+    if not match:
+        raise SystemExit('x2d microcode guard: missing or invalid ' + name)
+    return int(match.group(1))
+
+
+X2_WINDOW_COPY_TRIANGLES = read_gate('PGL_X2_WINDOW_COPY_TRIANGLES')
+X2_SKIP_IDENTITY_NEAR = read_gate('PGL_X2_SKIP_IDENTITY_NEAR')
+_reviewed_images = {
+    (0, 0): (806, 'ce3c1209d0943428ed23964c5263cef33ca5b5b51148de02764715a83052f4fb'),
+    (1, 0): (836, 'b8c515204d661ca638cecbac5d64c69c93ad528366391c857206fde15632e0c5'),
+    (0, 1): (828, 'ba5565ef6ed5a542e42375310e57b7526c5ae66e90e2abee5e28d5247353c2a3'),
+}
+_selection = (X2_WINDOW_COPY_TRIANGLES, X2_SKIP_IDENTITY_NEAR)
+if _selection not in _reviewed_images:
+    raise SystemExit('x2d microcode guard: unreviewed X2 gate combination '
+                     + str(_selection))
+X2_INSTRUCTIONS, X2_VSM_SHA256 = _reviewed_images[_selection]
 X2D_DECODER_VSM_SHA256 = "3ba063fc6baa758450aec971c0b57a44e3df8d216c4837280c036bbc9743a6ad"
 
 # CClipTriX2Renderer::InitContext uploads these absolute context locations.
@@ -67,6 +89,53 @@ def label_pc(text: str, label: str) -> int:
             continue
         pc += 1
     return pc
+
+
+def verify_schedule(text: str) -> int:
+    code, labels = [], {}
+    active = False
+    for raw in text.splitlines():
+        line = raw.split(';', 1)[0].strip()
+        if line == 'vsmGeneralClipTriX2_CodeStart:':
+            active = True
+        if not active or not line:
+            continue
+        if line.endswith(':'):
+            labels[line[:-1]] = len(code)
+            if line == 'vsmGeneralClipTriX2_CodeEnd:':
+                break
+        elif not line.startswith('.'):
+            code.append(line)
+    if len(code) != X2_INSTRUCTIONS:
+        fail('X2 emitted instruction count differs from the reviewed image')
+    branch = re.compile(r'\b(b|bal|ibeq|ibne|ibgez|ibgtz|iblez|ibltz)\s+([^;]+)$', re.I)
+    branches = stops = kicks = 0
+    for pc, instruction in enumerate(code):
+        match = branch.search(instruction)
+        if match:
+            target = match.group(2).split(',')[-1].strip()
+            if target not in labels:
+                fail(f'X2 PC{pc}: unknown branch target {target}')
+            displacement = labels[target] - (pc + 1)
+            if not -1024 <= displacement <= 1023:
+                fail(f'X2 PC{pc}: branch displacement {displacement} is out of range')
+            if pc + 1 >= len(code) or branch.search(code[pc + 1]):
+                fail(f'X2 PC{pc}: missing or branching delay slot')
+            branches += 1
+        if '[E]' in instruction.upper():
+            if pc + 1 >= len(code) or any(re.search(r'\bxgkick\b', c, re.I)
+                    for c in code[pc:pc + 2]):
+                fail(f'X2 PC{pc}: invalid E delay or overlapping XGKICK')
+            stops += 1
+        if re.search(r'\bxgkick\b', instruction, re.I):
+            stores = [i for i in range(pc)
+                if re.search(r'\bsq(?:\.[xyzw]+)?\s', code[i], re.I)]
+            if not stores or pc - stores[-1] < 4:
+                fail(f'X2 PC{pc}: latest SQ is too close to XGKICK')
+            kicks += 1
+    if stops != 2 or kicks != 3:
+        fail(f'X2 entry/continuation or output structure changed: E={stops}, XGKICK={kicks}')
+    return branches
 
 
 def fix_decoder_tail(path: Path) -> None:
@@ -140,7 +209,8 @@ def verify(x2_path: Path, decoder_path: Path) -> None:
     decoder_bytes = decoder_path.read_bytes()
     decoder = decoder_bytes.decode("utf-8")
 
-    digest = hashlib.sha256(x2_bytes).hexdigest()
+    canonical_x2 = '\n'.join(line.rstrip() for line in x2.splitlines()) + '\n'
+    digest = hashlib.sha256(canonical_x2.encode('utf-8')).hexdigest()
     if digest != X2_VSM_SHA256:
         fail(
             "X2 VSM is no longer the guarded generated image "
@@ -165,6 +235,7 @@ def verify(x2_path: Path, decoder_path: Path) -> None:
         fail(f"X2 is {x2_count} instructions, expected {X2_INSTRUCTIONS}")
     if label_pc(x2, "main_loop_lid") != X2_MAIN_PC:
         fail(f"X2 main_loop_lid moved from PC {X2_MAIN_PC}")
+    branches = verify_schedule(x2)
     # CodeEnd follows `.align 4`, so an odd logical instruction count uploads
     # one assembler padding instruction as part of the symbol range.
     x2_upload_count = (x2_count + 1) & ~1
@@ -194,7 +265,9 @@ def verify(x2_path: Path, decoder_path: Path) -> None:
     print(
         "x2d microcode guard: PASS "
         f"(X2 {x2_upload_count} insn @ PC0, decoder {decoder_upload_count} insn "
-        f"@ PC{x2_upload_count}, tail -> PC{X2_MAIN_PC})"
+        f"@ PC{x2_upload_count}, tail -> PC{X2_MAIN_PC}, "
+        f"copy3={X2_WINDOW_COPY_TRIANGLES}, near-skip={X2_SKIP_IDENTITY_NEAR}, "
+        f"{branches} bounded branches)"
     )
 
 

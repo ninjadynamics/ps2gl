@@ -55,7 +55,10 @@ public:
        the current mode's interlace/overscan). No frame-buffer/background
        reprogram, so it doesn't flash the overscan border. */
     void SetDisplayOffset(int screenX, int screenY);
-    void SwapBuffers();
+    // Prepare immutable register values; the caller owns them until vblank
+    // publication. Rotate CPU buffer ownership only after that acknowledgement.
+    bool PrepareBufferSwap(uint64_t* fb1, uint64_t* fb2);
+    void SwapBuffers(bool displayAlreadyPresented = false);
 };
 
 #endif // displaycontext_h

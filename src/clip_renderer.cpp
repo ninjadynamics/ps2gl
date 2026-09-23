@@ -1,6 +1,7 @@
 /* HyperSolar VU1 near-plane clip renderer (tri lists) + the double-kick
    city renderer (x2). See clip_renderer.h. */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "ps2s/drawenv.h"
@@ -138,10 +139,92 @@ void CClipTriRenderer::Register()
         PGL_CLIP_TRI_PROP,
         ~(pglU64_t)0xffffffff, // match on the custom bits only
         PGL_MERGE_CONTIGUOUS);
+    pglRegisterCustomPrimType(PGL_CLIP_TRIANGLES_XYZ2,
+        PGL_CLIP_TRI_PROP,
+        ~(pglU64_t)0xffffffff,
+        PGL_MERGE_CONTIGUOUS);
+}
+
+extern "C" GLboolean pglCanDrawClipTriXYZ2(void)
+{
+    return !pGLContext->InDListDef()
+        && !pGLContext->GetImmLighting().GetLightingEnabled()
+        && !pGLContext->GetImmDrawContext().GetFogEnabled()
+        && pGLContext->GetImmDrawContext().GetPolygonMode() == GL_FILL
+        && pGLContext->GetImmDrawContext().GetDepthOffset() == 0.0f
+        && pGLContext->GetImmDrawContext().GetDepthBits() == 24;
 }
 
 void CClipTriRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged)
 {
+    if (primType == PGL_CLIP_TRIANGLES_XYZ2) {
+        // This encoding owns a full context. Stock material/transform deltas
+        // contain an unscaled Z row and must never inherit or update it.
+        pglInvalidateUnlitContextDelta();
+        if (!pglCanDrawClipTriXYZ2()) {
+            printf("ps2gl: XYZ2 clip triangles require immediate unlit, fog-off, unbiased Z24 GL_FILL; draw rejected\n");
+            return;
+        }
+#if kContextStart != 0 || kClipToGsDepthOffset != 57 || kVertexXfrm != 62 || kGifTag != 75
+#error "Review the XYZ2 context patches against the GeneralClipTri ABI"
+#endif
+        CImmDrawContext& draw = pGLContext->GetImmDrawContext();
+        CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+#if PGL_SUBMISSION_METRICS
+        const unsigned int contextStart = packet.GetByteLength();
+#endif
+        const float encodingScale = 1.0f / 16.0f;
+        const cpu_mat_44& source = draw.GetVertexXform();
+        cpu_vec_4 c0 = source.get_col0();
+        cpu_vec_4 c1 = source.get_col1();
+        cpu_vec_4 c2 = source.get_col2();
+        cpu_vec_4 c3 = source.get_col3();
+        c0.z *= encodingScale;
+        c1.z *= encodingScale;
+        c2.z *= encodingScale;
+        c3.z *= encodingScale;
+        const cpu_mat_44 encoded(c0, c1, c2, c3);
+        const cpu_vec_4 offset(0.0f, 0.0f, 0.0f,
+            (draw.GetContextDepthScale() + draw.GetDepthOffset()) * encodingScale);
+        tGifTag giftag = BuildGiftag(GL_TRIANGLES);
+        giftag.REGS2 = 5; // PACKED XYZ2: full integer Z, same bit-111 ADC.
+
+        packet.Cnt();
+        AddVu1RendererContext(packet, GL_TRIANGLES, kContextStart, true);
+        // The stock writer supplies every material, clipping and fog input.
+        // Its VIF FLUSH protects prior draws. Patch only the encoding words
+        // before MSCAL loads them; never edit the shared matrix or VU image.
+        packet.Pad96();
+        packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+            kClipToGsDepthOffset, Packet::kSingleBuff);
+        packet += offset;
+        packet.CloseUnpack();
+        packet.Pad96();
+        packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+            kVertexXfrm, Packet::kSingleBuff);
+        packet += encoded;
+        packet.CloseUnpack();
+        packet.Pad96();
+        packet.OpenUnpack(Vifs::UnpackModes::v4_32,
+            kGifTag, Packet::kSingleBuff);
+        packet += giftag;
+        packet.CloseUnpack();
+        packet.Mscal(0);
+        packet.Flushe();
+        packet.Base(kDoubleBufBase);
+        packet.Offset(kDoubleBufOffset);
+        packet.CloseTag();
+
+        // Scaling only Z and its offset by 1/16 makes the existing FTOI4.z
+        // emit integer Z for XYZ2. X/Y/W, near/side tests, STQ, fog arithmetic,
+        // fan topology and the three-qword output stride remain unchanged.
+        CacheRendererState();
+        pglCountSubmission(PGL_SUBMIT_FULL_CONTEXTS);
+#if PGL_SUBMISSION_METRICS
+        pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - contextStart);
+#endif
+        return;
+    }
     // The context/giftag builder doesn't know the custom prim enum; the
     // microcode consumes plain tri lists (tri-strip prim + ADC on the first
     // two verts of each tri, like general_nospec_tri), which is exactly what
@@ -166,6 +249,8 @@ void CClipTriRenderer::InitContext(GLenum primType, uint32_t rcChanges, bool use
 
 void CClipTriRenderer::DrawLinearArrays(CGeometryBlock& block)
 {
+    if (block.GetPrimType() == PGL_CLIP_TRIANGLES_XYZ2 && !pglCanDrawClipTriXYZ2())
+        return; // InitContext diagnoses invalid admission even in release builds.
     // CommitPrimType only fills these for the standard GL prims; a custom
     // prim leaves them unset (same situation as the billboard example) —
     // including StripsCanBeMerged, which would otherwise carry a stale value
@@ -281,6 +366,11 @@ CClipTriX2Renderer::CClipTriX2Renderer()
 }
 
 static CClipTriX2Renderer* pX2Renderer = NULL;
+
+extern "C" unsigned int pglGetRawX2SubmissionOptions(void)
+{
+    return PGL_RAW_X2_MULTI_SPAN && pX2Renderer ? 1u : 0u;
+}
 
 void CClipTriX2Renderer::Register()
 {
@@ -511,9 +601,9 @@ void CClipTriX2Renderer::BuildWindowContext2Settings()
         // A+D regs), register addresses rewritten to context 2 — so
         // punch-through TEXA + custom mip MIPTBPs ride verbatim. TEXA is
         // global (safe with the x2 pairing: a PSMT8 wall takes alpha from
-        // its CLUT, only the PSMCT16 window reads TEXA); TEXFLUSH stripped
-        // to NOP (the real upload path above kept its flush — a TEX0
-        // retarget to resident data needs none, GS manual pp. 43/51/63/131).
+        // its CLUT, only the PSMCT16 window reads TEXA). Keep this cached
+        // prefix's TEXFLUSH as NOP for resident data. A newly uploaded
+        // window CLUT restores it in the send copy below before TEX0_2.
         memcpy(&Ctx2[0], WinTex->GetSettingsBlock(), 8 * 16);
         tGifTag contextTag;
         memcpy(&contextTag, &Ctx2[0], sizeof(contextTag));
@@ -744,10 +834,12 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
         // PSMT8 window: clut upload + TEX0.cb — MUST precede the settings
         // copy below (SetClut writes TEX0).
         GS::tPSM psm = WinTex->GetPSM();
+        bool windowClutUploaded = false;
         if (psm == GS::kPsm8 || psm == GS::kPsm8h) {
             CMMClut* clut = WinTex->GetOwnClut();
             mErrorIf(clut == NULL, "x2 PSMT8 window texture needs its own clut");
             if (clut) {
+                windowClutUploaded = !clut->TouchIfResident();
                 clut->Load(packet);
                 WinTex->SetClut(*clut);
             }
@@ -775,7 +867,21 @@ void CClipTriX2Renderer::BuildPrefixes(CVifSCDmaPacket& packet, CGeometryBlock& 
             if (!packet.GetTTE())
                 packet.Nop().Nop();
             packet.OpenDirect();
-            packet.Add(Ctx2, 16);
+            if (windowClutUploaded) {
+                // IMAGE upload does not invalidate the GS texture buffer.
+                // Restore the source TEXFLUSH before its first CLUT load
+                // (GS manual 3.4.7), without changing the resident cache.
+                uint128_t uploadContext[16] __attribute__((aligned(16)));
+                memcpy(uploadContext, Ctx2, sizeof(Ctx2));
+                const uint128_t* source = WinTex->GetSettingsBlock();
+                for (int i = 1; i < 8; i++) {
+                    if (X2TextureRegisterAddress(source, i) == GS::RegAddrs::texflush)
+                        X2TexturePrefixAddress(uploadContext, i, GS::RegAddrs::texflush);
+                }
+                packet.Add(uploadContext, 16);
+            } else {
+                packet.Add(Ctx2, 16);
+            }
             packet.CloseDirect();
         }
         packet.CloseTag();
@@ -839,6 +945,11 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
 
     BuildPrefixes(packet, block);
 
+    if (TryDrawIndependentSpans(packet, block)) {
+        RememberContextEnd();
+        return;
+    }
+
     // per-buffer vert cap: multiple of SIX (the 3n-1 splitter lesson)
     int maxVertsPerBuffer = InputGeomBufSize / InputQuadsPerVert;
     if (maxVertsPerBuffer > 256)
@@ -865,6 +976,83 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
 
     DrawBlockX2(packet, block, maxVertsPerBuffer);
     RememberContextEnd();
+}
+
+bool CClipTriX2Renderer::TryDrawIndependentSpans(CVifSCDmaPacket& packet,
+    CGeometryBlock& block)
+{
+#if PGL_RAW_X2_MULTI_SPAN
+    // Qualify every source before emitting anything. Continued strips and
+    // paired windows keep their original split/order contract. No VU image,
+    // memory limit or output-spill rule changes in this packet-only path.
+    if (WinTex || pGLContext->InDListDef()
+        || MicrocodePacket != mVsmAddr(GeneralClipTriX2)
+        || MicrocodePacketSize != mVsmSize(GeneralClipTriX2)
+        || InputGeomOffset != 5 || InputGeomBufSize != 120
+        || InputQuadsPerVert != 4 || OutputQuadsPerVert != 3
+        || kDoubleBufBase != 79 || kDoubleBufSize != 472
+        || !VifDoubleBuffered || block.GetArrayType() != ArrayType::kLinear
+        || block.GetPrimType() != PGL_CLIP_TRIANGLES_X2
+        || block.GetWordsPerVertex() != 3 || block.GetWordsPerTexCoord() != 2
+        || block.GetWordsPerColor() != 4 || !block.GetVerticesAreValid()
+        || !block.GetTexCoordsAreValid() || !block.GetColorsAreValid()
+        || block.GetNumStrips() < 2)
+        return false;
+    unsigned int total = 0;
+    for (int strip = 0; strip < block.GetNumStrips(); ++strip) {
+        const int count = block.GetStripLength(strip);
+        if (count <= 0 || count % 3 || block.StripIsContinued(strip)
+            || !block.GetVertices(strip) || !block.GetTexCoords(strip)
+            || !block.GetColors(strip))
+            return false;
+        if ((unsigned int)count > (unsigned int)block.GetTotalVertices() - total)
+            return false;
+        total += (unsigned int)count;
+    }
+    if (total != (unsigned int)block.GetTotalVertices()) return false;
+
+    packet.Cnt();
+    packet.Stcycl(1, InputQuadsPerVert);
+    packet.Pad128();
+    packet.CloseTag();
+    int used = 0;
+    unsigned short independentOffset = 0;
+    for (int strip = 0; strip < block.GetNumStrips(); ++strip) {
+        const int count = block.GetStripLength(strip);
+        const int remainder = count % 30;
+        // Filling every gap can add a transfer without saving an activation
+        // (24+24 becomes three transfers for the same two activations).
+        // Merge only when this run's complete remainder fits: each merge
+        // saves one prefix/header/MSCNT and never adds an XferBlock call.
+        if (used && (!remainder || used + remainder > 30)) {
+            XferPrefixes(packet);
+            FinishBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
+            used = 0;
+        }
+        for (int first = 0; first < count;) {
+            const int added = Math::Min(count - first, 30 - used);
+            XferBlock(packet, block.GetVertices(strip), NULL,
+                block.GetTexCoords(strip), block.GetColors(strip),
+                InputGeomOffset + used * InputQuadsPerVert, first, added);
+            used += added;
+            first += added;
+            if (used == 30) {
+                XferPrefixes(packet);
+                FinishBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
+                used = 0;
+            }
+        }
+    }
+    if (used) {
+        XferPrefixes(packet);
+        FinishBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
+    }
+    return true;
+#else
+    (void)packet;
+    (void)block;
+    return false;
+#endif
 }
 
 // Copy of CLinearRenderer::DrawBlock with ONE change: the 2q staging block
