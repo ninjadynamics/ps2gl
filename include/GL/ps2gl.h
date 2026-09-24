@@ -148,6 +148,23 @@ extern void pglGetX2BaseReuseStats(unsigned int* uploads, unsigned int* bytes);
 extern void pglSetRendererMarks(GLboolean enable);
 extern const char* pglGetRendererMarkName(unsigned int mark);
 /* Cumulative window context opportunities; unsigned subtraction handles wrap. */
+/* Diagnostic only (streamed-submission Phase 0): per normal frame, the first
+ * clean geometry flush where the previous frame is displayed and retired.
+ * Take returns and clears sums since the last take; lead is EE cycles from
+ * that flush to EndGeometry (the potential head start). */
+enum {
+    PGL_STREAM_PROBE_FRAMES, PGL_STREAM_PROBE_CUT_FRAMES,
+    PGL_STREAM_PROBE_CUT_BYTES, PGL_STREAM_PROBE_TOTAL_BYTES,
+    PGL_STREAM_PROBE_LEAD_CYCLES, PGL_STREAM_PROBE_MIN_LEAD,
+    PGL_STREAM_PROBE_MAX_LEAD, PGL_STREAM_PROBE_SEGMENTS, PGL_STREAM_PROBE_COUNT
+};
+extern void pglStreamProbeEnable(GLboolean enable);
+/* Streamed frame submission (HyperSolar): hand closed prefixes of the frame
+ * chain to DMA as soon as the previous frame is displayed; the remainder is
+ * sent by pglRenderGeometry as before. Requires REF'd arrays to stay
+ * immutable from the draw call until the frame swap. Enable at startup. */
+extern void pglSetStreamedSubmission(GLboolean enable);
+extern void pglStreamProbeTake(unsigned int out[PGL_STREAM_PROBE_COUNT]);
 extern void pglGetWindowContextStats(unsigned int* attempts, unsigned int* reused,
     unsigned int* full, unsigned int* globalPins);
 /* Draw-environment pointer bookkeeping diagnostics, read without rendering

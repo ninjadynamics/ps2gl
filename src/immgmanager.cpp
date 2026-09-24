@@ -1537,4 +1537,5 @@ void CImmGeomManager::Flush()
             RendererManager.GetCurRenderer().DrawIndexedArrays(Geometry);
         Geometry.Reset();
     }
+    if (pGLContext) pGLContext->GeometryFlushPoint();
 }

@@ -894,6 +894,96 @@ void CGLContext::FinishRenderingImmediateGeometry(bool forceImmediateStop)
  * normal geometry
  */
 
+/* HyperSolar streamed submission. Every CImmGeomManager::Flush() leaves the
+   normal frame chain at a clean point. Once the previous frame is displayed
+   and its chain and raster retired, frame N may start: when enabled, the
+   closed prefix is handed to VIF1 DMA (idle channel only, at least
+   kStreamCutBytes unsent), and the EE keeps appending. Nothing waits here;
+   RenderGeometry sends the remainder with FINISH+SIGNAL as before, so frame
+   counting and presentation are per frame. Nothing written into the frame
+   packet is ever patched afterwards, and callers keep REF'd memory
+   immutable until the swap. The probe (diagnostic) only counts. */
+static const unsigned int kStreamCutBytes = 16 * 1024;
+static bool StreamedSubmission;
+static bool StreamProbeEnabled;
+static bool StreamProbeCutSeen;
+static unsigned int StreamProbeCutBytes, StreamProbeCutCycle;
+static unsigned int StreamProbeStats[PGL_STREAM_PROBE_COUNT];
+
+void pglStreamProbeTake(unsigned int out[PGL_STREAM_PROBE_COUNT]);
+
+/* The frame remainder must follow any in-flight prefix without the EE ever
+   waiting. RenderGeometry starts it on an idle channel or leaves it pending
+   under disabled interrupts; the VIF1 DMA-complete handler starts a
+   pending remainder. A completion inside the disabled window is latched
+   and handled right after, so no remainder can be stranded. */
+static volatile unsigned int StreamPendingTadr;
+static volatile unsigned int* const D1Chcr = (volatile unsigned int*)0x10009000;
+
+static void StreamKickChain(unsigned int tadr)
+{
+    *(volatile unsigned int*)0x10009020 = 0;      // D1_QWC
+    *(volatile unsigned int*)0x10009030 = tadr;   // D1_TADR
+    *D1Chcr = 0x145u;                             // from memory, chain, TTE, STR
+}
+
+static int StreamDmacHandler(int channel)
+{
+    (void)channel;
+    if (StreamPendingTadr && (*D1Chcr & 0x100u) == 0u) {
+        StreamKickChain(StreamPendingTadr);
+        StreamPendingTadr = 0;
+    }
+    ExitHandler();
+    return 0;
+}
+
+void pglSetStreamedSubmission(GLboolean enable)
+{
+    // Startup only: the handler stays installed for the process lifetime.
+    static bool handlerInstalled;
+    if (enable && !handlerInstalled) {
+        AddDmacHandler(DMAC_VIF1, StreamDmacHandler, 0);
+        EnableDmac(DMAC_VIF1);
+        handlerInstalled = true;
+    }
+    StreamedSubmission = enable != GL_FALSE;
+}
+
+void pglStreamProbeEnable(GLboolean enable)
+{
+    unsigned int discard[PGL_STREAM_PROBE_COUNT];
+    pglStreamProbeTake(discard);
+    StreamProbeEnabled = enable != GL_FALSE;
+}
+
+void pglStreamProbeTake(unsigned int out[PGL_STREAM_PROBE_COUNT])
+{
+    memcpy(out, StreamProbeStats, sizeof(StreamProbeStats));
+    memset(StreamProbeStats, 0, sizeof(StreamProbeStats));
+    StreamProbeStats[PGL_STREAM_PROBE_MIN_LEAD] = ~0u;
+}
+
+void CGLContext::GeometryFlushPoint()
+{
+    if ((!StreamedSubmission && !StreamProbeEnabled) || !UsesNormalFramePacket()
+        || !PresentationEnabled
+        || PresentationCompleted != PresentationRequested
+        || NormalChainsCompleted != NormalChainsSubmitted
+        || NormalFramesFinished != NormalChainsSubmitted)
+        return;
+    if (StreamProbeEnabled && !StreamProbeCutSeen) {
+        StreamProbeCutSeen  = true;
+        StreamProbeCutBytes = CurPacket->GetByteLength();
+        StreamProbeCutCycle = ReadEeCycleCount();
+    }
+    // D1_CHCR.STR: the previous segment's DMA must have finished.
+    if (StreamedSubmission && CurPacket->GetUnsentByteLength() >= kStreamCutBytes
+        && (*(volatile unsigned int*)0x10009000 & 0x100u) == 0u
+        && CurPacket->SendClosedPrefix())
+        ++StreamProbeStats[PGL_STREAM_PROBE_SEGMENTS];
+}
+
 void CGLContext::BeginGeometry()
 {
     pglInvalidateX2BasePrefix();
@@ -902,11 +992,29 @@ void CGLContext::BeginGeometry()
 
     GS::CTexEnv::InvalidateTextureSync();
     CurPacket->Reset();
+    StreamProbeCutSeen = false;
 }
 
 void CGLContext::EndGeometry()
 {
     PGL_FRAME_SCOPE(PGL_FRAME_END);
+    if (StreamProbeEnabled) {
+        GetImmGeomManager().Flush();
+        GeometryFlushPoint();   // a flip seen only here leaves no head start
+        const unsigned int total = CurPacket->GetByteLength();
+        ++StreamProbeStats[PGL_STREAM_PROBE_FRAMES];
+        StreamProbeStats[PGL_STREAM_PROBE_TOTAL_BYTES] += total;
+        if (StreamProbeCutSeen) {
+            const unsigned int lead = ReadEeCycleCount() - StreamProbeCutCycle;
+            ++StreamProbeStats[PGL_STREAM_PROBE_CUT_FRAMES];
+            StreamProbeStats[PGL_STREAM_PROBE_CUT_BYTES] += StreamProbeCutBytes;
+            StreamProbeStats[PGL_STREAM_PROBE_LEAD_CYCLES] += lead;
+            if (lead > StreamProbeStats[PGL_STREAM_PROBE_MAX_LEAD])
+                StreamProbeStats[PGL_STREAM_PROBE_MAX_LEAD] = lead;
+            if (lead < StreamProbeStats[PGL_STREAM_PROBE_MIN_LEAD])
+                StreamProbeStats[PGL_STREAM_PROBE_MIN_LEAD] = lead;
+        }
+    }
     EndVif1Packet(1);
 }
 
@@ -977,7 +1085,17 @@ void CGLContext::RenderGeometry()
     const unsigned int sendSequence = NormalChainsSubmitted;
     const unsigned int sendQueueClock = PresentationTiming.queueClock;
 #endif
-    LastPacket->Send();
+    if (StreamedSubmission) {
+        const unsigned int start = LastPacket->TakeRemainder();
+        const int interrupts = DIntr();
+        if ((*D1Chcr & 0x100u) == 0u)
+            StreamKickChain(start);
+        else
+            StreamPendingTadr = start;
+        if (interrupts)
+            EIntr();
+    } else
+        LastPacket->Send();
 #if PGL_FRAME_PHASE_METRICS && PGL_PRESENT_TIMELINE_METRICS && PGL_PRESENT_SEND_METRICS
     if (captureSend)
         ObservePresentationSendReturn(sendRequest, sendSequence, sendQueueClock, ReadEeCycleCount());
@@ -1397,7 +1515,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.24 09:05]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.24 15:25]\n");
     printf("[PS2-PACKETS] normal=cached\n");
     printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",
         1, 1,

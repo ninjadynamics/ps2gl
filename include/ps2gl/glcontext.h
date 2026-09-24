@@ -421,6 +421,8 @@ public:
         Vif1Packet = &packet;
     }
     inline CVifSCDmaPacket& GetVif1Packet() { return *Vif1Packet; }
+    // HyperSolar streamed submission / probe at a clean flush (glcontext.cpp).
+    void GeometryFlushPoint();
     inline bool UsesNormalFramePacket() const
     {
         return Vif1Packet == CurPacket && SavedVif1Packet == NULL;
