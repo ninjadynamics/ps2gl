@@ -1490,7 +1490,8 @@ void CImmGeomManager::SyncGsContext()
             // FIXME
             GLContext.AddingDrawEnvToPacket((uint128_t*)GLContext.GetVif1Packet().GetNextPtr() + 1);
             CImmDrawContext& draw = GLContext.GetImmDrawContext();
-            draw.GetDrawEnv().SendSettingsForBlend(packet, draw.GetBlendEnabled());
+            draw.GetDrawEnv().SendSettingsForBlend(packet, draw.GetBlendEnabled(),
+                pglZeroAlphaDiscardOwner == &GLContext && !draw.GetEdgeAAEnabled());
             GLContext.GetImmDrawContext().NoteDrawEnvSubmission();
         }
 

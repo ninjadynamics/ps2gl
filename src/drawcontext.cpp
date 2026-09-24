@@ -17,6 +17,9 @@
 #include "ps2gl/immgmanager.h"
 #include "ps2gl/matrix.h"
 
+CGLContext* pglZeroAlphaDiscardOwner = NULL;
+static GLuint zeroAlphaDiscardSerial = 0;
+
 /********************************************
  * CImmDrawContext methods
  */
@@ -69,6 +72,8 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
 
 CImmDrawContext::~CImmDrawContext()
 {
+    if (pglZeroAlphaDiscardOwner == &GLContext)
+        pglZeroAlphaDiscardOwner = NULL;
     // don't delete the frame mem areas -- they are created/destroyed by
     // the app
 
@@ -958,6 +963,34 @@ void pglSetDepthOffset(float units)
 void pglGetRasterScale(float out[3])
 {
     if (out) pGLContext->GetImmDrawContext().GetRasterScale(out);
+}
+
+GLuint pglBeginZeroAlphaDiscard(void)
+{
+    if (!pGLContext || pGLContext->InDListDef() || pglZeroAlphaDiscardOwner)
+        return 0;
+    const CImmDrawContext& draw = pGLContext->GetImmDrawContext();
+    if (draw.GetAlphaTestEnabled() || draw.GetEdgeAAEnabled()) return 0;
+    // Finish construction under the previous policy before changing it.
+    pGLContext->GetImmGeomManager().Flush();
+    pglZeroAlphaDiscardOwner = pGLContext;
+    if (++zeroAlphaDiscardSerial == 0) ++zeroAlphaDiscardSerial;
+    pGLContext->DrawEnvChanged();
+    return zeroAlphaDiscardSerial;
+}
+
+void pglEndZeroAlphaDiscard(GLuint token)
+{
+    if (!token) return;
+    if (!pGLContext || pglZeroAlphaDiscardOwner != pGLContext ||
+        token != zeroAlphaDiscardSerial || pGLContext->InDListDef()) {
+        mError("mismatched pglEndZeroAlphaDiscard scope");
+        return;
+    }
+    // Deferred custom prefixes must still see the pass's own live bindings.
+    pGLContext->GetImmGeomManager().Flush();
+    pglZeroAlphaDiscardOwner = NULL;
+    pGLContext->DrawEnvChanged();
 }
 
 void glDrawBuffer(GLenum mode)

@@ -69,6 +69,8 @@ class CRendererManager {
     CClipBillboardAlphaX2ARenderer* BillboardAlphaRenderer;
     CClipDecalX2ERenderer* DecalRenderer;
     CClipQuadX2FRenderer* SourceQuadRenderer;
+    bool RendererMarks;
+    unsigned int GetRendererMark(const tRenderer* renderer) const;
 
     void RegisterDefaultRenderer(CRenderer* renderer);
 
@@ -138,6 +140,9 @@ public:
     bool UpdateNewRenderer();
     void MakeNewRendererCurrent();
     void LoadRenderer(CVifSCDmaPacket& packet);
+    // Diagnostic VIF1_MARK stamping at renderer loads (default off).
+    void SetRendererMarks(bool enable) { RendererMarks = enable; }
+    const char* GetRendererMarkName(unsigned int mark) const;
 
     CRenderer& GetCurRenderer() { return *(CurrentRenderer->renderer); }
     CRendererProps GetRendererReqs() const { return RendererRequirements; }

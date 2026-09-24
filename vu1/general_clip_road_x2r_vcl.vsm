@@ -255,16 +255,21 @@ r_source_view_done_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibne          VI01,VI00,r_next_triangle_lid       
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 9 [9 0] 9   [__v_vu1_general_clip_road_x2r_pp4_vcl_44]
-         NOP                                                        iaddiu        VI06,VI02,0x0000006a                
+; _LNOPT_w=[ vuta1 ] 13 [13 0] 13   [__v_vu1_general_clip_road_x2r_pp4_vcl_44]
+         NOP                                                        iaddiu        VI01,VI00,0x00000003                
+         NOP                                                        isw.z         VI01,317(VI02)                      
+         NOP                                                        ilw.x         VI01,318(VI02)                      
+         NOP                                                        ilw.y         VI04,318(VI02)                      
          NOP                                                        iaddiu        VI05,VI02,0x000000bb                
-         NOP                                                        iaddiu        VI04,VI00,0x00000003                
-         NOP                                                        iaddiu        VI01,VI00,0x00000001                
-         NOP                                                        isw.w         VI06,317(VI02)                      
          NOP                                                        isw.z         VI05,319(VI02)                      
-         NOP                                                        isw.z         VI04,317(VI02)                      
+         NOP                                                        iaddiu        VI05,VI02,0x0000006a                
+         NOP                                                        ior           VI01,VI01,VI04                      
+         NOP                                                        isw.w         VI05,317(VI02)                      
+         NOP                                                        iaddiu        VI04,VI00,0x00000001                
+         NOP                                                        isw.y         VI04,319(VI02)                      
+         NOP                                                        ibeq          VI01,VI00,r_sky_fan_begin_lid       
          NOP                                                        isw.x         VI00,319(VI02)                      
-         NOP                                                        isw.y         VI01,319(VI02)                      
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_road_x2r_pp4_vcl_45]
 r_sky_plane_lid:
 ; _LNOPT_w=[ normal2 ] 5 [8 0] 8   [r_sky_plane_lid]
          NOP                                                        ilw.x         VI01,319(VI02)                      
@@ -272,15 +277,15 @@ r_sky_plane_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibgez         VI04,r_sky_fan_begin_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_47]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_48]
          NOP                                                        isubiu        VI06,VI01,0x0000000c                
          NOP                                                        ilw.y         VI04,319(VI02)                      
          NOP                                                        ibltz         VI06,r_sky_mask_lid                 
          NOP                                                        ilw.x         VI05,318(VI02)                      
-; _LNOPT_w=[ normal2 ] 2 [4 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_48]
+; _LNOPT_w=[ normal2 ] 2 [4 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_49]
          NOP                                                        ibne          VI06,VI00,r_sky_mask_lid            
          NOP                                                        ilw.y         VI05,318(VI02)                      
-; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_road_x2r_pp4_vcl_49]
+; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_road_x2r_pp4_vcl_50]
          NOP                                                        iaddiu        VI04,VI00,0x00000001                
 r_sky_mask_lid:
 ; _LNOPT_w=[ normal2 ] 7 [6 0] 7   [r_sky_mask_lid]
@@ -291,7 +296,7 @@ r_sky_mask_lid:
          NOP                                                        isw.y         VI01,319(VI02)                      
          NOP                                                        ibeq          VI04,VI00,r_sky_plane_lid           
          NOP                                                        isw.x         VI06,319(VI02)                      
-; _LNOPT_w=[ normal2 ] 19 [38 0] 38   [__v_vu1_general_clip_road_x2r_pp4_vcl_51]
+; _LNOPT_w=[ normal2 ] 19 [38 0] 38   [__v_vu1_general_clip_road_x2r_pp4_vcl_52]
          sub.yzw       VF13,VF00,VF00                               ilw.z         VI08,317(VI02)                      
          NOP                                                        ilw.w         VI04,317(VI02)                      
          NOP                                                        lq            VF09,0(VI06)                        
@@ -328,7 +333,7 @@ r_sky_edge_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI07,VI06,r_sky_inside_lid          
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 15 [25 0] 26   [__v_vu1_general_clip_road_x2r_pp4_vcl_54]
+; _LNOPT_w=[ normal2 ] 15 [25 0] 26   [__v_vu1_general_clip_road_x2r_pp4_vcl_55]
          sub.x         VF17,VF12,VF16                               lq.z          VF12,54(VI00)                       
          abs.x         VF19,VF17                                    move.x        VF18,VF00                                  ;	STALL_LATENCY ?3
          addz.x        VF20,VF00,VF12z                              NOP                                               
@@ -344,7 +349,7 @@ r_sky_edge_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI01,VI00,r_sky_lerp_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [8 0] 8   [__v_vu1_general_clip_road_x2r_pp4_vcl_55]
+; _LNOPT_w=[ normal2 ] 2 [8 0] 8   [__v_vu1_general_clip_road_x2r_pp4_vcl_56]
          NOP                                                        div           Q,VF12x,VF17x                       
          addq.x        VF18,VF00,Q                                  waitq                                                    ;	STALL_LATENCY ?6
 r_sky_lerp_lid:
@@ -359,7 +364,7 @@ r_sky_lerp_lid:
          add           VF12,VF10,VF12                               NOP                                               
          add.xyz       VF17,VF08,VF17                               ibltz         VI01,sc_sky_store_ok20              
          add           VF19,VF11,VF18                               NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_58]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_59]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid21:
@@ -377,12 +382,12 @@ r_sky_inside_lid:
 ; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [r_sky_inside_lid]
          NOP                                                        ibne          VI06,VI00,r_sky_edge_next_lid       
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_64]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_65]
          NOP                                                        isubiu        VI01,VI09,0x0000001b                
          NOP                                                        NOP                                               
          NOP                                                        ibltz         VI01,sc_sky_store_ok22              
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_65]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_66]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid23:
@@ -403,12 +408,12 @@ r_sky_edge_next_lid:
          max           VF10,VF13,VF13                               iaddiu        VI07,VI06,0                         
          max           VF11,VF15,VF15                               ibgtz         VI08,r_sky_edge_lid                 
          max.x         VF12,VF16,VF16                               iaddiu        VI04,VI04,0x00000003                
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_71]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_72]
          NOP                                                        isubiu        VI01,VI09,0x00000003                
          NOP                                                        NOP                                               
          NOP                                                        ibltz         VI01,r_next_triangle_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 6 [6 0] 7   [__v_vu1_general_clip_road_x2r_pp4_vcl_72]
+; _LNOPT_w=[ normal2 ] 6 [6 0] 7   [__v_vu1_general_clip_road_x2r_pp4_vcl_73]
          NOP                                                        ilw.w         VI04,317(VI02)                      
          NOP                                                        ilw.z         VI01,319(VI02)                      
          NOP                                                        isw.z         VI09,317(VI02)                      
@@ -482,7 +487,7 @@ r_sky_fan_lid:
          NOP                                                        sq            VF12,269(VI02)                      
          NOP                                                        ibne          VI01,VI00,r_view_clip_lid           
          NOP                                                        iaddiu        VI04,VI00,0x00000003                
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_77]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_78]
          NOP                                                        b             r_view_ready_lid                    
          NOP                                                        iaddiu        VI01,VI02,0x0000010c                
 r_view_clip_lid:
@@ -518,7 +523,7 @@ cp_loop_lid33:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI08,VI04,cp_wrap_lid33             
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 12 [30 0] 30   [__v_vu1_general_clip_road_x2r_pp4_vcl_85]
+; _LNOPT_w=[ normal2 ] 12 [30 0] 30   [__v_vu1_general_clip_road_x2r_pp4_vcl_86]
          NOP                                                        lq            VF17,0(VI09)                        
          mul.xy        VF20,VF09,VF17                               loi           0x44ffe000                                 ;	STALL_LATENCY ?3
          mulw.z        VF08,VF09,VF17w                              lq            VF18,1(VI09)                        
@@ -531,12 +536,12 @@ cp_loop_lid33:
          NOP                                                        NOP                                               
          NOP                                                        ibne          VI11,VI00,ce_askip38                
          NOP                                                        mtir          VI10,VF21x                                 ;	STALL_LATENCY ?1
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_86]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_87]
          NOP                                                        isubiu        VI07,VI05,0x00000008                
          NOP                                                        NOP                                               
          NOP                                                        ibltz         VI07,cp_store_ok39                  
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_87]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_88]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid40:
@@ -556,7 +561,7 @@ ce_askip38:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI11,VI07,ce_nocross38              
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 12 [16 0] 20   [__v_vu1_general_clip_road_x2r_pp4_vcl_93]
+; _LNOPT_w=[ normal2 ] 12 [16 0] 20   [__v_vu1_general_clip_road_x2r_pp4_vcl_94]
          sub.x         VF24,VF16,VF20                               NOP                                               
          sub           VF21,VF17,VF13                               div           Q,VF16x,VF24x                              ;	STALL_LATENCY ?3
          sub.xyz       VF22,VF18,VF14                               NOP                                               
@@ -569,7 +574,7 @@ ce_askip38:
          maddx.xyz     VF22,VF22,VF16x                              NOP                                               
          mulaw         ACC,VF15,VF00w                               ibltz         VI07,cp_store_ok41                  
          maddx         VF23,VF23,VF16x                              NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_94]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_95]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid42:
@@ -596,12 +601,12 @@ cp_wrap_lid33:
          NOP                                                        NOP                                               
          NOP                                                        ibne          VI04,VI00,ce_askip43                
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_102]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_road_x2r_pp4_vcl_103]
          NOP                                                        isubiu        VI07,VI05,0x00000008                
          NOP                                                        NOP                                               
          NOP                                                        ibltz         VI07,cp_store_ok44                  
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_103]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_104]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid45:
@@ -621,7 +626,7 @@ ce_askip43:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI04,VI06,ce_nocross43              
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 12 [16 0] 20   [__v_vu1_general_clip_road_x2r_pp4_vcl_109]
+; _LNOPT_w=[ normal2 ] 12 [16 0] 20   [__v_vu1_general_clip_road_x2r_pp4_vcl_110]
          sub.x         VF08,VF16,VF08                               NOP                                               
          sub           VF09,VF10,VF13                               div           Q,VF16x,VF08x                              ;	STALL_LATENCY ?3
          sub.xyz       VF17,VF11,VF14                               NOP                                               
@@ -634,7 +639,7 @@ ce_askip43:
          maddx.xyz     VF17,VF17,VF08x                              NOP                                               
          mulaw         ACC,VF15,VF00w                               ibltz         VI04,cp_store_ok46                  
          maddx         VF18,VF12,VF08x                              NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_110]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_111]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid47:
@@ -654,7 +659,7 @@ ce_nocross43:
          NOP                                                        NOP                                               
          NOP                                                        ibltz         VI01,r_next_sky_fan_lid             
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 11 [11 0] 11   [__v_vu1_general_clip_road_x2r_pp4_vcl_116]
+; _LNOPT_w=[ normal2 ] 11 [11 0] 11   [__v_vu1_general_clip_road_x2r_pp4_vcl_117]
          NOP                                                        ilw.x         VI07,322(VI02)                      
          NOP                                                        ilw.y         VI01,322(VI02)                      
          NOP                                                        ilw.z         VI06,322(VI02)                      
@@ -666,7 +671,7 @@ ce_nocross43:
          NOP                                                        isw.z         VI06,322(VI02)                      
          NOP                                                        ibgtz         VI05,r_view_plane_lid               
          NOP                                                        isw.w         VI05,322(VI02)                      
-; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_road_x2r_pp4_vcl_117]
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_road_x2r_pp4_vcl_118]
 r_view_ready_lid:
 ; _LNOPT_w=[ normal2 ] 11 [11 0] 11   [r_view_ready_lid]
          NOP                                                        ilw.y         VI06,317(VI02)                      
@@ -680,7 +685,7 @@ r_view_ready_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI01,VI07,r_fan_cap_a_lid           
          NOP                                                        isw.y         VI04,321(VI02)                      
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_120]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_121]
          NOP                                                        b             r_fan_cap_lid                       
          NOP                                                        iaddiu        VI01,VI00,0x00000012                
 r_fan_cap_a_lid:
@@ -696,7 +701,7 @@ r_fan_cap_lid:
          NOP                                                        NOP                                               
          NOP                                                        iblez         VI01,r_emit_fence_lid               
          NOP                                                        NOP                                               
-; _LNOPT_w=[ vuta1 ] 9 [11 0] 11   [__v_vu1_general_clip_road_x2r_pp4_vcl_124]
+; _LNOPT_w=[ vuta1 ] 9 [11 0] 11   [__v_vu1_general_clip_road_x2r_pp4_vcl_125]
          NOP                                                        lq            VF09,75(VI00)                       
          NOP                                                        iadd          VI01,VI06,VI06                      
          NOP                                                        iadd          VI01,VI01,VI06                      
@@ -711,10 +716,10 @@ r_fan_cap_lid:
          NOP                                                        iaddiu        VI05,VI02,0x00000145                
          NOP                                                        iaddiu        VI06,VI00,0x00000000                
          NOP                                                        xgkick        VI01                                
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_129]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_130]
          NOP                                                        ibeq          VI01,VI04,r_use_b_lid48             
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_132]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_133]
          NOP                                                        b             r_arena_ready_lid48                 
          NOP                                                        NOP                                               
 r_use_b_lid48:
@@ -774,7 +779,7 @@ r_emit_lid:
          NOP                                                        sq            VF10,-8(VI05)                       
          NOP                                                        ibgtz         VI04,r_emit_lid                     
          NOP                                                        sq            VF14,-1(VI05)                       
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_139]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_140]
          NOP                                                        isw.x         VI05,317(VI02)                      
          NOP                                                        isw.y         VI06,317(VI02)                      
 r_next_sky_fan_lid:
@@ -786,13 +791,13 @@ r_next_sky_fan_lid:
          NOP                                                        isw.z         VI04,320(VI02)                      
          NOP                                                        ibgtz         VI01,r_sky_fan_lid                  
          NOP                                                        isw.w         VI01,320(VI02)                      
-; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_road_x2r_pp4_vcl_142]
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_road_x2r_pp4_vcl_143]
 r_next_triangle_lid:
 ; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [r_next_triangle_lid]
          NOP                                                        ilw.z         VI01,316(VI02)                      
          NOP                                                        ibne          VI01,VI00,r_next_descriptor_lid            ;	STALL_LATENCY ?3
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_road_x2r_pp4_vcl_145]
+; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_road_x2r_pp4_vcl_146]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        b             r_decode_lid                        
          NOP                                                        isw.z         VI01,316(VI02)                      
@@ -806,7 +811,7 @@ r_next_descriptor_lid:
          NOP                                                        isw.x         VI04,316(VI02)                      
          NOP                                                        ibgtz         VI01,r_decode_lid                   
          NOP                                                        isw.y         VI01,316(VI02)                      
-; _LNOPT_w=[ vuta1 ] 11 [11 0] 13   [__v_vu1_general_clip_road_x2r_pp4_vcl_148]
+; _LNOPT_w=[ vuta1 ] 11 [11 0] 13   [__v_vu1_general_clip_road_x2r_pp4_vcl_149]
          NOP                                                        ilw.y         VI01,317(VI02)                      
          NOP                                                        lq            VF06,75(VI00)                       
          NOP                                                        ilw.x         VI03,317(VI02)                      
@@ -823,10 +828,10 @@ r_next_descriptor_lid:
          NOP                                                        iaddiu        VI02,VI02,0x00000000                
          NOP                                                        iaddiu        VI02,VI00,0x00000000                
          NOP                                                        xgkick        VI01                                
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_153]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_154]
          NOP                                                        ibeq          VI01,VI03,r_use_b_lid64             
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_156]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_157]
          NOP                                                        b             r_arena_ready_lid64                 
          NOP                                                        NOP                                               
 r_use_b_lid64:
@@ -835,12 +840,12 @@ r_arena_ready_lid64:
 ; _LNOPT_w=[ normal2 ] 2 [0 0] 2   [r_arena_ready_lid64]
          NOP[E]                                                     NOP                                               
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_160]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_road_x2r_pp4_vcl_161]
          NOP                                                        b             r_main_lid                          
          NOP                                                        NOP                                               
 		.align 4
 vsmGeneralClipRoadX2R_CodeEnd:
-;	iCount=672
+;	iCount=676
 ; register stats:
 ;  12 VU User integer
 ;  25 VU User floating point

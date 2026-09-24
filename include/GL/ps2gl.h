@@ -142,6 +142,11 @@ extern void pglInvalidateX2BasePrefix(void);
  * modulo unsigned wrap. Read has no rendering side effects; either output may
  * be NULL. Separate from PGL_SUBMIT_COUNT to preserve its existing array ABI. */
 extern void pglGetX2BaseReuseStats(unsigned int* uploads, unsigned int* bytes);
+/* Diagnostic only: stamp VIF1_MARK with a renderer id at each renderer load,
+ * after FLUSHE, so a sampled MARK names the program VU1 executes. Enable before
+ * the first draw. Names are NULL for unused ids; 0 means none loaded yet. */
+extern void pglSetRendererMarks(GLboolean enable);
+extern const char* pglGetRendererMarkName(unsigned int mark);
 /* Cumulative window context opportunities; unsigned subtraction handles wrap. */
 extern void pglGetWindowContextStats(unsigned int* attempts, unsigned int* reused,
     unsigned int* full, unsigned int* globalPins);
@@ -442,6 +447,19 @@ extern void pglSetViewportScale(float sx, float sy);
    or implement glPolygonOffset's slope term. Flushes pending draws on change;
    callers must restore 0 afterwards and keep biased depth within its range. */
 extern void pglSetDepthOffset(float units);
+/* Immediate, non-nested scope outside Begin/End and display lists. Both
+   transitions flush pending geometry and invalidate emitted draw settings.
+   The logical alpha test is never changed. At emission, alpha-zero KEEP is
+   requested only for source-alpha/destination-preserving blends with depth
+   writes off, no authored alpha/DATE/PABE test, and a safe framebuffer format
+   (RGB24, or RGB16 already protected by the dither override). Custom renderers
+   must use the normal TEST synchronization; private TEST writers are excluded.
+   Edge AA must stay disabled. End the token in the same context before
+   tearing down the pass state.
+   A zero token means no scope was entered and is safe to pass to End. Begin
+   inside an admitted scope also returns zero; End(0) performs no flush. */
+extern GLuint pglBeginZeroAlphaDiscard(void);
+extern void pglEndZeroAlphaDiscard(GLuint token);
 /* Read the live NDC-to-GS diagonal scale (signed X/Y/Z, before center offsets).
    Includes the active draw-buffer size, screen fit and depth format. */
 extern void pglGetRasterScale(float out[3]);

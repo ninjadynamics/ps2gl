@@ -17,6 +17,9 @@
 #include "ps2gl/glcontext.h"
 #include "ps2gl/immgmanager.h"
 
+// Immediate emitted-TEST policy only; logical draw state remains unchanged.
+extern CGLContext* pglZeroAlphaDiscardOwner;
+
 namespace GS {
 class CDrawEnv;
 class CMemArea;

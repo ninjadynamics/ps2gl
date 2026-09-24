@@ -50,6 +50,7 @@ CRendererManager::CRendererManager(CGLContext& context)
     , BillboardAlphaRenderer(NULL)
     , DecalRenderer(NULL)
     , SourceQuadRenderer(NULL)
+    , RendererMarks(false)
 {
     // Zero the WHOLE bitfield first: the field-by-field init below never
     // touched `unused:12`, which therefore carried whatever heap garbage the
@@ -809,6 +810,34 @@ void CRendererManager::MakeNewRendererCurrent()
     pGLContext->SetRendererContextChanged(true);
 }
 
+// Mark 0 is VIF1's reset value: no renderer loaded since boot.
+unsigned int CRendererManager::GetRendererMark(const tRenderer* renderer) const
+{
+    if (renderer >= DefaultRenderers && renderer < DefaultRenderers + NumDefaultRenderers)
+        return (unsigned int)(renderer - DefaultRenderers) + 1u;
+    return (unsigned int)(renderer - UserRenderers) + 1u + kMaxDefaultRenderers;
+}
+
+const char* CRendererManager::GetRendererMarkName(unsigned int mark) const
+{
+    if (mark >= 1u && mark <= (unsigned int)NumDefaultRenderers)
+        return DefaultRenderers[mark - 1u].renderer->GetName();
+    mark -= 1u + kMaxDefaultRenderers;
+    if (mark < (unsigned int)NumUserRenderers && UserRenderers[mark].renderer)
+        return UserRenderers[mark].renderer->GetName();
+    return NULL;
+}
+
+void pglSetRendererMarks(GLboolean enable)
+{
+    pGLContext->GetImmGeomManager().GetRendererManager().SetRendererMarks(enable != GL_FALSE);
+}
+
+const char* pglGetRendererMarkName(unsigned int mark)
+{
+    return pGLContext->GetImmGeomManager().GetRendererManager().GetRendererMarkName(mark);
+}
+
 void CRendererManager::LoadRenderer(CVifSCDmaPacket& packet)
 {
     mAssert(CurrentRenderer != NULL);
@@ -816,6 +845,17 @@ void CRendererManager::LoadRenderer(CVifSCDmaPacket& packet)
     // An arbitrary custom Load override can upload code without passing
     // through CBaseRenderer. Invalidate before dispatching any unknown loader.
     if (!CurrentRenderer->preservesX2Base) pglInvalidateX2BasePrefix();
+
+    // HyperSolar diagnostic: FLUSHE lets the previous program finish before
+    // VIF1_MARK names the new owner, so a sampled MARK is the renderer that
+    // VU1 executes. Every Load ends in MPG/MSCAL, which already waits.
+    if (RendererMarks) {
+        packet.Cnt();
+        packet.Flushe();
+        packet.Mark(GetRendererMark(CurrentRenderer));
+        packet.Pad128();
+        packet.CloseTag();
+    }
 
     mDebugPrint("Loading renderer: %s\n", CurrentRenderer->renderer->GetName());
 

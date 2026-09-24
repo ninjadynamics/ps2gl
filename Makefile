@@ -256,8 +256,8 @@ $(X2D_DECODER_VSM): vu1/general_clip_tri_x2d_decode_pp4.vcl $(X2D_GUARD) $(X2_VS
 # Remove only those comments before the C preprocessor for this new module;
 # the established preprocessing rules and existing VU images stay unchanged.
 .INTERMEDIATE: vu1/general_clip_road_x2r_pp3.vcl vu1/general_clip_road_x2r_pp4.vcl
-vu1/general_clip_road_x2r_pp4.vcl: vu1/general_clip_road_x2r_pp3.vcl
-	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
+vu1/general_clip_road_x2r_pp4.vcl: vu1/general_clip_road_x2r_pp3.vcl vu1/x2r_sky_gate.h
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -imacros vu1/x2r_sky_gate.h -o $@ -
 
 vu1/general_clip_road_x2r_pp1.vcl vu1/general_clip_pool_x2p_pp1.vcl: vu1/ground_clip_shared.i
 vu1/general_clip_pool_x2p_pp1.vcl: vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i
