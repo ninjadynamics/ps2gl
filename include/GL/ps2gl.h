@@ -12,10 +12,19 @@
 /* Optional scoped CPU submission counters; no clocks, waits or per-vertex
  * hooks. The application explicitly samples a small subset of frames. */
 #ifndef PGL_SUBMISSION_METRICS
-#define PGL_SUBMISSION_METRICS 1
+#define PGL_SUBMISSION_METRICS 0
 #endif
 #if PGL_SUBMISSION_METRICS != 0 && PGL_SUBMISSION_METRICS != 1
 #error "Packet optimization/metrics switches must be 0 or 1"
+#endif
+
+/* Per-level GS layout lines ([MIP], [MIP8], [MIP8E], [MIP32]) for every
+ * pyramid created. Load-time only; errors are always printed. */
+#ifndef PGL_TEXTURE_TRACE
+#define PGL_TEXTURE_TRACE 0
+#endif
+#if PGL_TEXTURE_TRACE != 0 && PGL_TEXTURE_TRACE != 1
+#error "PGL_TEXTURE_TRACE must be 0 or 1"
 #endif
 
 /* Independent raw-X2 triangle runs retain the 30-vertex input ceiling.
@@ -58,7 +67,7 @@
 /* Correlated normal-frame diagnostics only; never used for pacing. Runtime
  * collection follows pglSetFramePhaseMetrics. OFF removes the IRQ sampling. */
 #ifndef PGL_PRESENT_TIMELINE_METRICS
-#define PGL_PRESENT_TIMELINE_METRICS 1
+#define PGL_PRESENT_TIMELINE_METRICS 0
 #endif
 #if PGL_PRESENT_TIMELINE_METRICS != 0 && PGL_PRESENT_TIMELINE_METRICS != 1
 #error "PGL_PRESENT_TIMELINE_METRICS must be 0 or 1"

@@ -1150,6 +1150,7 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
         SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]),
         SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]));
 
+#if PGL_TEXTURE_TRACE
     printf("[MIP] id=%u base_tbp=%u mxl=%d pack_tbp=%d\n",
            (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip,
            pack ? (int)(pack->GetWordAddr() / 64) : -1);
@@ -1157,6 +1158,7 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
         printf("[MIP]   L%d %dx%d tbp=%u tbw=%u off=%d\n",
                i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i],
                pack ? kPackPsmct16[i].block : -1);
+#endif
 
     return (unsigned int)id;
 }
@@ -1241,11 +1243,13 @@ extern "C" unsigned int pgl_create_mip32(void** levels, const int* lw,
     for (int i = 0; i < 3; i++)
         mlist[i]->SetFreeImageOnExit(true);
     pgl_mips_register(entry, id, mlist, 3, pack);
+#if PGL_TEXTURE_TRACE
     printf("[MIP32] id=%u base_tbp=%u mxl=3 pack_pages=8 lodk=%d local-levels=%d\n",
            (unsigned int)id, packTbp, kbias, 1);
     for (int i = 0; i < 4; i++)
         printf("[MIP32]   L%d %dx%d tbp=%u tbw=1 page=%u block=%u\n", i, lw[i], lh[i],
                packTbp + kMip32Blocks[i], kMip32Blocks[i] / 32u, kMip32Blocks[i]);
+#endif
     return (unsigned int)id;
 }
 
@@ -1405,8 +1409,10 @@ static unsigned int pgl_create_index8_entrance(const void** levels, const void* 
     base.SetMiptbp(SS_MIPTBP1(packTbp + kEntranceP8Blocks[1], 1,
                             packTbp + kEntranceP8Blocks[2], 1,
                             packTbp + kEntranceP8Blocks[3], 1), 0);
+#if PGL_TEXTURE_TRACE
     printf("[MIP8E] id=%u base_tbp=%u mxl=3 pack_pages=8 clut_block=%u lodk=%d\n",
            (unsigned int)id, packTbp, kEntranceP8ClutBlock, kbias);
+#endif
     return (unsigned int)id;
 }
 
@@ -1484,6 +1490,7 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
         SS_MIPTBP1(tba[0], tbw[0], tba[1], tbw[1], tba[2], tbw[2]),
         SS_MIPTBP2(tba[3], tbw[3], tba[4], tbw[4], tba[5], tbw[5]));
 
+#if PGL_TEXTURE_TRACE
     printf("[MIP8] id=%u base_tbp=%u mxl=%d pack_tbp=%d\n",
            (unsigned)id, (unsigned)(base.GetImageGsAddr() / 64), nmip,
            pack ? (int)(pack->GetWordAddr() / 64) : -1);
@@ -1491,6 +1498,7 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
         printf("[MIP8]   L%d %dx%d tbp=%u tbw=%u off=%d\n",
                i + 1, lw[i + 1], lh[i + 1], (unsigned)tba[i], (unsigned)tbw[i],
                pack ? kPackPsmt8[i + 1].block : -1);
+#endif
 
     return (unsigned int)id;
 }

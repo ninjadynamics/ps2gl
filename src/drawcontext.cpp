@@ -4,6 +4,8 @@
 	  General Public License Version 2.1. See the file "COPYING" in the
 	  main directory of this archive for more details.                             */
 
+#include <string.h>
+
 #include "ps2s/drawenv.h"
 #include "ps2s/math.h"
 
@@ -47,6 +49,9 @@ CImmDrawContext::CImmDrawContext(CGLContext& context)
     , FogEnd(1.0f)
     , ClipNear(1.0f)
     , IsVertexXformValid(false)
+#if PGL_VERTEX_XFORM_REUSE
+    , XformKeyValid(false)
+#endif
     , Width(0)
     , Height(0)
     , VpScaleX(1.0f)
@@ -219,9 +224,23 @@ CImmDrawContext::GetVertexXform()
 {
     if (!IsVertexXformValid) {
         IsVertexXformValid = true;
-        VertexXform        = (GLContext.GetProjectionStack().GetTop()
-            * GLContext.GetModelViewStack().GetTop());
+        const cpu_mat_44& projection = GLContext.GetProjectionStack().GetTop();
+        const cpu_mat_44& modelView = GLContext.GetModelViewStack().GetTop();
+#if PGL_VERTEX_XFORM_REUSE
+        if (XformKeyValid &&
+            memcmp(&XformKeyModelView, &modelView, sizeof(modelView)) == 0 &&
+            memcmp(&XformKeyProjection, &projection, sizeof(projection)) == 0 &&
+            memcmp(&XformKeyScale, &GSScale, sizeof(GSScale)) == 0)
+            return VertexXform;
+#endif
+        VertexXform = projection * modelView;
         VertexXform = GSScale * VertexXform;
+#if PGL_VERTEX_XFORM_REUSE
+        XformKeyProjection = projection;
+        XformKeyModelView = modelView;
+        XformKeyScale = GSScale;
+        XformKeyValid = true;
+#endif
     }
 
     return VertexXform;
