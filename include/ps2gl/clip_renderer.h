@@ -139,6 +139,9 @@ class CClipTriX2DRenderer : public CClipTriX2Renderer {
     int DescriptorColorWords;
     int DescriptorColorOffset;
     int DescriptorColorDivisor;
+    // Nonzero: color qwords per four-element descriptor (X2H: 3). Zero keeps
+    // the per-element (divisor 1) or per-pair (divisor 2) color streams.
+    int DescriptorColorQwords;
 
     void DrawBlockX2D(CVifSCDmaPacket& packet, CGeometryBlock& block, int maxElemsPerBuffer);
     void FinishBufferX2D(CVifSCDmaPacket& packet, int numElems, bool directPacket);
@@ -149,7 +152,7 @@ protected:
     // four elements and float colors through the separate X2Q primitive.
     CClipTriX2DRenderer(const void* decoder, int decoderSize,
         const char* name, uint64_t prop, int elements, int colorWords,
-        int colorDivisor = 1);
+        int colorDivisor = 1, int colorQwords = 0);
 
 public:
     CClipTriX2DRenderer();

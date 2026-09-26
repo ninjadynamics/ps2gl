@@ -494,11 +494,13 @@ bool CImmGeomManager::DrawWallDescriptorArrays(GLenum primitive,
     const float* geometry, const float* colors, int descriptorCount)
 {
     const bool pairedColors = primitive == PGL_CLIP_TRIANGLES_X2C;
-    const uint64_t requirements = pairedColors ? PGL_CLIP_TRI_X2C_PROP : PGL_CLIP_TRI_X2Q_PROP;
-    if ((primitive != PGL_CLIP_TRIANGLES_X2Q && !pairedColors) || InsideBeginEnd ||
+    const bool cornerFog = primitive == PGL_CLIP_TRIANGLES_X2H;
+    const uint64_t requirements = pairedColors ? PGL_CLIP_TRI_X2C_PROP
+        : cornerFog ? PGL_CLIP_TRI_X2H_PROP : PGL_CLIP_TRI_X2Q_PROP;
+    if ((primitive != PGL_CLIP_TRIANGLES_X2Q && !pairedColors && !cornerFog) || InsideBeginEnd ||
         !geometry || !colors || descriptorCount <= 0 || descriptorCount > INT_MAX / 64 ||
         (((uintptr_t)geometry | (uintptr_t)colors) & 3u) ||
-        !RendererManager.CanSelectWallDescriptorRenderer(pairedColors) ||
+        !RendererManager.CanSelectWallDescriptorRenderer(requirements) ||
         GetUserPrimRequirements(primitive) != requirements ||
         GetUserPrimReqMask(primitive) != ~(uint64_t)0xffffffff ||
         GLContext.GetImmLighting().GetLightingEnabled() ||
@@ -507,7 +509,8 @@ bool CImmGeomManager::DrawWallDescriptorArrays(GLenum primitive,
 
     const int elements = descriptorCount * 4;
     const uintptr_t geometryBytes = (uintptr_t)descriptorCount * 64u;
-    const uintptr_t colorBytes = (uintptr_t)descriptorCount * (pairedColors ? 32u : 64u);
+    const uintptr_t colorBytes = (uintptr_t)descriptorCount *
+        (pairedColors ? 32u : cornerFog ? 48u : 64u);
     if (Geometry.GetTotalVertices() > INT_MAX - elements ||
         (uintptr_t)geometry > ~(uintptr_t)0 - geometryBytes ||
         (uintptr_t)colors > ~(uintptr_t)0 - colorBytes) return false;

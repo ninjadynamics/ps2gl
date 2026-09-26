@@ -1,6 +1,7 @@
 /* Same X2Q geometry and X2 body, with a copy-only paired-color decoder. */
 #include "GL/ps2gl.h"
 #include "ps2gl/x2c_renderer.h"
+#include "ps2gl/x2h_renderer.h"
 #include "ps2gl/glcontext.h"
 #include "ps2gl/immgmanager.h"
 
@@ -38,6 +39,7 @@ unsigned int pglGetWallSubmissionOptions(void)
 {
     unsigned int options = 126u;
     if (pX2CRenderer) options |= 1u;
+    if (pglClipX2HRegistered()) options |= 128u;
     return options;
 }
 

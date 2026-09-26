@@ -705,14 +705,23 @@ void pglClipX2QSetWindowTexture(GLuint texId, float r, float g, float b, float a
 #define PGL_CLIP_TRI_X2C_PROP ((pglU64_t)1 << 41)
 void pglRegisterClipTriX2CRenderer(void);
 void pglClipX2CSetWindowTexture(GLuint texId, float r, float g, float b, float a);
+/* X2H: X2C's paired wall RGB with a fog value per corner (height-dependent
+   fog). COL is three float qwords per wall: [bottomRGB,-] [topRGB,-]
+   [fogA fogB fogC fogD]. A/B take the bottom RGB, C/D the top RGB, and each
+   corner its own fog. GEO, draw counts, window pair and array lifetime follow
+   X2C exactly. */
+#define PGL_CLIP_TRIANGLES_X2H ((GLenum)0x80000000 | 14)
+#define PGL_CLIP_TRI_X2H_PROP ((pglU64_t)1 << 45)
+void pglRegisterClipTriX2HRenderer(void);
+void pglClipX2HSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 /* bit0 registered X2C colors, bit1 direct float X2Q/C packet specialization,
    bit2 fixed context-2 texture-prefix preparation, bit3 ordered window reuse,
    bit4 pure CPU prefix/tail reuse, bit5 borrowed wall-descriptor arrays,
-   bit6 exact retained X2 VU context deltas. */
+   bit6 exact retained X2 VU context deltas, bit7 registered X2H colors. */
 unsigned int pglGetWallSubmissionOptions(void);
 /* Borrow exact X2Q/C descriptors without changing client-array descriptors or
    current attributes. descriptorCount counts walls (4 GEO qwords each; colors
-   are 4 qwords for X2Q and 2 for X2C). Caller owns immutable source storage through
+   are 4 qwords for X2Q, 2 for X2C and 3 for X2H). Caller owns immutable source storage through
    frame DMA completion, sets the window pair/base texture first and glFlushes
    construction before changing their state. Rejection submits nothing. */
 GLboolean pglDrawWallDescriptorArrays(GLenum primitive, const GLfloat* geometry,

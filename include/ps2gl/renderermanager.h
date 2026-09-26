@@ -63,6 +63,7 @@ class CRendererManager {
     bool ColoredHudRendererRegistered;
     bool WallQuadRendererRegistered;
     bool WallColorRendererRegistered;
+    bool WallFogRendererRegistered;
     CClipRoadX2RRenderer* RoadRenderer;
     CClipPoolX2PRenderer* PoolRenderer;
     CClipBillboardX2BRenderer* BillboardRenderer;
@@ -82,9 +83,13 @@ public:
     void RegisterX2Renderer(CClipTriX2Renderer* renderer);
     void RegisterSourceQuadRenderer(CClipQuadX2FRenderer* renderer);
     CClipQuadX2FRenderer* GetSourceQuadRenderer() const { return SourceQuadRenderer; }
-    bool CanSelectWallDescriptorRenderer(bool pairedColors) const
+    bool CanSelectWallDescriptorRenderer(uint64_t requirements) const
     {
-        return (pairedColors ? WallColorRendererRegistered : WallQuadRendererRegistered)
+        const bool registered = requirements == PGL_CLIP_TRI_X2C_PROP
+            ? WallColorRendererRegistered
+            : requirements == PGL_CLIP_TRI_X2H_PROP ? WallFogRendererRegistered
+                                                    : WallQuadRendererRegistered;
+        return registered
             && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
                 & ~(uint64_t)0xffffffff) == 0;
     }

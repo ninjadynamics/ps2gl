@@ -1180,12 +1180,14 @@ CClipTriX2DRenderer::CClipTriX2DRenderer()
     , DescriptorColorWords(1)
     , DescriptorColorOffset(kX2dColOff)
     , DescriptorColorDivisor(1)
+    , DescriptorColorQwords(0)
 {
     ContextDeltaEligible = true;
 }
 
 CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
-    const char* name, uint64_t prop, int elements, int colorWords, int colorDivisor)
+    const char* name, uint64_t prop, int elements, int colorWords, int colorDivisor,
+    int colorQwords)
     : CClipTriX2Renderer(mVsmAddr(GeneralClipTriX2), mVsmSize(GeneralClipTriX2), name, prop)
     , DecoderCode(decoder)
     , DecoderCodeSize(decoderSize)
@@ -1194,6 +1196,7 @@ CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
     , DescriptorColorWords(colorWords)
     , DescriptorColorOffset(kX2dGeoOff + 4 * elements)
     , DescriptorColorDivisor(colorDivisor)
+    , DescriptorColorQwords(colorQwords)
 {
 }
 
@@ -1377,7 +1380,8 @@ void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
     CGeometryBlock& block, int maxElemsPerBuffer)
 {
     const bool directPacket = DescriptorElements == 4 && DescriptorColorWords == 4
-        && (DescriptorColorDivisor == 1 || DescriptorColorDivisor == 2)
+        && (DescriptorColorDivisor == 1 || DescriptorColorDivisor == 2
+            || DescriptorColorQwords == 3)
         && VifDoubleBuffered && packet.GetTTE();
     packet.Cnt();
     {
@@ -1408,6 +1412,12 @@ void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
                 const bool paired = DescriptorColorDivisor == 2;
                 XferWallFloatVectors(packet, geo + idx * 4, (unsigned int)n,
                     kX2dGeoOff + elemsInBuffer);
+                if (DescriptorColorQwords == 3) {
+                    // X2H: three color qwords per four-element wall.
+                    XferWallFloatVectors(packet, col + (idx >> 2) * 12,
+                        (unsigned int)((n >> 2) * 3),
+                        DescriptorColorOffset + (elemsInBuffer >> 2) * 3);
+                } else
                 XferWallFloatVectors(packet, col + (paired ? idx * 2 : idx * 4),
                     (unsigned int)(paired ? n >> 1 : n),
                     DescriptorColorOffset + (paired ? elemsInBuffer >> 1 : elemsInBuffer));
@@ -1417,7 +1427,11 @@ void CClipTriX2DRenderer::DrawBlockX2D(CVifSCDmaPacket& packet,
                 // qword per two elements; legacy X2D colors use byte UNPACK.
                 XferVectors(packet, geo, idx, n, 4, noMask,
                     Vifs::UnpackModes::v4_32, kX2dGeoOff + elemsInBuffer);
-                if (DescriptorColorDivisor == 2) {
+                if (DescriptorColorQwords == 3) {
+                    XferVectors(packet, col, (idx >> 2) * 3, (n >> 2) * 3, 4, noMask,
+                        Vifs::UnpackModes::v4_32,
+                        DescriptorColorOffset + (elemsInBuffer >> 2) * 3);
+                } else if (DescriptorColorDivisor == 2) {
                     XferVectors(packet, col, idx >> 1, n >> 1, 4, noMask,
                         Vifs::UnpackModes::v4_32, DescriptorColorOffset + (elemsInBuffer >> 1));
                 } else {
