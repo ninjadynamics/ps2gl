@@ -17,6 +17,7 @@
 
 #include "kernel.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /********************************************
@@ -127,17 +128,11 @@ void CTexManager::GenTextures(GLsizei numNewTexNames, GLuint* newTexNames)
         }
         // did we go through all the names without finding any free ones?
         if (i == NumTexNames) {
-            mError("No free texture names.  Time to write a less braindead tex manager.");
-
-            // In release build, return sensible names on failure
-            while (i < NumTexNames) {
-                newTexNames[i] = 0;
-                ++i;
-            }
-        } else {
-            newTexNames[curTexName] = Cursor;
-            IncCursor();
+            fprintf(stderr, "ps2gl: no free texture names (%d)\n", NumTexNames);
+            abort();
         }
+        newTexNames[curTexName] = Cursor;
+        IncCursor();
     }
 }
 
@@ -437,9 +432,34 @@ CMMTexture::CMMTexture(GS::tContext context)
 CMMTexture::~CMMTexture()
 {
     delete pImageMem;
-    delete OwnClut;   // HyperSolar: free this texture's palette (NULL-safe)
-    OwnClut = NULL;
+    ReleaseOwnClut();   // HyperSolar: free this texture's palette
     ReleasePackedStorage();
+}
+
+void CMMTexture::SetOwnClut(CMMClut* clut)
+{
+    ReleaseOwnClut();
+    OwnClut = clut;
+}
+
+void CMMTexture::ReleaseOwnClut()
+{
+    if (!OwnClut)
+        return;
+    // The manager's legacy CurClut fallback and its sync proof are non-owning.
+    pGLContext->GetTexManager().ForgetClut(OwnClut);
+    delete OwnClut;
+    OwnClut = NULL;
+}
+
+// GS slot exhaustion leaves the area unallocated (gsmem logs the class). An
+// upload or Lock() would then target a stale or zero address, so stop here.
+static void RequireGsSlot(GS::CMemArea& area, const char* what)
+{
+    if (!area.IsAllocated()) {
+        fprintf(stderr, "ps2gl: no GS slot for %s\n", what);
+        abort();
+    }
 }
 
 void CMMTexture::ReleasePackedStorage()
@@ -529,6 +549,7 @@ void CMMTexture::Load(bool waitForEnd)
     // first set the gs address and flush the cache
     if (!pImageMem->IsAllocated()) {
         pImageMem->Alloc();
+        RequireGsSlot(*pImageMem, "texture image");
         if (GetPSM() != pImageMem->GetPixFormat())
             ChangePsm(pImageMem->GetPixFormat());
         SetImageGsAddr(pImageMem->GetWordAddr());
@@ -552,6 +573,7 @@ void CMMTexture::Load(CSCDmaPacket& packet)
         "Trying to load a texture that hasn't been defined!");
     if (!pImageMem->IsAllocated()) {
         pImageMem->Alloc();
+        RequireGsSlot(*pImageMem, "texture image");
         if (GetPSM() != pImageMem->GetPixFormat())
             ChangePsm(pImageMem->GetPixFormat());
         SetImageGsAddr(pImageMem->GetWordAddr());
@@ -570,6 +592,7 @@ void CMMTexture::Load(CVifSCDmaPacket& packet)
         "Trying to load a texture that hasn't been defined!");
     if (!pImageMem->IsAllocated()) {
         pImageMem->Alloc();
+        RequireGsSlot(*pImageMem, "texture image");
         if (GetPSM() != pImageMem->GetPixFormat())
             ChangePsm(pImageMem->GetPixFormat());
         SetImageGsAddr(pImageMem->GetWordAddr());
@@ -668,6 +691,7 @@ void CMMClut::Load(CVifSCDmaPacket& packet)
         return;
     if (!GsMem.IsAllocated()) {
         GsMem.Alloc();
+        RequireGsSlot(GsMem, "clut");
         SetGsAddr(GsMem.GetWordAddr());
         Send(packet);
 
@@ -1111,6 +1135,7 @@ extern "C" unsigned int pgl_create_mip16(void** levels, const int* lw,
         pgl_pack_check(kPackPsmct16, 3);
         pack = new GS::CMemArea(64, 64, GS::kPsm16, GS::kAlignPage); /* = 1 page */
         pack->Alloc();
+        RequireGsSlot(*pack, "packed mip16 pyramid");
         pack->Lock();
     }
 
@@ -1459,6 +1484,7 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
         pgl_pack_check(kPackPsmt8, 4);
         pack = new GS::CMemArea(128, 64, GS::kPsm8, GS::kAlignPage); /* = 1 page */
         pack->Alloc();
+        RequireGsSlot(*pack, "packed index8 pyramid");
         pack->Lock();
         base.UploadPacked(pack->GetWordAddr() + kPackPsmt8[0].block * 64);
     }

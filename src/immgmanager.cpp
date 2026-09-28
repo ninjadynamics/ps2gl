@@ -33,6 +33,30 @@ using namespace ArrayType;
 
 static const unsigned int immediateMapping = Core::MemMappings::Normal;
 
+// Immediate buffer capacities in qwords for `verts` vertices, each rounded up
+// to whole 64-byte cache lines (4 qwords). Vertices and colors take 4 words
+// (1 qword) and texcoords 2 words per vertex. Normals take 3 words, i.e.
+// (3 * verts + 3) / 4 qwords, but CBaseRenderer::XferBlock also appends one
+// current normal per lit array vertex that lacks normals, a count not bounded
+// by `verts`. Keep the historical 16/9-normals-per-vertex headroom until that
+// fallback count is measured; XferBlock fails fatally before overflowing.
+static int ImmQwordsRoundUp(int qwords)
+{
+    return (qwords + 3) & ~3;
+}
+static int ImmVertexQwords(int verts)
+{
+    return ImmQwordsRoundUp(verts);
+}
+static int ImmNormalQwords(int verts)
+{
+    return ImmQwordsRoundUp(verts * 4 / 3 + 1);
+}
+static int ImmTexCoordQwords(int verts)
+{
+    return ImmQwordsRoundUp((verts + 1) / 2);
+}
+
 /********************************************
  * CImmGeomManager
  */
@@ -40,21 +64,21 @@ static const unsigned int immediateMapping = Core::MemMappings::Normal;
 CImmGeomManager::CImmGeomManager(CGLContext& context, int immBufferQwordSize)
     : CGeomManager(context)
     , RendererManager(context)
-    , VertexBuf0(immBufferQwordSize + immBufferQwordSize % 4,
+    , VertexBuf0(ImmVertexQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
-    , NormalBuf0(immBufferQwordSize * 4 / 3 + 1 + (immBufferQwordSize * 4 / 3 + 1) % 4,
+    , NormalBuf0(ImmNormalQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
-    , TexCoordBuf0(immBufferQwordSize / 2 + (immBufferQwordSize / 2) % 4,
+    , TexCoordBuf0(ImmTexCoordQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
-    , ColorBuf0(immBufferQwordSize + immBufferQwordSize % 4,
+    , ColorBuf0(ImmVertexQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
-    , VertexBuf1(immBufferQwordSize + immBufferQwordSize % 4,
+    , VertexBuf1(ImmVertexQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
-    , NormalBuf1(immBufferQwordSize * 4 / 3 + 1 + (immBufferQwordSize * 4 / 3 + 1) % 4,
+    , NormalBuf1(ImmNormalQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
-    , TexCoordBuf1(immBufferQwordSize / 2 + (immBufferQwordSize / 2) % 4,
+    , TexCoordBuf1(ImmTexCoordQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
-    , ColorBuf1(immBufferQwordSize + immBufferQwordSize % 4,
+    , ColorBuf1(ImmVertexQwords(immBufferQwordSize),
           DMAC::Channels::vif1, immediateMapping)
 {
     CurVertexBuf   = &VertexBuf0;
@@ -1491,7 +1515,7 @@ void CImmGeomManager::SyncGsContext()
             packet.Flush().Nop();
             packet.CloseTag();
             // FIXME
-            GLContext.AddingDrawEnvToPacket((uint128_t*)GLContext.GetVif1Packet().GetNextPtr() + 1);
+            GLContext.AddingDrawEnvToPacket();
             CImmDrawContext& draw = GLContext.GetImmDrawContext();
             draw.GetDrawEnv().SendSettingsForBlend(packet, draw.GetBlendEnabled(),
                 pglZeroAlphaDiscardOwner == &GLContext && !draw.GetEdgeAAEnabled());

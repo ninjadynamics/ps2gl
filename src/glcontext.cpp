@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <limits.h>
 
 #include "dma.h"
 #include "graph.h"
@@ -113,8 +112,6 @@ static inline unsigned int ReadEeCycleCount()
 }
 
 static unsigned int DrawEnvLastFrame, DrawEnvHighWater, DrawEnvOver100Frames;
-static unsigned int DrawEnvGrowths, DrawEnvHeapBytes;
-static void (*DrawEnvHeapObserver)(unsigned int, unsigned int);
 
 #if PGL_FRAME_PHASE_METRICS
 static volatile bool FramePhaseEnabled;
@@ -549,11 +546,11 @@ extern "C" GLboolean pglTakePresentationSendMetrics(unsigned int report,
 #endif
 }
 
+// Draw-environment syncs are counted, not recorded, so no heap storage
+// exists to observe: the observer is never called.
 extern "C" void pglSetDrawEnvHeapObserver(void (*observer)(unsigned int, unsigned int))
 {
-    if (DrawEnvHeapObserver == observer) return;
-    DrawEnvHeapObserver = observer;
-    if (observer && DrawEnvHeapBytes) observer(0, DrawEnvHeapBytes);
+    (void)observer;
 }
 
 extern "C" void pglGetDrawEnvStats(unsigned int* lastFrame, unsigned int* highWater,
@@ -562,43 +559,8 @@ extern "C" void pglGetDrawEnvStats(unsigned int* lastFrame, unsigned int* highWa
     if (lastFrame) *lastFrame = DrawEnvLastFrame;
     if (highWater) *highWater = DrawEnvHighWater;
     if (over100Frames) *over100Frames = DrawEnvOver100Frames;
-    if (growths) *growths = DrawEnvGrowths;
-    if (heapBytes) *heapBytes = DrawEnvHeapBytes;
-}
-
-void CGLContext::GrowDrawEnvPtrBank()
-{
-    // The old debug-only assertion allowed entry101 to overwrite the next
-    // bank, or CurDrawEnvPtrs itself. Failure must stop before any write even
-    // in release builds. Limit both signed counts and allocation arithmetic.
-    if (NumCurDrawEnvPtrs < 0 || NumCurDrawEnvPtrs != CurDrawEnvCapacity
-        || CurDrawEnvCapacity <= 0 || CurDrawEnvCapacity > INT_MAX / 2
-        || (size_t)CurDrawEnvCapacity > ((size_t)-1) / (2 * sizeof(void*))) {
-        fputs("ps2gl: invalid draw-environment pointer capacity\n", stderr);
-        abort();
-    }
-    const int newCapacity = CurDrawEnvCapacity * 2;
-    const bool oldIsHeap = CurDrawEnvPtrs != DrawEnvPtrs0 && CurDrawEnvPtrs != DrawEnvPtrs1;
-    const size_t oldBankBytes = oldIsHeap ? (size_t)CurDrawEnvCapacity * sizeof(void*) : 0;
-    const size_t newBankBytes = (size_t)newCapacity * sizeof(void*);
-    if (oldBankBytes > DrawEnvHeapBytes
-        || newBankBytes > UINT_MAX - (DrawEnvHeapBytes - oldBankBytes)) {
-        fputs("ps2gl: draw-environment heap accounting overflow\n", stderr);
-        abort();
-    }
-    void** grown = (void**)malloc(newBankBytes);
-    if (!grown) {
-        fputs("ps2gl: draw-environment pointer allocation failed\n", stderr);
-        abort();
-    }
-    memcpy(grown, CurDrawEnvPtrs, (size_t)NumCurDrawEnvPtrs * sizeof(void*));
-    if (oldIsHeap) free(CurDrawEnvPtrs);
-    CurDrawEnvPtrs = grown;
-    CurDrawEnvCapacity = newCapacity;
-    const unsigned int oldHeapBytes = DrawEnvHeapBytes;
-    DrawEnvHeapBytes = (unsigned int)(DrawEnvHeapBytes - oldBankBytes + newBankBytes);
-    ++DrawEnvGrowths;
-    if (DrawEnvHeapObserver) DrawEnvHeapObserver(oldHeapBytes, DrawEnvHeapBytes);
+    if (growths) *growths = 0;
+    if (heapBytes) *heapBytes = 0;
 }
 
 CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
@@ -653,13 +615,8 @@ CGLContext::CGLContext(int immBufferQwordSize, int immDrawBufferQwordSize)
     ImmVif1Packet = new CVifSCDmaPacket(immDrawBufferQwordSize, DMAC::Channels::vif1,
         Packet::kXferTags, Core::MemMappings::UncachedAccl);
 
-    CurDrawEnvPtrs     = DrawEnvPtrs0;
-    LastDrawEnvPtrs    = DrawEnvPtrs1;
-    NumCurDrawEnvPtrs  = 0;
-    NumLastDrawEnvPtrs = 0;
-    CurDrawEnvCapacity = LastDrawEnvCapacity = kMaxDrawEnvChanges;
+    NumCurDrawEnvChanges = 0;
     DrawEnvLastFrame = DrawEnvHighWater = DrawEnvOver100Frames = 0;
-    DrawEnvGrowths = DrawEnvHeapBytes = 0;
 
     ImmGManager   = new CImmGeomManager(*this, immBufferQwordSize);
     DListGManager = new CDListGeomManager(*this);
@@ -734,13 +691,9 @@ CGLContext::~CGLContext()
         *R_EE_T1_MODE = SavedPresentationTimerMode;
         PresentationTimerOwned = false;
     }
-    if (CurDrawEnvPtrs != DrawEnvPtrs0 && CurDrawEnvPtrs != DrawEnvPtrs1)
-        free(CurDrawEnvPtrs);
-    if (LastDrawEnvPtrs != DrawEnvPtrs0 && LastDrawEnvPtrs != DrawEnvPtrs1)
-        free(LastDrawEnvPtrs);
-    const unsigned int oldHeapBytes = DrawEnvHeapBytes;
-    DrawEnvHeapBytes = 0;
-    if (DrawEnvHeapObserver && oldHeapBytes) DrawEnvHeapObserver(oldHeapBytes, 0);
+    for (int b = 0; b < 2; b++)
+        for (int i = 0; i < NumBuffersToBeFreed[b]; i++)
+            free(BuffersToBeFreed[b][i]);
 
     delete CurPacket;
     delete LastPacket;
@@ -1439,19 +1392,12 @@ void CGLContext::SwapBuffers(bool displayAlreadyPresented)
     LastPacket               = tempPkt;
     Vif1Packet               = CurPacket;
 
-    // switch drawenv ptrs
+    // close the drawenv sync count
 
-    DrawEnvLastFrame = (unsigned int)NumCurDrawEnvPtrs;
+    DrawEnvLastFrame = NumCurDrawEnvChanges;
     if (DrawEnvLastFrame > DrawEnvHighWater) DrawEnvHighWater = DrawEnvLastFrame;
-    if (NumCurDrawEnvPtrs > kMaxDrawEnvChanges) ++DrawEnvOver100Frames;
-    void** tempDEPtrs  = CurDrawEnvPtrs;
-    CurDrawEnvPtrs     = LastDrawEnvPtrs;
-    LastDrawEnvPtrs    = tempDEPtrs;
-    const int tempDECapacity = CurDrawEnvCapacity;
-    CurDrawEnvCapacity = LastDrawEnvCapacity;
-    LastDrawEnvCapacity = tempDECapacity;
-    NumLastDrawEnvPtrs = NumCurDrawEnvPtrs;
-    NumCurDrawEnvPtrs  = 0;
+    if (NumCurDrawEnvChanges > (unsigned int)kMaxDrawEnvChanges) ++DrawEnvOver100Frames;
+    NumCurDrawEnvChanges = 0;
 
     // tell some modules that it's time to flip
 
@@ -1515,7 +1461,7 @@ int pglInit(int immBufferVertexSize, int immDrawBufferQwordSize)
     // Canary: proves the locally-built ps2gl fork is linked (not the toolchain
     // prebuilt). Stamped with the build timestamp by the Makefile's `ps2gl`
     // target. pglInit() is the library entry point, so this prints once.
-    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.28 09:28]\n");
+    printf("[ CANARY ] Welcome to MODIFIED LOCAL ps2gl! [2026.09.28 17:43]\n");
     printf("[PS2-PACKETS] normal=cached\n");
     printf("[PS2-STACK] lazy-inverse=%d aligned-xfer=%d direct-tags=%d\n",
         1, 1,

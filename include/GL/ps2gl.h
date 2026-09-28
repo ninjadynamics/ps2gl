@@ -148,11 +148,11 @@ extern void pglSetStreamedSubmission(GLboolean enable);
 extern void pglStreamProbeTake(unsigned int out[PGL_STREAM_PROBE_COUNT]);
 extern void pglGetWindowContextStats(unsigned int* attempts, unsigned int* reused,
     unsigned int* full, unsigned int* globalPins);
-/* Draw-environment pointer bookkeeping diagnostics, read without rendering
- * side effects. lastFrame/highWater count records at completed swaps;
- * over100Frames/growths are cumulative unsigned counters (subtract modulo
- * wrap). heapBytes counts live grown pointer banks, excluding embedded100.
- * Outputs may be NULL. Counters restart when a context is constructed. */
+/* Draw-environment sync diagnostics, read without rendering side effects.
+ * lastFrame/highWater count syncs at completed swaps; over100Frames is a
+ * cumulative unsigned counter (subtract modulo wrap). growths and heapBytes
+ * are always 0: syncs are counted, not recorded. Outputs may be NULL.
+ * Counters restart when a context is constructed. */
 extern void pglGetDrawEnvStats(unsigned int* lastFrame, unsigned int* highWater,
     unsigned int* over100Frames, unsigned int* growths, unsigned int* heapBytes);
 /* Main-thread frame-boundary elapsed CPU cycles. FINISH waits for the previous
@@ -267,11 +267,8 @@ typedef struct {
 extern unsigned int pglGetPresentationSendOptions(void);
 extern GLboolean pglTakePresentationSendMetrics(unsigned int report,
     unsigned int sequence, PGLPresentationSendSample* sample);
-/* Optional main-thread allocation observer. Successful growth/free reports
- * old/new total requested heap bytes, excluding allocator overhead. Installing
- * a different non-NULL observer reports existing storage as 0 -> heapBytes;
- * re-installing the same observer does nothing. NULL detaches. The callback
- * must not render, destroy the context, or change this observer. */
+/* Compatibility no-op: draw-environment syncs are counted, not recorded, so
+ * no heap storage exists and the observer is never called. */
 extern void pglSetDrawEnvHeapObserver(void (*observer)(unsigned int, unsigned int));
 /* Compatibility query: immediate geometry always uses cached memory. */
 extern GLboolean pglUsesCachedImmediateGeometry(void);

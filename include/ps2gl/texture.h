@@ -83,6 +83,17 @@ public:
 
     void BeginDListDef() { InsideDListDef = true; }
     void EndDListDef() { InsideDListDef = false; }
+
+    // A palette is being freed: drop every non-owning reference to it.
+    void ForgetClut(const CMMClut* clut)
+    {
+        if (CurClut == clut)
+            CurClut = NULL;
+        if (LastClutSent == clut) {
+            LastClutSent = NULL;
+            LastTexSent  = NULL;
+        }
+    }
 };
 
 /********************************************
@@ -158,12 +169,8 @@ public:
     }
 
     // HyperSolar: take ownership of this texture's palette (deletes any prior).
-    void SetOwnClut(CMMClut* clut)
-    {
-        if (OwnClut)
-            delete OwnClut;
-        OwnClut = clut;
-    }
+    void SetOwnClut(CMMClut* clut);
+    void ReleaseOwnClut();
     CMMClut* GetOwnClut() const { return OwnClut; }
 
     // HyperSolar: take ownership of an allocated+locked pack (see OwnPack).

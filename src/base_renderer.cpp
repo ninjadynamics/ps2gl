@@ -9,6 +9,7 @@
 #include "ps2s/math.h"
 #include "ps2s/packet.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -428,6 +429,11 @@ void CBaseRenderer::XferBlock(CVifSCDmaPacket& packet,
         // but I can't use the vif to expand the data because I
         // need it to interleave the vertices, normals, etc..
         CDmaPacket& normalBuf = *NormalBuf;
+        // Release builds do not check the per-normal appends below.
+        if (!normalBuf.CanReserveWords((uint32_t)numToAdd * 3)) {
+            fputs("ps2gl: immediate normal buffer full (current-normal fallback)\n", stderr);
+            abort();
+        }
         normals               = (void*)normalBuf.GetNextPtr();
         firstNormal           = 0;
 
@@ -450,6 +456,10 @@ void CBaseRenderer::XferBlock(CVifSCDmaPacket& packet,
         // no tex coords given, so use the current value..
         // see note above for normals
         CDmaPacket& texCoordBuf = *TexCoordBuf;
+        if (!texCoordBuf.CanReserveWords((uint32_t)numToAdd * 2)) {
+            fputs("ps2gl: immediate texcoord buffer full (current-texcoord fallback)\n", stderr);
+            abort();
+        }
         texCoords               = (void*)texCoordBuf.GetNextPtr();
         firstTexCoord           = 0;
 

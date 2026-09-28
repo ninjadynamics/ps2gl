@@ -47,7 +47,7 @@ private:
     const void* Normals[kMaxNumStrips];
     const void* TexCoords[kMaxNumStrips];
     const void* Colors[kMaxNumStrips];
-    unsigned char NumIndices[kMaxNumStrips];
+    unsigned int NumIndices[kMaxNumStrips];
 
     // new geometry we are trying to add to the block
 

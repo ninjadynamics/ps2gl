@@ -95,7 +95,7 @@ void CClearEnv::ClearBuffers(unsigned int bitMask)
         pDrawEnv->SetFrameBufferDrawMask(0xffffffff);
 
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
-    pGLContext->AddingDrawEnvToPacket((uint128_t*)pGLContext->GetVif1Packet().GetNextPtr() + 1);
+    pGLContext->AddingDrawEnvToPacket();
     pDrawEnv->SendSettings(packet);
     if (CanUsePageStrips()) {
         // GS Manual p46: top/left inclusive, bottom/right exclusive. These

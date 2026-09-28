@@ -11,6 +11,9 @@
  * includes
  */
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "ps2s/gsmem.h"
 #include "ps2s/packet.h"
 
@@ -144,14 +147,10 @@ class CGLContext {
         *Vif1Packet, *SavedVif1Packet,
         *ImmVif1Packet;
 
-    // Double-buffered draw-environment pointer lists for clients that patch
-    // a completed chain. The embedded storage is the allocation-free case;
-    // each bank grows before it fills, independently of the last-frame bank.
+    // Draw-environment syncs in the frame being built; only the stats read
+    // it (no client patches a completed chain, so no pointers are kept).
     static const int kMaxDrawEnvChanges = 100;
-    void* DrawEnvPtrs0[kMaxDrawEnvChanges];
-    void* DrawEnvPtrs1[kMaxDrawEnvChanges];
-    void **CurDrawEnvPtrs, **LastDrawEnvPtrs;
-    int NumCurDrawEnvPtrs, NumLastDrawEnvPtrs;
+    unsigned int NumCurDrawEnvChanges;
 
     // list of memory to free after this frame is finished
     static const int kMaxBuffersToBeFreed = 1024;
@@ -223,14 +222,7 @@ public:
     void RenderGeometry();
     void FinishRenderingGeometry(bool forceImmediateStop);
 
-    void AddingDrawEnvToPacket(void* de)
-    {
-        if (NumCurDrawEnvPtrs >= CurDrawEnvCapacity)
-            GrowDrawEnvPtrBank();
-        CurDrawEnvPtrs[NumCurDrawEnvPtrs++] = de;
-    }
-    void** GetDrawEnvPtrs() { return LastDrawEnvPtrs; }
-    int GetNumDrawEnvPtrs() const { return NumLastDrawEnvPtrs; }
+    void AddingDrawEnvToPacket() { ++NumCurDrawEnvChanges; }
 
     bool GetCurrentFieldIsEven() const { return IsCurrentFieldEven; }
 
@@ -246,7 +238,10 @@ public:
        */
     inline void AddBufferToBeFreed(void* buf)
     {
-        mAssert(NumBuffersToBeFreed[CurBuffer] < kMaxBuffersToBeFreed);
+        if (NumBuffersToBeFreed[CurBuffer] >= kMaxBuffersToBeFreed) {
+            fputs("ps2gl: deferred-free list full\n", stderr);
+            abort();
+        }
         BuffersToBeFreed[CurBuffer][NumBuffersToBeFreed[CurBuffer]++] = buf;
     }
 
@@ -433,12 +428,6 @@ public:
     void SwapBuffersOnVSync(unsigned int intervals);
     void WaitForPresentation();
     void ResetPresentation();
-
-private:
-    // Keep the earlier member offsets intact for header consumers. Consumers
-    // must still rebuild because CGLContext's size and inline append changed.
-    int CurDrawEnvCapacity, LastDrawEnvCapacity;
-    void GrowDrawEnvPtrBank();
 };
 
 // global pointer to the GLContext

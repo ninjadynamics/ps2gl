@@ -5,6 +5,7 @@
 	  main directory of this archive for more details.                             */
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "ps2s/packet.h"
 #include "ps2s/texture.h"
@@ -754,32 +755,20 @@ bool CRendererManager::UpdateNewRenderer()
                     && DefaultRenderers[i].requirements == (rreqs & DefaultRenderers[i].requirements))
                     break;
 
-            mErrorIf(i == NumDefaultRenderers,
-                "Couldn't find a suitable renderer..\n"
-                "state reqs = 0x%08x 0x%08x, mask = %08x %08x\n",
-                (uint32_t)((uint64_t)rreqs >> 32),
-                (uint32_t)((uint64_t)rreqs),
-                (uint32_t)((uint64_t)CurUserPrimReqMask >> 32),
-                (uint32_t)((uint64_t)CurUserPrimReqMask));
-
-            // Release-mode survival for what the mErrorIf above only catches in
-            // debug: a no-match request used to fall through and select
+            // A no-match request used to fall through and select
             // DefaultRenderers[NumDefaultRenderers] — one PAST the registry —
             // and the next LoadRenderer virtual-called heap garbage (the
-            // deterministic title-boot EE crash, 2026-07-02). Keep the current
-            // renderer (draw may look wrong but the machine survives) and say
-            // exactly which request had no match so the registry can be fixed.
+            // title-boot EE crash, 2026-07-02). Keeping the current renderer
+            // instead feeds geometry to the wrong microcode and can wedge VU1,
+            // so an unsupported state is fatal in every build. The printed
+            // bits name the request the registry must cover.
             if (i == NumDefaultRenderers) {
-                static int warned = 0;
-                if (warned < 8) {
-                    warned++;
-                    printf("ps2gl: NO RENDERER for reqs=0x%08lx%08lx mask=0x%08lx%08lx -- keeping current\n",
-                        (unsigned long)((uint64_t)rreqs >> 32),
-                        (unsigned long)((uint64_t)rreqs & 0xffffffff),
-                        (unsigned long)((uint64_t)CurUserPrimReqMask >> 32),
-                        (unsigned long)((uint64_t)CurUserPrimReqMask & 0xffffffff));
-                }
-                return false;
+                fprintf(stderr, "ps2gl: NO RENDERER for reqs=0x%08lx%08lx mask=0x%08lx%08lx\n",
+                    (unsigned long)((uint64_t)rreqs >> 32),
+                    (unsigned long)((uint64_t)rreqs & 0xffffffff),
+                    (unsigned long)((uint64_t)CurUserPrimReqMask >> 32),
+                    (unsigned long)((uint64_t)CurUserPrimReqMask & 0xffffffff));
+                abort();
             }
 
             NewRenderer = &DefaultRenderers[i];

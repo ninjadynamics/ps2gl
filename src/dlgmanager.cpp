@@ -4,6 +4,9 @@
 	  General Public License Version 2.1. See the file "COPYING" in the
 	  main directory of this archive for more details.                             */
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "ps2s/math.h"
 #include "ps2s/packet.h"
 
@@ -461,6 +464,29 @@ void CDListGeomManager::CommitNewGeom()
     }
 }
 
+// Build a cached display-list packet into storage no DMA chain references.
+// The first build allocates the packet; a rebuild swaps in a new buffer and
+// defers freeing the old one, which the last two frames may still Call().
+static void PrepareCachedPacket(CVifSCDmaPacket*& packet, CDList& dlist, int qwords)
+{
+    if (!packet) {
+        packet = new CVifSCDmaPacket(qwords, DMAC::Channels::vif1,
+            Packet::kXferTags,
+            Core::MemMappings::UncachedAccl);
+        dlist.RegisterNewPacket(packet);
+    } else {
+        void* newBuf = CDmaPacket::AllocBuffer(qwords,
+            Core::MemMappings::UncachedAccl);
+        if (!newBuf) {
+            fputs("ps2gl: display-list packet allocation failed\n", stderr);
+            abort();
+        }
+        void* oldBuf = packet->SwapOutBuffer(newBuf, (uint32_t)qwords);
+        pGLContext->AddBufferToBeFreed(Core::MakePtrNormal(oldBuf));
+    }
+    packet->Reset();
+}
+
 class CDrawArraysCmd : public CDListCmd {
     CGeometryBlock Geometry;
     bool IsCached;
@@ -511,40 +537,23 @@ public:
             RenderContextDepMask      = renderer.GetRenderContextDeps();
             RenderContextDependencies = RenderContextDepMask & curRenderContext;
 
+            CVifSCDmaPacket* target;
             if (cachePacket) {
-                // allocate memory for the new packet
-
                 // ask the renderer how much memory to allocate for the packet
                 int qwords = renderer.GetPacketQwordSize(Geometry);
-
-                if (!RenderPacket) {
-                    RenderPacket = new CVifSCDmaPacket(qwords, DMAC::Channels::vif1,
-                        Packet::kXferTags,
-                        Core::MemMappings::UncachedAccl);
-                    DList.RegisterNewPacket(RenderPacket);
-                }
-
-                // if this is not the first time creating the packet, we need to
-                // delete the old packet, but not immediately
-                // because it may take up to two frames to be dma'ed
-                if (IsCached) {
-                    void* newBuf = CDmaPacket::AllocBuffer(qwords,
-                        Core::MemMappings::UncachedAccl);
-                    void* oldBuf = RenderPacket->SwapOutBuffer(newBuf);
-                    pGLContext->AddBufferToBeFreed(Core::MakePtrNormal(oldBuf));
-                }
-
-                RenderPacket->Reset();
-
+                PrepareCachedPacket(RenderPacket, DList, qwords);
                 IsCached = true;
+                target   = RenderPacket;
             } else {
-                // don't cache the packet..  use the main dma packet
-                RenderPacket = &pGLContext->GetVif1Packet();
+                // don't cache the packet..  use the main dma packet. Keep
+                // RenderPacket (if any) for a later cached rebuild.
+                IsCached = false;
+                target   = &pGLContext->GetVif1Packet();
             }
 
             pGLContext->PushVif1Packet();
             {
-                pGLContext->SetVif1Packet(*RenderPacket);
+                pGLContext->SetVif1Packet(*target);
                 renderer.DrawLinearArrays(Geometry);
             }
             pGLContext->PopVif1Packet();
@@ -564,9 +573,6 @@ public:
             pGLContext->GetVif1Packet().Call(*RenderPacket);
             pGLContext->GetVif1Packet().Pad128();
             pGLContext->GetVif1Packet().CloseTag();
-        } else {
-            // not really necessary
-            RenderPacket = NULL;
         }
 
         return CDListCmd::GetNextCmd(this);
@@ -608,36 +614,20 @@ public:
             || texEnabled != IsTexEnabled
             || lEnabled != IsLightingEnabled) {
 
+            CImmGeomManager& gmanager = pGLContext->GetImmGeomManager();
+            CRenderer& renderer       = gmanager.GetRendererManager().GetCurRenderer();
+            CVifSCDmaPacket* target;
             if (!dontCache) {
-
-                // allocate packet
-                if (!RenderPacket) {
-                    // FIXME:  this is a pitiful hack for allocating enough memory
-                    // change below, too
-                    int qwords   = Math::Max(Geometry.GetNumArrays(), 1) * 100;
-                    RenderPacket = new CVifSCDmaPacket(qwords, DMAC::Channels::vif1,
-                        Packet::kXferTags,
-                        Core::MemMappings::UncachedAccl);
-                    DList.RegisterNewPacket(RenderPacket);
-                }
-
-                // if this is not the first time creating the packet, we need to
-                // delete the old packet, but not immediately
-                // because it may take up to two frames to be dma'ed
-                if (IsCached) {
-                    int qwords   = Math::Max(Geometry.GetNumArrays(), 1) * 100;
-                    void* newBuf = CDmaPacket::AllocBuffer(qwords,
-                        Core::MemMappings::UncachedAccl);
-                    void* oldBuf = RenderPacket->SwapOutBuffer(newBuf);
-                    pGLContext->AddBufferToBeFreed(oldBuf);
-                }
-
-                RenderPacket->Reset();
-
+                // ask the renderer how much memory to allocate for the packet
+                int qwords = renderer.GetPacketQwordSize(Geometry);
+                PrepareCachedPacket(RenderPacket, DList, qwords);
                 IsCached = true;
+                target   = RenderPacket;
             } else {
-                // don't cache the packet..  use the main dma packet
-                RenderPacket = &pGLContext->GetVif1Packet();
+                // don't cache the packet..  use the main dma packet. Keep
+                // RenderPacket (if any) for a later cached rebuild.
+                IsCached = false;
+                target   = &pGLContext->GetVif1Packet();
             }
 
             IsTexEnabled      = texEnabled;
@@ -645,9 +635,7 @@ public:
 
             pGLContext->PushVif1Packet();
             {
-                pGLContext->SetVif1Packet(*RenderPacket);
-                CImmGeomManager& gmanager = pGLContext->GetImmGeomManager();
-                CRenderer& renderer       = gmanager.GetRendererManager().GetCurRenderer();
+                pGLContext->SetVif1Packet(*target);
                 renderer.DrawIndexedArrays(Geometry);
             }
             pGLContext->PopVif1Packet();
@@ -665,8 +653,6 @@ public:
             pGLContext->GetVif1Packet().Call(*RenderPacket);
             pGLContext->GetVif1Packet().Pad128();
             pGLContext->GetVif1Packet().CloseTag();
-        } else {
-            RenderPacket = NULL;
         }
 
         return CDListCmd::GetNextCmd(this);

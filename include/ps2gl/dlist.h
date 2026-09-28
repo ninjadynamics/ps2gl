@@ -7,6 +7,8 @@
 #ifndef ps2gl_dlist_h
 #define ps2gl_dlist_h
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "GL/gl.h"
@@ -132,6 +134,11 @@ public:
     template <class CmdType>
     void operator+=(CmdType cmd)
     {
+        // Every command must fit a fresh block beside its CNextBlockCmd, or
+        // CDList::operator+= would copy it past Memory.
+        static_assert(((sizeof(CmdType) + 15) & ~15)
+                <= ByteSize - ((sizeof(CNextBlockCmd) + 15) & ~15),
+            "display-list command does not fit a command block");
         memcpy(MemCursor, &cmd, sizeof(CmdType)); // this should be the usual sizeof()
         MemCursor += CDListCmd::SizeOf<CmdType>();
         BytesLeft -= CDListCmd::SizeOf<CmdType>();
@@ -209,6 +216,10 @@ public:
 
     void RegisterNewPacket(CVifSCDmaPacket* packet)
     {
+        if (NumRenderPackets >= kMaxNumRenderPackets) {
+            fputs("ps2gl: display list exceeds its render-packet capacity\n", stderr);
+            abort();
+        }
         RenderPackets[NumRenderPackets++] = packet;
     }
 };
@@ -250,9 +261,12 @@ public:
     }
     ~CDListManager()
     {
-        for (int i = 0; i < 10; i++)
-            if (Lists[i])
-                delete Lists[i];
+        for (int i = 0; i < kMaxListID; i++)
+            delete Lists[i];
+        for (int b = 0; b < 2; b++)
+            for (int i = 0; i < NumListsToBeFreed[b]; i++)
+                delete ListsToBeFreed[b][i];
+        delete OpenList;
     }
 
     void SwapBuffers();
