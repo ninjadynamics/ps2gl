@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Check the X2 copy-by-three candidate against a pinned original X2 image.
+"""Check X2 window copy against a pinned original X2 image.
+
+The copy-by-three candidate was deleted at gate promotion (September 28);
+this model now guards that the promoted image keeps the original copy.
 
 Word-copy checks execute the scheduled loop, including its branch delay slot.
 Whole-program checks reuse the float32 dependency model; they are not a VU/GS
@@ -35,10 +38,8 @@ def source_contract():
     pattern = r'\.macro\s+x2_kick_chunk\s.*?\.endm'
     new_macro = re.search(pattern, source, re.S)[0]
     old_macro = re.search(pattern, original, re.S)[0]
-    off_macro = re.sub(
-        r'^ *#if PGL_X2_WINDOW_COPY_TRIANGLES\n.*?^ *#else\n(.*?)^ *#endif\n',
-        r'\1', new_macro, flags=re.S | re.M)
-    assert off_macro == old_macro, 'OFF must retain the original macro verbatim'
+    # The copy-by-three candidate was deleted at promotion: word copy stays original.
+    assert new_macro == old_macro, 'X2 must retain the original macro verbatim'
     # All output commits are complete triangles. Other appearances are reads.
     writes = re.findall(r'^\s*(i\w+)\s+out_count,\s*([^;\n]+)', source, re.M)
     assert [(op, args.strip()) for op, args in writes] == [
@@ -48,16 +49,11 @@ def source_contract():
         stem = 'general_clip_glow_' if decoder == 'x2g' else 'general_clip_tri_'
         text = (ROOT / ('vu1/' + stem + decoder + '_decode.vcl')).read_text()
         assert 'out_count' not in text
-    gate = (ROOT / 'vu1/x2_window_copy_gate.h').read_text()
-    selected = re.search(r'^#define PGL_X2_WINDOW_COPY_TRIANGLES ([01])$', gate, re.M)
-    assert selected
     make = (ROOT / 'Makefile').read_text()
-    assert 'general_clip_tri_x2_pp4.vcl: vu1/general_clip_tri_x2_pp3.vcl $(X2_WINDOW_COPY_GATE)' in make
-    assert '-imacros $(X2_WINDOW_COPY_GATE)' in make
     guard_rule = make.split('vu1/general_clip_tri_x2.vo:', 1)[1].split('\n\n', 1)[0]
     assert guard_rule.index('python3 $(X2D_GUARD)') < guard_rule.index('dvp-as')
     assert '$(X2D_DECODER_VSM)' not in guard_rule.splitlines()[0]
-    return int(selected.group(1))
+    return 0
 
 
 def copy_kernel(program, label, top, arena, count, seed):
@@ -197,10 +193,7 @@ def run_packets(program, memory, top, fan_size=None):
 
 def check(old_path):
     enabled = source_contract()
-    gate_text = (ROOT / 'vu1/x2_window_copy_gate.h').read_text()
-    near_gate = re.search(r'^#define PGL_X2_SKIP_IDENTITY_NEAR ([01])$', gate_text, re.M)
-    assert near_gate, 'missing independent near-skip gate'
-    near_enabled = int(near_gate.group(1))
+    near_enabled = 1  # identity-near skip is promoted
     old = Program(old_path)
     new = Program(ROOT / 'vu1/general_clip_tri_x2_vcl.vsm')
     assert new.code[:6] == old.code[:6], 'shared decoder entry prologue changed'

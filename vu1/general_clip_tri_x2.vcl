@@ -75,9 +75,6 @@
      ; and its DrawBlock unpacks ONE 2q block at 178 per buffer. Changing
      ; any of these numbers means re-checking this layout end to end.
 
-     ; Independent compile-time A/B comes from x2_window_copy_gate.h through
-     ; this module's private preprocessor rule. No prefix or EE ABI changes.
-
      #include       "vu1_mem_linear.h"
 
      .include       "db_in_db_out.i"
@@ -289,7 +286,6 @@ cp_wrap_lid\@:
      sq             shc\@, kCPolyA+(\slot*3)+2(buffer_top)
      .endm
 
-#if PGL_X2_SKIP_IDENTITY_NEAR
      ; Same raw records as sh_load, placed directly in the near pass's
      ; destination when its existing exact near_any verdict is all-inside.
      ; Keep this separate so gate OFF retains the original generated path.
@@ -303,7 +299,6 @@ cp_wrap_lid\@:
      lq             shc\@, \in_off+3(next_input)
      sq             shc\@, kCPolyB+(\slot*3)+2(buffer_top)
      .endm
-#endif
 
      ; ---------------------------------------------------
      ; Close and kick the current compound wall+window arena, then switch to
@@ -356,34 +351,6 @@ x2_wtag_lid\@:
      ; wc_src. The vcl scheduler cannot infer that relationship.
      b              x2_wcopy_lid\@
 x2_wcopy_lid\@:
-     #if PGL_X2_WINDOW_COPY_TRIANGLES
-     ; Every commit adds three vertices; init/reset adds none. Decoders enter
-     ; main_loop before that reset, so the nonempty count is divisible by
-     ; three even after clipping or a partial input tail. Copy one complete
-     ; triangle per iteration, preserving all STQ lanes and every XYZF bit.
-     ; RGBAQ must still follow each STQ: PACKED ST captures Q for RGBAQ.
-     lq             wc_s0, 0(wc_src)
-     lq             wc_p0, 2(wc_src)
-     lq             wc_s1, 3(wc_src)
-     lq             wc_p1, 5(wc_src)
-     lq             wc_s2, 6(wc_src)
-     lq             wc_p2, 8(wc_src)
-     move.xyzw      wc_t, win_color
-     move.w         wc_t, win_color
-     sq             wc_s0, 0(wc_dst)
-     sq             wc_t, 1(wc_dst)
-     sq             wc_p0, 2(wc_dst)
-     sq             wc_s1, 3(wc_dst)
-     sq             wc_t, 4(wc_dst)
-     sq             wc_p1, 5(wc_dst)
-     sq             wc_s2, 6(wc_dst)
-     sq             wc_t, 7(wc_dst)
-     sq             wc_p2, 8(wc_dst)
-     iaddiu         wc_src, wc_src, 9
-     iaddiu         wc_dst, wc_dst, 9
-     isubiu         wc_n, wc_n, 3
-     ibgtz          wc_n, x2_wcopy_lid\@
-     #else
      lq             wc_s, 0(wc_src)
      sq             wc_s, 0(wc_dst)
      lq             wc_c, 1(wc_src)
@@ -396,7 +363,6 @@ x2_wcopy_lid\@:
      iaddiu         wc_dst, wc_dst, 3
      isubiu         wc_n, wc_n, 1
      ibgtz          wc_n, x2_wcopy_lid\@
-     #endif
 
 x2_kick_lid\@:
      ; Store-to-kick scheduling fence, then a second fence prevents following
@@ -636,7 +602,6 @@ x2_fast_room_lid:
      b              tri_next_lid
 
 sh_handler_lid:
-#if PGL_X2_SKIP_IDENTITY_NEAR
      ; xform_vert preserves pre-divide w. For finite transformed vertices,
      ; the near plane's exact pd_plane/pd_sign verdict is the existing
      ; clamped FTOI4 sign of w-near, including its 1/16 tolerance. All-inside
@@ -650,7 +615,6 @@ sh_handler_lid:
      ; Required store/load scheduling boundary before plane 1 reads B.
      b              sh_side_start_lid
 sh_near_original_lid:
-#endif
      ; rebuild the tri as polygon A (pre-divide pos + raw stq + raw color)
      sh_load        0, 0
      sh_load        kInputQPerV, 1
@@ -667,9 +631,7 @@ sh_fence_lid:
      clip_pass      kCPolyA, kCPolyB, kCPlanes+0
      isubiu         sh_t, sh_n, 3
      ibltz          sh_t, tri_next_lid
-#if PGL_X2_SKIP_IDENTITY_NEAR
 sh_side_start_lid:
-#endif
      clip_pass      kCPolyB, kCPolyA, kCPlanes+1
      isubiu         sh_t, sh_n, 3
      ibltz          sh_t, tri_next_lid

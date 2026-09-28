@@ -165,10 +165,6 @@ class Program:
 
 def check_source_contract():
     reference=(ROOT/'vu1/general_clip_tri_x2.vcl').read_text()
-    # Canonical X2 has an independent paired-window copy experiment. Its OFF
-    # macro must still be the original macro retained by wall-only X2F.
-    reference=re.sub(r'^ *#if PGL_X2_WINDOW_COPY_TRIANGLES\n.*?^ *#else\n(.*?)^ *#endif\n',
-        r'\1',reference,flags=re.S|re.M)
     candidate=(ROOT/'vu1/general_clip_quad_x2f.vcl').read_text()
     for name in ('pd_plane','pd_sign','cp_edge','clip_pass','emit_mvert','x2_kick_chunk'):
         expression=rf'\.macro\s+{name}\s.*?\.endm'

@@ -87,7 +87,6 @@ VSM_SOURCES = $(addsuffix _vcl.vsm, $(addprefix vu1/, $(RENDERERS)))
 X2_VSM = vu1/general_clip_tri_x2_vcl.vsm
 X2D_DECODER_VSM = vu1/general_clip_tri_x2d_decode_vcl.vsm
 X2D_GUARD = vu1/x2d_microcode_guard.py
-X2_WINDOW_COPY_GATE = vu1/x2_window_copy_gate.h
 X2Q_DECODER_VSM = vu1/general_clip_tri_x2q_decode_vcl.vsm
 X2Q_GUARD = vu1/x2q_microcode_guard.py
 X2C_DECODER_VSM = vu1/general_clip_tri_x2c_decode_vcl.vsm
@@ -236,9 +235,6 @@ vu1/general_clip_tri_x2h_decode.vo: $(X2H_DECODER_VSM) $(X2H_GUARD) $(X2Q_GUARD)
 	dvp-as -o $@ $(X2H_DECODER_VSM)
 
 ifeq ($(REBUILD_VU1),1)
-vu1/general_clip_tri_x2_pp4.vcl: vu1/general_clip_tri_x2_pp3.vcl $(X2_WINDOW_COPY_GATE)
-	cat $< | cc -E -P -imacros vu1/vu1_mem_linear.h -imacros $(X2_WINDOW_COPY_GATE) -o $@ -
-
 $(X2C_DECODER_VSM): vu1/general_clip_tri_x2c_decode_pp4.vcl $(X2C_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
 	vcl -o$@ $<
 	python3 $(X2C_GUARD) --fix-decoder $(X2_VSM) $(X2D_DECODER_VSM) $@
@@ -274,8 +270,8 @@ $(X2D_DECODER_VSM): vu1/general_clip_tri_x2d_decode_pp4.vcl $(X2D_GUARD) $(X2_VS
 # Remove only those comments before the C preprocessor for this new module;
 # the established preprocessing rules and existing VU images stay unchanged.
 .INTERMEDIATE: vu1/general_clip_road_x2r_pp3.vcl vu1/general_clip_road_x2r_pp4.vcl
-vu1/general_clip_road_x2r_pp4.vcl: vu1/general_clip_road_x2r_pp3.vcl vu1/x2r_sky_gate.h
-	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -imacros vu1/x2r_sky_gate.h -o $@ -
+vu1/general_clip_road_x2r_pp4.vcl: vu1/general_clip_road_x2r_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
 
 vu1/general_clip_road_x2r_pp1.vcl vu1/general_clip_pool_x2p_pp1.vcl: vu1/ground_clip_shared.i
 vu1/general_clip_pool_x2p_pp1.vcl: vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i

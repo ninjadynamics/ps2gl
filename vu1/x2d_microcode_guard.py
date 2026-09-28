@@ -18,30 +18,10 @@ from pathlib import Path
 
 X2_MAIN_PC = 6
 VU1_MICRO_CAPACITY = 2048
-# The X2-only header selects independent reviewed experiments. Hash canonical LF
+# Promoted X2 image: original window copy, identity-near skip. Hash canonical LF
 # text without trailing whitespace so regeneration and Windows checkout agree.
-_header = Path(__file__).with_name('x2_window_copy_gate.h').read_text()
-
-
-def read_gate(name: str) -> int:
-    match = re.search(r'^#define ' + name + r' ([01])$', _header, re.M)
-    if not match:
-        raise SystemExit('x2d microcode guard: missing or invalid ' + name)
-    return int(match.group(1))
-
-
-X2_WINDOW_COPY_TRIANGLES = read_gate('PGL_X2_WINDOW_COPY_TRIANGLES')
-X2_SKIP_IDENTITY_NEAR = read_gate('PGL_X2_SKIP_IDENTITY_NEAR')
-_reviewed_images = {
-    (0, 0): (806, 'ce3c1209d0943428ed23964c5263cef33ca5b5b51148de02764715a83052f4fb'),
-    (1, 0): (836, 'b8c515204d661ca638cecbac5d64c69c93ad528366391c857206fde15632e0c5'),
-    (0, 1): (828, 'ba5565ef6ed5a542e42375310e57b7526c5ae66e90e2abee5e28d5247353c2a3'),
-}
-_selection = (X2_WINDOW_COPY_TRIANGLES, X2_SKIP_IDENTITY_NEAR)
-if _selection not in _reviewed_images:
-    raise SystemExit('x2d microcode guard: unreviewed X2 gate combination '
-                     + str(_selection))
-X2_INSTRUCTIONS, X2_VSM_SHA256 = _reviewed_images[_selection]
+X2_INSTRUCTIONS = 828
+X2_VSM_SHA256 = 'ba5565ef6ed5a542e42375310e57b7526c5ae66e90e2abee5e28d5247353c2a3'
 X2D_DECODER_VSM_SHA256 = "3ba063fc6baa758450aec971c0b57a44e3df8d216c4837280c036bbc9743a6ad"
 
 # CClipTriX2Renderer::InitContext uploads these absolute context locations.
@@ -266,7 +246,6 @@ def verify(x2_path: Path, decoder_path: Path) -> None:
         "x2d microcode guard: PASS "
         f"(X2 {x2_upload_count} insn @ PC0, decoder {decoder_upload_count} insn "
         f"@ PC{x2_upload_count}, tail -> PC{X2_MAIN_PC}, "
-        f"copy3={X2_WINDOW_COPY_TRIANGLES}, near-skip={X2_SKIP_IDENTITY_NEAR}, "
         f"{branches} bounded branches)"
     )
 

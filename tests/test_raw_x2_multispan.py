@@ -229,7 +229,6 @@ class RawX2Multispan(unittest.TestCase):
         self.assertNotIn("FindNumBuffers", body)
         game = (ROOT / "playstation2.c").read_text(encoding="utf-8")
         admission = game.split("static bool ps2_city_soup_run_batch_admitted", 1)[1]
-        self.assertIn("#if PS2_TEMP && PS2_CITY_SOUP_RUN_BATCH", admission)
         self.assertIn("pglGetRawX2SubmissionOptions() & 1u", admission)
         scope = game.split("if (chunks && chunks->soup_spans)", 1)[1]
         scope = scope.split("if (x2_soup && nchunk > 0)", 1)[0]

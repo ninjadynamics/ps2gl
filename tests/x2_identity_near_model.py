@@ -2,7 +2,7 @@
 """Exact near-identity source/sign and scheduled-packet checks.
 
 Uses the existing float32 dependency model, not native VU arithmetic/timing or
-GS pixels. A pinned original X2 commit is the independent gate-OFF reference.
+GS pixels. A pinned original X2 commit is the independent pre-skip reference.
 """
 import argparse
 import json
@@ -31,12 +31,13 @@ def near_plane(pos, near):
 def source_and_signs():
     source = (ROOT / 'vu1/general_clip_tri_x2.vcl').read_text()
     old = baseline('general_clip_tri_x2.vcl')
-    off = re.sub(r'^#if PGL_X2_SKIP_IDENTITY_NEAR\n.*?^#endif\n', '',
-                 source, flags=re.S | re.M)
+    # The promoted skip falls back to the original handler at sh_near_original_lid.
+    off = re.sub(r'^(sh_handler_lid:\n).*?^sh_near_original_lid:\n', r'\1',
+                 source, flags=re.S | re.M).replace('sh_side_start_lid:\n', '')
     region = lambda text: text.split('sh_handler_lid:\n', 1)[1].split('tri_next_lid:', 1)[0]
     instructions = lambda text: '\n'.join(line.split(';', 1)[0].rstrip()
         for line in text.splitlines() if line.split(';', 1)[0].strip())
-    assert instructions(region(off)) == instructions(region(old)), 'OFF handler must remain literal original'
+    assert instructions(region(off)) == instructions(region(old)), 'fallback handler must remain literal original'
     macro = lambda text, name: re.search(r'\.macro\s+' + name + r'\s.*?\.endm', text, re.S)[0]
     assert macro(source, 'sh_load') == macro(old, 'sh_load')
     alternate = macro(source, 'sh_load_near_identity')
@@ -47,9 +48,7 @@ def source_and_signs():
         assert macro(source, name) == macro(old, name), name
     assert 'ibne           near_any, vi00, sh_near_original_lid' in source
     assert 'b              sh_side_start_lid' in source
-    header = (ROOT / 'vu1/x2_window_copy_gate.h').read_text()
-    assert '#define PGL_X2_WINDOW_COPY_TRIANGLES 0' in header
-    gate = int(re.search(r'^#define PGL_X2_SKIP_IDENTITY_NEAR ([01])$', header, re.M)[1])
+    gate = 1  # promoted
     values = np.concatenate((np.linspace(-4096, 4096, 32769, dtype=F),
         np.array([0, -0., .9375, np.nextafter(F(.9375), F(-np.inf)),
                   np.nextafter(F(.9375), F(np.inf)), 1, -1], dtype=F)))

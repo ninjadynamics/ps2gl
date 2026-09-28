@@ -139,7 +139,7 @@ class ClearPageStrips(unittest.TestCase):
         source = (FORK / "src/clear.cpp").read_text(encoding="utf-8")
         header = (FORK / "include/ps2gl/clear.h").read_text(encoding="utf-8")
         draw = source.split("void CClearEnv::ClearBuffers", 1)[1].split("C gl api", 1)[0]
-        candidate = draw.split("#if PGL_CLEAR_PAGE_STRIPS", 1)[1].split("#endif", 1)[0]
+        candidate = draw  # page strips are promoted: the only clear path
         self.assertEqual(draw.count("pDrawEnv->SendSettings(packet)"), 1)
         self.assertEqual(candidate.count("packet.Cnt()"), 1)
         self.assertEqual(candidate.count("packet.OpenDirect()"), 1)
@@ -155,7 +155,6 @@ class ClearPageStrips(unittest.TestCase):
         self.assertIn("vertexTag.PRE = 0;", candidate)
         self.assertIn("vertexTag.REGS0 = colorTag.REGS2;", candidate)
         self.assertIn("vertexTag.REGS1 = colorTag.REGS4;", candidate)
-        self.assertRegex(header, r"#define PGL_CLEAR_PAGE_STRIPS [01]\b")
         sprite_source = (STUFF / "src/sprite.cpp").read_text(encoding="utf-8")
         for field in ("tme", "fge", "abe", "aa1"):
             self.assertRegex(sprite_source, rf"prim\.{field}\s*=\s*0;")

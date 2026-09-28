@@ -369,7 +369,7 @@ static CClipTriX2Renderer* pX2Renderer = NULL;
 
 extern "C" unsigned int pglGetRawX2SubmissionOptions(void)
 {
-    return PGL_RAW_X2_MULTI_SPAN && pX2Renderer ? 1u : 0u;
+    return pX2Renderer ? 1u : 0u;
 }
 
 void CClipTriX2Renderer::Register()
@@ -981,7 +981,6 @@ void CClipTriX2Renderer::DrawLinearArrays(CGeometryBlock& block)
 bool CClipTriX2Renderer::TryDrawIndependentSpans(CVifSCDmaPacket& packet,
     CGeometryBlock& block)
 {
-#if PGL_RAW_X2_MULTI_SPAN
     // Qualify every source before emitting anything. Continued strips and
     // paired windows keep their original split/order contract. No VU image,
     // memory limit or output-spill rule changes in this packet-only path.
@@ -1048,11 +1047,6 @@ bool CClipTriX2Renderer::TryDrawIndependentSpans(CVifSCDmaPacket& packet,
         FinishBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
     }
     return true;
-#else
-    (void)packet;
-    (void)block;
-    return false;
-#endif
 }
 
 // Copy of CLinearRenderer::DrawBlock with ONE change: the 2q staging block

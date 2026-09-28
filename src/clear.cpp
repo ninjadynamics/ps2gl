@@ -18,7 +18,7 @@ static unsigned int clearPageStripCounts[3];
 
 extern "C" unsigned int pglGetClearPageStripOptions(void)
 {
-    return PGL_CLEAR_PAGE_STRIPS ? 1u : 0u;
+    return 1u;
 }
 
 extern "C" void pglGetClearPageStripCounts(unsigned int out[3])
@@ -97,7 +97,6 @@ void CClearEnv::ClearBuffers(unsigned int bitMask)
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     pGLContext->AddingDrawEnvToPacket((uint128_t*)pGLContext->GetVif1Packet().GetNextPtr() + 1);
     pDrawEnv->SendSettings(packet);
-#if PGL_CLEAR_PAGE_STRIPS
     if (CanUsePageStrips()) {
         // GS Manual p46: top/left inclusive, bottom/right exclusive. These
         // adjacent integer sprites clear each original pixel exactly once.
@@ -142,7 +141,6 @@ void CClearEnv::ClearBuffers(unsigned int bitMask)
         packet.CloseTag();
         return;
     }
-#endif
     pSprite->Draw(packet);
 }
 

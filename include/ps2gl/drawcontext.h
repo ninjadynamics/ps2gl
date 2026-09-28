@@ -13,13 +13,6 @@
 
 #include "ps2s/cpu_matrix.h"
 
-/* A/B: 1 reuses the combined vertex transform when projection, modelview and
-   GS scale are bit-identical to its last computation (push/identity/pop
-   bracketed draws). The same inputs produce the same result. */
-#ifndef PGL_VERTEX_XFORM_REUSE
-#define PGL_VERTEX_XFORM_REUSE 1
-#endif
-
 #include "GL/ps2gl.h"
 
 #include "ps2gl/glcontext.h"
@@ -119,10 +112,8 @@ public:
     cpu_mat_44 VertexXform;
     cpu_mat_44 GSScale;
     bool IsVertexXformValid;
-#if PGL_VERTEX_XFORM_REUSE
     cpu_mat_44 XformKeyProjection, XformKeyModelView, XformKeyScale;
     bool XformKeyValid;
-#endif
 
     int Width, Height;
 

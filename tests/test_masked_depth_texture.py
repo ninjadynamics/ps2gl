@@ -83,8 +83,6 @@ class MaskedDepthTexture(unittest.TestCase):
         self.assertLess(begin.index("return GL_FALSE"), begin.index(".Flush()"))
         self.assertLess(begin.index(".Flush()"), begin.index("maskedDepthTextureOwner ="))
         self.assertIn("pGLContext->PrimChanged();", begin)
-        self.assertIn("#if PGL_MASKED_DEPTH_NO_TEXTURE", begin)
-        self.assertIn("#else\n    return GL_FALSE;", begin)
         end = source.split('extern "C" void pglEndMaskedDepthNoTexture', 1)[1]
         end = end.split('extern "C" unsigned int pglGetContextOptimizationFlags', 1)[0]
         self.assertLess(end.index(".Flush()"), end.index("maskedDepthTextureOwner = NULL"))
@@ -113,13 +111,11 @@ class MaskedDepthTexture(unittest.TestCase):
                    "glPopMatrix()", "glColorMask(GL_TRUE")
         offsets = [draw.index(marker) for marker in markers]
         self.assertEqual(offsets, sorted(offsets))
-        self.assertIn("#if PS2_TEMP && PS2_CITY_GROUND_DEPTH_NO_TEXTURE", draw)
         self.assertIn("if (no_texture) pglEndMaskedDepthNoTexture();", draw)
         self.assertRegex(draw, r"batch_flush\(ground_depth->first, ground_depth->count, 1, 1, 1, GL_TRIANGLES\)")
         self.assertEqual(draw.count("glDisable(GL_TEXTURE_2D)"), 1)
-        gate = (FORK / "include/GL/ps2gl.h").read_text(encoding="utf-8")
-        self.assertIn("#define PGL_MASKED_DEPTH_NO_TEXTURE 1", gate)
-        self.assertIn("return PGL_MASKED_DEPTH_NO_TEXTURE ? 1u : 0u;", source)
+        options = source.split('extern "C" unsigned int pglGetMaskedDepthTextureOptions', 1)[1]
+        self.assertIn("return 1u;", options.split("}", 1)[0])
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ static bool MaskedDepthTextureStateAdmitted(CGLContext& context)
 
 extern "C" unsigned int pglGetMaskedDepthTextureOptions(void)
 {
-    return PGL_MASKED_DEPTH_NO_TEXTURE ? 1u : 0u;
+    return 1u;
 }
 
 extern "C" void pglGetMaskedDepthTextureCounts(unsigned int out[3])
@@ -55,7 +55,6 @@ extern "C" void pglGetMaskedDepthTextureCounts(unsigned int out[3])
 extern "C" GLboolean pglBeginMaskedDepthNoTexture(void)
 {
     ++maskedDepthTextureCounts[0];
-#if PGL_MASKED_DEPTH_NO_TEXTURE
     if (maskedDepthTextureOwner || !MaskedDepthTextureStateAdmitted(*pGLContext))
         return GL_FALSE;
     pGLContext->GetImmGeomManager().Flush();
@@ -65,9 +64,6 @@ extern "C" GLboolean pglBeginMaskedDepthNoTexture(void)
     pGLContext->PrimChanged();
     ++maskedDepthTextureCounts[1];
     return GL_TRUE;
-#else
-    return GL_FALSE;
-#endif
 }
 
 extern "C" void pglEndMaskedDepthNoTexture(void)

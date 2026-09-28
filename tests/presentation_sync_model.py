@@ -1200,18 +1200,13 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn("PresentationCompleted =", other)
         self.assertIn("PresentationTimerMode = 0x9e;", self.gl)
         self.assertIn("PresentationEarlyBlankTicks = 288;", self.gl)
-        self.assertIn("PresentationBlankTicks = PGL_PRESENT_EXTENDED_BLANK ? 576 : 288;", self.gl)
+        self.assertIn("PresentationBlankTicks = 576;", self.gl)
         self.assertNotIn("IntcStatus", body)
 
-    def test_extended_blank_gate_is_independent_of_diagnostics(self):
+    def test_extended_blank_is_independent_of_diagnostics(self):
         public_h = (ROOT / "include/GL/ps2gl.h").read_text(encoding="utf-8")
-        self.assertIn("#ifndef PGL_PRESENT_EXTENDED_BLANK", public_h)
-        self.assertIn("#define PGL_PRESENT_EXTENDED_BLANK 1", public_h)
-        self.assertIn("#if PGL_PRESENT_EXTENDED_BLANK != 0 && PGL_PRESENT_EXTENDED_BLANK != 1",
-                      public_h)
         disabled = source_without_phase_metrics(self.gl)
-        self.assertIn("PresentationBlankTicks = PGL_PRESENT_EXTENDED_BLANK ? 576 : 288;",
-                      disabled)
+        self.assertIn("PresentationBlankTicks = 576;", disabled)
         body = source_function(self.gl, "void CGLContext::TryPresent(")
         expired = body.index("PGL_PRESENT_COUNT(expiredReady);")
         self.assertLess(body.index("NormalFramesFinished != PresentationNormalSequence"), expired)

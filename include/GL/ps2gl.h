@@ -27,24 +27,6 @@
 #error "PGL_TEXTURE_TRACE must be 0 or 1"
 #endif
 
-/* Independent raw-X2 triangle runs retain the 30-vertex input ceiling.
- * Rebuild ps2gl after changing this experimental packet-splitting gate. */
-#ifndef PGL_RAW_X2_MULTI_SPAN
-#define PGL_RAW_X2_MULTI_SPAN 1
-#endif
-#if PGL_RAW_X2_MULTI_SPAN != 0 && PGL_RAW_X2_MULTI_SPAN != 1
-#error "PGL_RAW_X2_MULTI_SPAN must be 0 or 1"
-#endif
-
-/* Explicit fully masked depth draws may suppress GS texture sampling while
- * retaining their original renderer, VU inputs and texture state tracking. */
-#ifndef PGL_MASKED_DEPTH_NO_TEXTURE
-#define PGL_MASKED_DEPTH_NO_TEXTURE 1
-#endif
-#if PGL_MASKED_DEPTH_NO_TEXTURE != 0 && PGL_MASKED_DEPTH_NO_TEXTURE != 1
-#error "PGL_MASKED_DEPTH_NO_TEXTURE must be 0 or 1"
-#endif
-
 /* Five frame-boundary scopes, enabled explicitly by the application. No
  * clocks in the vertex loops; quiet applications never read CP0 Count. */
 #ifndef PGL_FRAME_PHASE_METRICS
@@ -52,16 +34,6 @@
 #endif
 #if PGL_FRAME_PHASE_METRICS != 0 && PGL_FRAME_PHASE_METRICS != 1
 #error "PGL_FRAME_PHASE_METRICS must be 0 or 1"
-#endif
-
-/* Presentation-only A/B: use the first 1.0 ms of supported NTSC/PAL/480p
- * blanking instead of the initial 0.5 ms cutoff. Completion/ownership checks
- * remain mandatory in both paths. Rebuild ps2gl after changing this switch. */
-#ifndef PGL_PRESENT_EXTENDED_BLANK
-#define PGL_PRESENT_EXTENDED_BLANK 1
-#endif
-#if PGL_PRESENT_EXTENDED_BLANK != 0 && PGL_PRESENT_EXTENDED_BLANK != 1
-#error "PGL_PRESENT_EXTENDED_BLANK must be 0 or 1"
 #endif
 
 /* Correlated normal-frame diagnostics only; never used for pacing. Runtime

@@ -296,7 +296,6 @@ r_triangle_classified_lid:
      isw.x vi00, kRPlaneState(buffer_top)
      iaddiu setup_n, vi00, 1
      isw.y setup_n, kRPlaneState(buffer_top)
-#if PGL_X2R_SKY_EMPTY_SKIP
      ; Interior triangles carry zero sky-side OR: the selector below would
      ; clip nothing and leave kROut's source polygon as set above. Skip its
      ; 24 empty iterations exactly as X2P does for pools.
@@ -304,7 +303,6 @@ r_triangle_classified_lid:
      ilw.y road_sky_hi, kRMask(buffer_top)
      ior road_sky_any, road_sky_lo, road_sky_hi
      ibeq road_sky_any, vi00, r_sky_fan_begin_lid
-#endif
      b r_sky_plane_lid
 
 r_sky_plane_lid:
