@@ -1032,6 +1032,11 @@ struct SMipPackSlot {
     int block, nBlocks;
 };
 static const SMipPackSlot kPackPsmt8[4] = { { 0, 16 }, { 16, 4 }, { 20, 1 }, { 21, 1 } };
+/* Optional in-page CLUT for the packed PSMT8 pyramid (pgl_create_index8_mip_clut_packed):
+   the 16x16 CT32 palette at block 28 (blocks 28..31, one 2x2 CT32 square),
+   past the pyramid's blocks 0..21 -- the entrance pack's proven arrangement
+   (kEntranceP8ClutBlock), so the texture needs no separate CLUT slot. */
+static const SMipPackSlot kPackPsmt8Clut = { 28, 4 };
 static const SMipPackSlot kPackPsmct16[3] = { { 0, 8 }, { 8, 2 }, { 10, 1 } };
 
 static void pgl_pack_check(const SMipPackSlot* t, int n)
@@ -1441,10 +1446,10 @@ static unsigned int pgl_create_index8_entrance(const void** levels, const void* 
     return (unsigned int)id;
 }
 
-extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw,
-                                              const int* lh, int count,
-                                              const void* clut, int kbias,
-                                              int min_filter)
+static unsigned int pgl_create_index8_mip_impl(const void** levels, const int* lw,
+                                               const int* lh, int count,
+                                               const void* clut, int kbias,
+                                               int min_filter, bool packClut)
 {
     if (!levels || !clut || count < 1) return 0;
     if (count == 4) {
@@ -1479,6 +1484,11 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
     bool packedPyramid = (count == 4 && lw[0] == 64 && lh[0] == 64
         && lw[1] == 32 && lh[1] == 32 && lw[2] == 16 && lh[2] == 16
         && lw[3] == 8 && lh[3] == 8);
+    if (packClut && !packedPyramid) {
+        printf("pgl_create_index8_mip: in-page CLUT needs the 64x64 four-level pyramid\n");
+        glDeleteTextures(1, &id);
+        return 0;
+    }
     GS::CMemArea* pack = NULL;
     if (packedPyramid) {
         pgl_pack_check(kPackPsmt8, 4);
@@ -1487,6 +1497,20 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
         RequireGsSlot(*pack, "packed index8 pyramid");
         pack->Lock();
         base.UploadPacked(pack->GetWordAddr() + kPackPsmt8[0].block * 64);
+        if (packClut) {
+            mErrorIf(kPackPsmt8[3].block + kPackPsmt8[3].nBlocks > kPackPsmt8Clut.block ||
+                     kPackPsmt8Clut.block + kPackPsmt8Clut.nBlocks > 32,
+                     "in-page CLUT overlaps the pyramid or spills past the page");
+            CMMClut* palette = base.GetOwnClut();
+            if (palette == NULL) {   /* glColorTable always installs one */
+                pack->Unlock();
+                delete pack;
+                glDeleteTextures(1, &id);
+                return 0;
+            }
+            palette->UploadPacked(pack->GetWordAddr() + kPackPsmt8Clut.block * 64);
+            base.SetClut(*palette);
+        }
     }
 
     /* Levels 1..nmip: resident kPsm8 CMMTextures (packed: at block offsets in
@@ -1527,6 +1551,26 @@ extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw
 #endif
 
     return (unsigned int)id;
+}
+
+extern "C" unsigned int pgl_create_index8_mip(const void** levels, const int* lw,
+                                              const int* lh, int count,
+                                              const void* clut, int kbias,
+                                              int min_filter)
+{
+    return pgl_create_index8_mip_impl(levels, lw, lh, count, clut, kbias,
+                                      min_filter, false);
+}
+
+/* The 64x64 four-level PSMT8 pyramid with its CLUT in the same page
+   (kPackPsmt8Clut): one GS page per texture instead of two. */
+extern "C" unsigned int pgl_create_index8_mip_clut_packed(const void** levels,
+                                                          const int* lw, const int* lh,
+                                                          int count, const void* clut,
+                                                          int kbias, int min_filter)
+{
+    return pgl_create_index8_mip_impl(levels, lw, lh, count, clut, kbias,
+                                      min_filter, true);
 }
 
 /* GS TEXA override for the named texture: how 16-bit (5551) texel alpha
