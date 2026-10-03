@@ -830,22 +830,26 @@ typedef struct PGLCloudQuad {
 void pglRegisterCloudRenderer(void);
 
 /* Retained submission (HyperSolar bypass framework) for the source-quad
-   programs X2R (roads), X2P (pools, footprints) and X2K (clouds). The same
+   programs X2R (roads), X2P (pools, footprints), X2K (clouds) and X2B/X2A
+   (billboards, corner-alpha billboards). The same
    VU program, context layout and quads as the owned APIs, without their
    admission scan or payload copies: the context and the quads are DMA REFs
    to caller memory.
    Caller contract (todo/plans/PS2_PS2GL_BYPASS.md, "Framework"):
    - spans cover exactly the context qwords the owned path writes, in order,
-     with no gap (q1..56 for these programs); every span and the quads are
-     16-byte aligned;
+     with no gap (q1..56; q49..56 for billboards); every span and the quads
+     are 16-byte aligned;
+   - billboards: the owned path sets a private word for the caller, so the
+     referenced PGLBillboardContext must carry clip[3] = the bits of
+     (GLuint)1, not the public 0.0f;
    - all referenced bytes stay unchanged until the frame's DMA completes:
      one frame-parity arena owned by the frame flip, never the stack, never
      an unpublished scratch tail;
    - the context and quads satisfy the owned API's proofs (build with
      PGL_REF_VALIDATE=1 to run them and reject with a message);
    - texture bound and enabled, lighting, fog, culling and edge AA off,
-     identity modelview, polygon fill, no pending geometry (pools also need
-     PGL_CLIPPING off).
+     identity modelview, polygon fill, no pending geometry (pools and
+     billboards also need PGL_CLIPPING off).
    Renderer residency and GS state stay with ps2gl, and the call records the
    primitive and context exactly as an owned draw would. FALSE submits
    nothing. */
@@ -942,6 +946,13 @@ void pglRegisterDecalRenderer(void);
    bit 7 = fixed UNPACK counts,
    bit 8 = per-record mip material CLAMP in the X2E output stream. */
 unsigned int pglGetDecalSubmissionOptions(void);
+/* Retained decal source (bypass framework): while TRUE, the pglDrawDecal*
+   calls DMA-reference each run's 16-byte-aligned records in place for the
+   base sweep (and the glow sweep reuses those references) instead of
+   copying them into the packet. Admission is unchanged. The caller keeps
+   every record unchanged until the frame's DMA completes (frame-parity
+   storage) and resets this to FALSE after the call. */
+void pglSetDecalSourceBorrowed(GLboolean borrowed);
 /* Submit the whole base sweep followed by the optional whole glow sweep.
    Call after draining pending geometry, in the normal frame chain, outside
    Begin/End/display lists. Requires identity projection/modelview, texture ON,

@@ -190,6 +190,13 @@ void CClipDecalX2ERenderer::InitContext(GLenum primType, uint32_t rcChanges,
 #endif
 }
 
+static bool sDecalSourceBorrowed;
+
+extern "C" void pglSetDecalSourceBorrowed(GLboolean borrowed)
+{
+    sDecalSourceBorrowed = borrowed != GL_FALSE;
+}
+
 void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
     unsigned int format, const float** ownedPayloads, bool reusePayload,
     const unsigned char* materials)
@@ -204,13 +211,18 @@ void CClipDecalX2ERenderer::DrawDecalRecords(const void* records, int count,
     packet.Stcycl(1, 1);
     while (count > 0) {
         const int batch = count > 16 ? 16 : count;
-        if (reusePayload) {
+        // A retained caller's records are referenced in place for the first
+        // sweep too; they then serve as the "owned" payload of the second.
+        const bool borrow = !reusePayload && sDecalSourceBorrowed
+            && ((uintptr_t)source & 15u) == 0u;
+        if (borrow && ownedPayloads) ownedPayloads[batchIndex] = source;
+        if (reusePayload || borrow) {
             packet.Pad128();
             packet.CloseTag();
-            // This is the exact earlier Add destination, not a main-game
-            // scratch pointer or a stride derived from variable GS packets.
-            // Normal frame Send flushes these owned bytes before either read.
-            packet.Ref(Core::MakePtrNormal(ownedPayloads[batchIndex]),
+            // Either the exact earlier Add destination or the retained
+            // caller's frame-lifetime records, never a stride derived from
+            // variable GS packets. Normal frame Send flushes the cache first.
+            packet.Ref(Core::MakePtrNormal(borrow ? source : ownedPayloads[batchIndex]),
                 (unsigned int)batch * 9u);
             packet.Pad96();
             packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);

@@ -862,18 +862,34 @@ GLboolean pglDrawPoolQuads(const PGLPoolContext* context,
    finiteness/ranges, near plane, identity modelview, finite transform, texture
    and finite quads. Prints the first failure. */
 static bool RefValidate(CGLContext& gl, const PGLRefSpan* spans, int spanCount,
-    const float* quads, int floats)
+    unsigned int firstQuad, const float* quads, int floats)
 {
+    // q1..56 as the owned APIs see it; billboards own only q49..56.
     PGLRoadContext context;
+    memset(&context, 0, sizeof(context));
     unsigned char* out = (unsigned char*)&context;
     for (int i = 0; i < spanCount; ++i)
         memcpy(out + (spans[i].vuQword - 1u) * 16u, spans[i].data, spans[i].qwords * 16u);
     const char* why = NULL;
+    float near;
+    if (firstQuad == 48u) {
+        PGLBillboardContext billboard;
+        memcpy(&billboard, out + 48u * 16u, sizeof(billboard));
+        uint32_t reuse;
+        memcpy(&reuse, &billboard.clip[3], sizeof(reuse));
+        billboard.clip[3] = 0.0f;
+        if (reuse != 1u) why = "billboard private word";
+        else if (!BillboardContextValid(billboard)) why = "context";
+        near = billboard.clip[0];
+    } else {
+        if (!RoadContextValid(context)) why = "context";
+        near = context.clipParams[0];
+    }
     CImmDrawContext& draw = gl.GetImmDrawContext();
     const cpu_mat_44& model = gl.GetModelViewStack().GetTop();
     const cpu_mat_44& xform = draw.GetVertexXform();
-    if (!RoadContextValid(context)) why = "context";
-    else if (context.clipParams[0] != draw.GetClipNear()) why = "near";
+    if (why) {
+    } else if (near != draw.GetClipNear()) why = "near";
     else if (!DirectIdentityColumn(model.get_col0(), 1, 0, 0, 0)
         || !DirectIdentityColumn(model.get_col1(), 0, 1, 0, 0)
         || !DirectIdentityColumn(model.get_col2(), 0, 0, 1, 0)
@@ -922,6 +938,22 @@ bool CImmGeomManager::DrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spa
         prop = PGL_CLIP_CLOUD_X2K_PROP;
         clippingOff = false;
         break;
+    case PGL_CLIP_BILLBOARD_QUADS_X2B:
+        renderer = RendererManager.GetBillboardRenderer();
+        selectable = RendererManager.CanSelectBillboardRenderer();
+        quadBytes = sizeof(PGLBillboardQuad);
+        batchLimit = 32;
+        prop = PGL_CLIP_BILLBOARD_X2B_PROP;
+        clippingOff = true;
+        break;
+    case PGL_CLIP_BILLBOARD_QUADS_X2A:
+        renderer = RendererManager.GetBillboardAlphaRenderer();
+        selectable = RendererManager.CanSelectBillboardAlphaRenderer();
+        quadBytes = sizeof(PGLBillboardAlphaQuad);
+        batchLimit = 24;
+        prop = PGL_CLIP_BILLBOARD_X2A_PROP;
+        clippingOff = true;
+        break;
     default:
         return false;
     }
@@ -948,8 +980,8 @@ bool CImmGeomManager::DrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spa
     }
     if (next != 57u) return false;
 #if PGL_REF_VALIDATE
-    if (!RefValidate(GLContext, spans, spanCount, (const float*)quads,
-            count * (int)(quadBytes / 4u))) return false;
+    if (!RefValidate(GLContext, spans, spanCount, renderer->GetContextFirstQuad(),
+            (const float*)quads, count * (int)(quadBytes / 4u))) return false;
 #endif
     // Texture/CLUT upload and draw settings <=256q (as the owned APIs), the
     // context head/tail <=24q plus one tag per span, <=8q per batch.
