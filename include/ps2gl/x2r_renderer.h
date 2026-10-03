@@ -33,6 +33,11 @@ public:
     void DrawCompactGroundQuads(const float* quads, int count,
         int floatsPerQuad, int quadsPerBuffer);
     void DrawRoadQuads(const PGLRoadQuad* quads, int count);
+    /* Retained callers: q1..48 and q49..56 are DMA REFs to caller storage
+       that stays unchanged until frame DMA completion; quads likewise. */
+    void InitRefContext(const float* planes, const float* dynamic);
+    void DrawRefQuads(const float* quads, int count, int floatsPerQuad,
+        int quadsPerBuffer);
     virtual void Load();
     virtual void InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged);
     virtual void DrawLinearArrays(CGeometryBlock& block);

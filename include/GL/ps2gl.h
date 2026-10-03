@@ -816,6 +816,26 @@ GLboolean pglDrawBillboardQuads(const PGLBillboardContext* context,
 GLboolean pglDrawBillboardAlphaQuads(const PGLBillboardContext* context,
     const PGLBillboardAlphaQuad* quads, GLsizei count);
 
+/* Texture clouds: the pool program (sky, then source-view clipping before
+   triangulation) on flat ABCD quads at the common sourceY, with planar UV
+   (u,v) = (x,z)*k + (u0,v0) from context q55 = [u0,v0,k,0] and per-corner
+   alpha. Retained submission: no admission scan or payload copy. planes is
+   PGLRoadContext q1..48 (static), dynamic is q49..56; both and the quads are
+   16-byte aligned, DMA-referenced in place and must stay unchanged until the
+   frame's DMA completes (alternate two buffers by frame). The caller owns the
+   GL state: texture bound and enabled, blend/depth as wanted, lighting, fog,
+   culling and edge AA off, identity modelview, no pending geometry. */
+typedef struct PGLCloudQuad {
+    GLfloat xz[2][4]; /* Ax,Az,Bx,Bz; Cx,Cz,Dx,Dz */
+    GLfloat alpha[4]; /* A, B, C, D */
+    GLfloat color[4]; /* r, g, b, 0 */
+} PGLCloudQuad;
+#define PGL_CLIP_CLOUD_QUADS_X2K ((GLenum)0x80000000 | 15)
+#define PGL_CLIP_CLOUD_X2K_PROP ((pglU64_t)1 << 46)
+void pglRegisterCloudRenderer(void);
+GLboolean pglDrawCloudQuadsRef(const GLfloat* planes, const GLfloat* dynamic,
+    const PGLCloudQuad* quads, GLsizei count);
+
 #define PGL_CLIP_ROAD_QUADS_X2R ((GLenum)0x80000000 | 6)
 #define PGL_CLIP_ROAD_X2R_PROP ((pglU64_t)1 << 38)
 void pglRegisterRoadRenderer(void);

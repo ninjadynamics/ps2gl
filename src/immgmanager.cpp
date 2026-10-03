@@ -26,6 +26,7 @@
 #include "ps2gl/texture.h"
 #include "ps2gl/x2r_renderer.h"
 #include "ps2gl/x2p_renderer.h"
+#include "ps2gl/x2k_renderer.h"
 #include "ps2gl/x2b_renderer.h"
 #include "ps2gl/x2e_renderer.h"
 
@@ -849,6 +850,42 @@ GLboolean pglDrawPoolQuads(const PGLPoolContext* context,
 {
     if (!pGLContext) return GL_FALSE;
     return pGLContext->GetImmGeomManager().DrawPoolQuads(context, quads, count)
+        ? GL_TRUE : GL_FALSE;
+}
+
+bool CImmGeomManager::DrawCloudQuadsRef(const float* planes, const float* dynamic,
+    const PGLCloudQuad* quads, int count)
+{
+    if (!planes || !dynamic || !quads || count <= 0 || count > 48
+        || (((uintptr_t)planes | (uintptr_t)dynamic | (uintptr_t)quads) & 15u)
+        || InsideBeginEnd || Geometry.IsPending() || GLContext.InDListDef()
+        || !GLContext.UsesNormalFramePacket()
+        || !RendererManager.CanSelectCloudRenderer()) return false;
+    CClipCloudX2KRenderer* renderer = RendererManager.GetCloudRenderer();
+    // Context <=24q, two batches <=8q, GS texture/draw settings <=256q.
+    CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
+    if (!renderer->IsCodeValid() || !packet.GetTTE() || packet.HasOpenTag()
+        || !packet.CanReserveWords(320u * 4u)) return false;
+    PrimChanged(PGL_CLIP_CLOUD_QUADS_X2K);
+    DrawingLinearArray();
+    SyncColorMaterial(false);
+    SyncRenderer();
+    renderer->InitRefContext(planes, dynamic);
+    // The complete context was just sent: record it as SyncRendererContext
+    // would, including the primitive the next draw compares against.
+    GLContext.SetRendererContextChanged(false);
+    UserRenderContextChanged = false;
+    Prim = PGL_CLIP_CLOUD_QUADS_X2K;
+    SyncGsContext();
+    renderer->DrawRefQuads((const float*)quads, count, 16, 24);
+    return true;
+}
+
+GLboolean pglDrawCloudQuadsRef(const GLfloat* planes, const GLfloat* dynamic,
+    const PGLCloudQuad* quads, GLsizei count)
+{
+    if (!pGLContext) return GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawCloudQuadsRef(planes, dynamic, quads, count)
         ? GL_TRUE : GL_FALSE;
 }
 

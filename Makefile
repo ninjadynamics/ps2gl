@@ -29,6 +29,7 @@ EE_OBJS = \
 	src/x2g_renderer.o \
 	src/x2r_renderer.o \
 	src/x2p_renderer.o \
+	src/x2k_renderer.o \
 	src/x2b_renderer.o \
 	src/x2e_renderer.o \
 	src/displaycontext.o \
@@ -65,6 +66,7 @@ RENDERERS = \
 	general_clip_glow_x2g_decode \
 	general_clip_road_x2r \
 	general_clip_pool_x2p \
+	general_clip_cloud_x2k \
 	general_clip_billboard_x2b \
 	general_clip_billboard_x2a \
 	general_clip_decal_x2e \
@@ -99,6 +101,8 @@ X2R_VSM = vu1/general_clip_road_x2r_vcl.vsm
 X2R_GUARD = vu1/x2r_microcode_guard.py
 X2P_VSM = vu1/general_clip_pool_x2p_vcl.vsm
 X2P_GUARD = vu1/x2p_microcode_guard.py
+X2K_VSM = vu1/general_clip_cloud_x2k_vcl.vsm
+X2K_GUARD = vu1/x2k_microcode_guard.py
 X2B_VSM = vu1/general_clip_billboard_x2b_vcl.vsm
 X2B_GUARD = vu1/x2b_microcode_guard.py
 X2A_VSM = vu1/general_clip_billboard_x2a_vcl.vsm
@@ -115,7 +119,7 @@ $(EE_LIB): x2q-microcode-guard
 $(EE_LIB): x2g-microcode-guard
 $(EE_LIB): x2r-microcode-guard
 $(EE_LIB): x2e-microcode-guard
-$(EE_LIB): x2c-microcode-guard x2p-microcode-guard
+$(EE_LIB): x2c-microcode-guard x2p-microcode-guard x2k-microcode-guard
 $(EE_LIB): x2h-microcode-guard
 $(EE_LIB): x2b-microcode-guard
 $(EE_LIB): x2a-microcode-guard x2f-microcode-guard
@@ -138,6 +142,10 @@ x2c-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2C_DECODER_VSM) $(X2C_GUARD
 
 x2p-microcode-guard: $(X2P_VSM) $(X2P_GUARD) $(X2R_GUARD)
 	python3 $(X2P_GUARD) $(X2P_VSM)
+
+.PHONY: x2k-microcode-guard
+x2k-microcode-guard: $(X2K_VSM) $(X2K_GUARD) $(X2R_GUARD)
+	python3 $(X2K_GUARD) $(X2K_VSM)
 
 .PHONY: x2h-microcode-guard
 x2h-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2H_DECODER_VSM) $(X2H_GUARD) $(X2Q_GUARD) $(X2D_GUARD)
@@ -218,6 +226,10 @@ vu1/general_clip_pool_x2p.vo: $(X2P_VSM) $(X2P_GUARD) $(X2R_GUARD)
 	python3 $(X2P_GUARD) $(X2P_VSM)
 	dvp-as -o $@ $(X2P_VSM)
 
+vu1/general_clip_cloud_x2k.vo: $(X2K_VSM) $(X2K_GUARD) $(X2R_GUARD)
+	python3 $(X2K_GUARD) $(X2K_VSM)
+	dvp-as -o $@ $(X2K_VSM)
+
 vu1/general_clip_billboard_x2b.vo: $(X2B_VSM) $(X2B_GUARD) $(X2R_GUARD)
 	python3 $(X2B_GUARD) $(X2B_VSM)
 	dvp-as -o $@ $(X2B_VSM)
@@ -277,6 +289,11 @@ vu1/general_clip_road_x2r_pp1.vcl vu1/general_clip_pool_x2p_pp1.vcl: vu1/ground_
 vu1/general_clip_pool_x2p_pp1.vcl: vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i
 .INTERMEDIATE: vu1/general_clip_pool_x2p_pp1.vcl vu1/general_clip_pool_x2p_pp3.vcl vu1/general_clip_pool_x2p_pp4.vcl
 vu1/general_clip_pool_x2p_pp4.vcl: vu1/general_clip_pool_x2p_pp3.vcl
+	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
+
+vu1/general_clip_cloud_x2k_pp1.vcl: vu1/ground_clip_shared.i vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i
+.INTERMEDIATE: vu1/general_clip_cloud_x2k_pp1.vcl vu1/general_clip_cloud_x2k_pp3.vcl vu1/general_clip_cloud_x2k_pp4.vcl
+vu1/general_clip_cloud_x2k_pp4.vcl: vu1/general_clip_cloud_x2k_pp3.vcl
 	sed 's/;.*//' $< | cc -E -P -imacros vu1/vu1_mem_linear.h -o $@ -
 
 vu1/general_clip_billboard_x2b_pp1.vcl: vu1/ground_clip_shared.i vu1/source_unlit_emit.i vu1/source_eye_classify.i vu1/source_clip_polygon.i vu1/source_fan_emit.i

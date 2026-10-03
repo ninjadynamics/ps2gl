@@ -32,6 +32,7 @@ class CClipTriX2Renderer;
 class CClipQuadX2FRenderer;
 class CClipRoadX2RRenderer;
 class CClipPoolX2PRenderer;
+class CClipCloudX2KRenderer;
 class CClipBillboardX2BRenderer;
 class CClipBillboardAlphaX2ARenderer;
 class CClipDecalX2ERenderer;
@@ -66,6 +67,7 @@ class CRendererManager {
     bool WallFogRendererRegistered;
     CClipRoadX2RRenderer* RoadRenderer;
     CClipPoolX2PRenderer* PoolRenderer;
+    CClipCloudX2KRenderer* CloudRenderer;
     CClipBillboardX2BRenderer* BillboardRenderer;
     CClipBillboardAlphaX2ARenderer* BillboardAlphaRenderer;
     CClipDecalX2ERenderer* DecalRenderer;
@@ -106,6 +108,14 @@ public:
     bool CanSelectPoolRenderer() const
     {
         return PoolRenderer != NULL
+            && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
+                & ~(uint64_t)0xffffffff) == 0;
+    }
+    void RegisterCloudRenderer(CClipCloudX2KRenderer* renderer);
+    CClipCloudX2KRenderer* GetCloudRenderer() const { return CloudRenderer; }
+    bool CanSelectCloudRenderer() const
+    {
+        return CloudRenderer != NULL
             && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)
                 & ~(uint64_t)0xffffffff) == 0;
     }

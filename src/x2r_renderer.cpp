@@ -7,6 +7,7 @@
 #include "ps2gl/drawcontext.h"
 #include "ps2gl/metrics.h"
 #include "ps2gl/owned_payload.h"
+#include "ps2s/core.h"
 #include "vu1_mem_linear.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -295,6 +296,102 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
 #if PGL_SUBMISSION_METRICS
     pglCountSubmission(PGL_SUBMIT_CONTEXT_BYTES, packet.GetByteLength() - start);
 #endif
+}
+
+void CClipRoadX2RRenderer::InitRefContext(const float* planes, const float* dynamic)
+{
+    pglInvalidateUnlitContextDelta();
+    CImmDrawContext& draw = pGLContext->GetImmDrawContext();
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+    packet.Cnt();
+    packet.Stcycl(1, 1);
+    packet.Stmod(Vifs::AddModes::kNone);
+    packet.Flush();
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kSingleBuff);
+    packet += (uint64_t)0;
+    packet += 0;
+    const float cull = (float)draw.GetCullFaceDir();
+    unsigned int cullWord;
+    memcpy(&cullWord, &cull, sizeof(cullWord));
+    packet += cullWord | ((unsigned int)draw.GetDoCullFace() << 5);
+    packet.CloseUnpack();
+    packet.CloseTag();
+    packet.Ref(Core::MakePtrNormal(planes), 48);
+    packet.Nop();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, 1, Packet::kSingleBuff);
+    packet.CloseUnpack(48);
+    packet.Ref(Core::MakePtrNormal(dynamic), 8);
+    packet.Nop();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, 49, Packet::kSingleBuff);
+    packet.CloseUnpack(8);
+    const cpu_mat_44& xform = draw.GetVertexXform();
+    // The standard tail exactly as InitContext writes it.
+    packet.Cnt();
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, kClipToGsDepthOffset, Packet::kSingleBuff);
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += draw.GetContextDepthScale() + draw.GetDepthOffset();
+    packet.CloseUnpack();
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, kVertexXfrm, Packet::kSingleBuff);
+    packet += xform;
+    packet.CloseUnpack();
+    packet.Pad96();
+    packet.OpenUnpack(Vifs::UnpackModes::v4_32, kGifTag, Packet::kSingleBuff);
+    packet += BuildGiftag(GL_TRIANGLES);
+    const cpu_vec_xyz& scales = draw.GetContextClipScales();
+    packet += scales.x;
+    packet += scales.y;
+    packet += scales.z;
+    packet += draw.GetDoClipping() ? 1 : 0;
+    packet += draw.GetClipNear();
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += 0.0f;
+    packet += (uint64_t)0;
+    packet += (uint64_t)0;
+    packet.CloseUnpack();
+    packet.Mscal(0);
+    packet.Flushe();
+    packet.Base(kDoubleBufBase);
+    packet.Offset(kDoubleBufOffset);
+    packet.CloseTag();
+    CacheRendererState();
+    // The owned-context cache no longer describes VU memory.
+    RetainedContextValid = false;
+    pglCountSubmission(PGL_SUBMIT_FULL_CONTEXTS);
+}
+
+void CClipRoadX2RRenderer::DrawRefQuads(const float* quads, int count,
+    int floatsPerQuad, int quadsPerBuffer)
+{
+    CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
+    pglCountSubmission(PGL_SUBMIT_BLOCKS);
+    while (count > 0) {
+        const int batch = count > quadsPerBuffer ? quadsPerBuffer : count;
+        const unsigned int qwords = (unsigned int)(batch * floatsPerQuad) / 4u;
+        packet.Ref(Core::MakePtrNormal(quads), qwords);
+        packet.Nop();
+        packet.OpenUnpack(Vifs::UnpackModes::v4_32, 5, Packet::kDoubleBuff);
+        packet.CloseUnpack(qwords);
+        packet.Cnt();
+        packet.Pad96();
+        packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kDoubleBuff);
+        packet += batch;
+        packet += 0;
+        packet += (uint64_t)0;
+        pglCloseOwnedV4Unpack(packet, 1u);
+        packet.Mscnt();
+        packet.Pad128();
+        packet.CloseTag();
+        pglCountSubmission(PGL_SUBMIT_BUFFERS);
+        pglCountSubmission(PGL_SUBMIT_REF_BYTES, qwords * 16u);
+        quads += batch * floatsPerQuad;
+        count -= batch;
+    }
 }
 
 void CClipRoadX2RRenderer::DrawRoadQuads(const PGLRoadQuad* quads, int count)

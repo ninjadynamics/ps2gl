@@ -20,6 +20,7 @@
 #include "ps2gl/clip_renderer.h"
 #include "ps2gl/x2r_renderer.h"
 #include "ps2gl/x2p_renderer.h"
+#include "ps2gl/x2k_renderer.h"
 #include "ps2gl/x2b_renderer.h"
 #include "ps2gl/x2e_renderer.h"
 #include "ps2gl/x2f_renderer.h"
@@ -48,6 +49,7 @@ CRendererManager::CRendererManager(CGLContext& context)
     , WallFogRendererRegistered(false)
     , RoadRenderer(NULL)
     , PoolRenderer(NULL)
+    , CloudRenderer(NULL)
     , BillboardRenderer(NULL)
     , BillboardAlphaRenderer(NULL)
     , DecalRenderer(NULL)
@@ -456,6 +458,21 @@ void CRendererManager::RegisterPoolRenderer(CClipPoolX2PRenderer* renderer)
         }
     }
     PoolRenderer = NULL;
+}
+
+void CRendererManager::RegisterCloudRenderer(CClipCloudX2KRenderer* renderer)
+{
+    RegisterUserRenderer(renderer);
+    const uint64_t reqs = PGL_CLIP_CLOUD_X2K_PROP;
+    for (int i = 0; i < NumUserRenderers; ++i) {
+        const tRenderer& entry = UserRenderers[i];
+        if (reqs == (reqs & entry.capabilities)
+            && entry.requirements == (reqs & entry.requirements)) {
+            CloudRenderer = entry.renderer == renderer ? renderer : NULL;
+            return;
+        }
+    }
+    CloudRenderer = NULL;
 }
 
 void CRendererManager::RegisterBillboardRenderer(CClipBillboardX2BRenderer* renderer)
