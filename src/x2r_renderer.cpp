@@ -298,7 +298,7 @@ void CClipRoadX2RRenderer::InitContext(GLenum primType, uint32_t rcChanges,
 #endif
 }
 
-void CClipRoadX2RRenderer::InitRefContext(const float* planes, const float* dynamic)
+void CClipRoadX2RRenderer::InitRefContext(const PGLRefSpan* spans, int spanCount)
 {
     pglInvalidateUnlitContextDelta();
     CImmDrawContext& draw = pGLContext->GetImmDrawContext();
@@ -317,14 +317,14 @@ void CClipRoadX2RRenderer::InitRefContext(const float* planes, const float* dyna
     packet += cullWord | ((unsigned int)draw.GetDoCullFace() << 5);
     packet.CloseUnpack();
     packet.CloseTag();
-    packet.Ref(Core::MakePtrNormal(planes), 48);
-    packet.Nop();
-    packet.OpenUnpack(Vifs::UnpackModes::v4_32, 1, Packet::kSingleBuff);
-    packet.CloseUnpack(48);
-    packet.Ref(Core::MakePtrNormal(dynamic), 8);
-    packet.Nop();
-    packet.OpenUnpack(Vifs::UnpackModes::v4_32, 49, Packet::kSingleBuff);
-    packet.CloseUnpack(8);
+    for (int i = 0; i < spanCount; ++i) {
+        packet.Ref(Core::MakePtrNormal(spans[i].data), spans[i].qwords);
+        packet.Nop();
+        packet.OpenUnpack(Vifs::UnpackModes::v4_32, spans[i].vuQword, Packet::kSingleBuff);
+        packet.CloseUnpack(spans[i].qwords);
+    }
+    // The standard tail stays packet-written: sending it by REF hung the
+    // console (2026-10-03, cause open; see the bypass plan).
     const cpu_mat_44& xform = draw.GetVertexXform();
     // The standard tail exactly as InitContext writes it.
     packet.Cnt();

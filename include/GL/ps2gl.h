@@ -819,12 +819,7 @@ GLboolean pglDrawBillboardAlphaQuads(const PGLBillboardContext* context,
 /* Texture clouds: the pool program (sky, then source-view clipping before
    triangulation) on flat ABCD quads at the common sourceY, with planar UV
    (u,v) = (x,z)*k + (u0,v0) from context q55 = [u0,v0,k,0] and per-corner
-   alpha. Retained submission: no admission scan or payload copy. planes is
-   PGLRoadContext q1..48 (static), dynamic is q49..56; both and the quads are
-   16-byte aligned, DMA-referenced in place and must stay unchanged until the
-   frame's DMA completes (alternate two buffers by frame). The caller owns the
-   GL state: texture bound and enabled, blend/depth as wanted, lighting, fog,
-   culling and edge AA off, identity modelview, no pending geometry. */
+   alpha. PGLRoadContext layout; submitted only through pglDrawSourceQuadsRef. */
 typedef struct PGLCloudQuad {
     GLfloat xz[2][4]; /* Ax,Az,Bx,Bz; Cx,Cz,Dx,Dz */
     GLfloat alpha[4]; /* A, B, C, D */
@@ -833,8 +828,34 @@ typedef struct PGLCloudQuad {
 #define PGL_CLIP_CLOUD_QUADS_X2K ((GLenum)0x80000000 | 15)
 #define PGL_CLIP_CLOUD_X2K_PROP ((pglU64_t)1 << 46)
 void pglRegisterCloudRenderer(void);
-GLboolean pglDrawCloudQuadsRef(const GLfloat* planes, const GLfloat* dynamic,
-    const PGLCloudQuad* quads, GLsizei count);
+
+/* Retained submission (HyperSolar bypass framework) for the source-quad
+   programs X2R (roads), X2P (pools, footprints) and X2K (clouds). The same
+   VU program, context layout and quads as the owned APIs, without their
+   admission scan or payload copies: the context and the quads are DMA REFs
+   to caller memory.
+   Caller contract (todo/plans/PS2_PS2GL_BYPASS.md, "Framework"):
+   - spans cover exactly the context qwords the owned path writes, in order,
+     with no gap (q1..56 for these programs); every span and the quads are
+     16-byte aligned;
+   - all referenced bytes stay unchanged until the frame's DMA completes:
+     one frame-parity arena owned by the frame flip, never the stack, never
+     an unpublished scratch tail;
+   - the context and quads satisfy the owned API's proofs (build with
+     PGL_REF_VALIDATE=1 to run them and reject with a message);
+   - texture bound and enabled, lighting, fog, culling and edge AA off,
+     identity modelview, polygon fill, no pending geometry (pools also need
+     PGL_CLIPPING off).
+   Renderer residency and GS state stay with ps2gl, and the call records the
+   primitive and context exactly as an owned draw would. FALSE submits
+   nothing. */
+typedef struct PGLRefSpan {
+    const void* data;
+    GLuint vuQword;
+    GLuint qwords;
+} PGLRefSpan;
+GLboolean pglDrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spans,
+    GLsizei spanCount, const void* quads, GLsizei count);
 
 #define PGL_CLIP_ROAD_QUADS_X2R ((GLenum)0x80000000 | 6)
 #define PGL_CLIP_ROAD_X2R_PROP ((pglU64_t)1 << 38)

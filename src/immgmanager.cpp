@@ -853,40 +853,135 @@ GLboolean pglDrawPoolQuads(const PGLPoolContext* context,
         ? GL_TRUE : GL_FALSE;
 }
 
-bool CImmGeomManager::DrawCloudQuadsRef(const float* planes, const float* dynamic,
-    const PGLCloudQuad* quads, int count)
+#ifndef PGL_REF_VALIDATE
+#define PGL_REF_VALIDATE 0
+#endif
+
+#if PGL_REF_VALIDATE
+/* The owned APIs' proofs, for developing a retained producer: context
+   finiteness/ranges, near plane, identity modelview, finite transform, texture
+   and finite quads. Prints the first failure. */
+static bool RefValidate(CGLContext& gl, const PGLRefSpan* spans, int spanCount,
+    const float* quads, int floats)
 {
-    if (!planes || !dynamic || !quads || count <= 0 || count > 48
-        || (((uintptr_t)planes | (uintptr_t)dynamic | (uintptr_t)quads) & 15u)
+    PGLRoadContext context;
+    unsigned char* out = (unsigned char*)&context;
+    for (int i = 0; i < spanCount; ++i)
+        memcpy(out + (spans[i].vuQword - 1u) * 16u, spans[i].data, spans[i].qwords * 16u);
+    const char* why = NULL;
+    CImmDrawContext& draw = gl.GetImmDrawContext();
+    const cpu_mat_44& model = gl.GetModelViewStack().GetTop();
+    const cpu_mat_44& xform = draw.GetVertexXform();
+    if (!RoadContextValid(context)) why = "context";
+    else if (context.clipParams[0] != draw.GetClipNear()) why = "near";
+    else if (!DirectIdentityColumn(model.get_col0(), 1, 0, 0, 0)
+        || !DirectIdentityColumn(model.get_col1(), 0, 1, 0, 0)
+        || !DirectIdentityColumn(model.get_col2(), 0, 0, 1, 0)
+        || !DirectIdentityColumn(model.get_col3(), 0, 0, 0, 1)) why = "modelview";
+    else if (!DirectFiniteColumn(xform.get_col0()) || !DirectFiniteColumn(xform.get_col1())
+        || !DirectFiniteColumn(xform.get_col2()) || !DirectFiniteColumn(xform.get_col3()))
+        why = "transform";
+    else if (!HudFiniteFloat(draw.GetDepthOffset())) why = "depth offset";
+    else if (!DirectTextureValid(&gl.GetTexManager().GetCurTexture())) why = "texture";
+    for (int i = 0; !why && i < floats; ++i)
+        if (!HudFiniteFloat(quads[i])) why = "quads";
+    if (why) printf("ps2gl: REF draw rejected by validation: %s\n", why);
+    return why == NULL;
+}
+#endif
+
+bool CImmGeomManager::DrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spans,
+    int spanCount, const void* quads, int count)
+{
+    CClipRoadX2RRenderer* renderer;
+    unsigned int quadBytes, batchLimit;
+    uint64_t prop;
+    bool selectable, clippingOff;
+    switch (primitive) {
+    case PGL_CLIP_ROAD_QUADS_X2R:
+        renderer = RendererManager.GetRoadRenderer();
+        selectable = RendererManager.CanSelectRoadRenderer();
+        quadBytes = sizeof(PGLRoadQuad);
+        batchLimit = 32;
+        prop = PGL_CLIP_ROAD_X2R_PROP;
+        clippingOff = false;
+        break;
+    case PGL_CLIP_POOL_QUADS_X2P:
+        renderer = RendererManager.GetPoolRenderer();
+        selectable = RendererManager.CanSelectPoolRenderer();
+        quadBytes = sizeof(PGLPoolQuad);
+        batchLimit = 24;
+        prop = PGL_CLIP_POOL_X2P_PROP;
+        clippingOff = true;
+        break;
+    case PGL_CLIP_CLOUD_QUADS_X2K:
+        renderer = RendererManager.GetCloudRenderer();
+        selectable = RendererManager.CanSelectCloudRenderer();
+        quadBytes = sizeof(PGLCloudQuad);
+        batchLimit = 24;
+        prop = PGL_CLIP_CLOUD_X2K_PROP;
+        clippingOff = false;
+        break;
+    default:
+        return false;
+    }
+    CImmDrawContext& draw = GLContext.GetImmDrawContext();
+    if (!selectable || !renderer || !spans || spanCount <= 0 || spanCount > 8
+        || !quads || count <= 0 || count > 4096 || ((uintptr_t)quads & 15u)
         || InsideBeginEnd || Geometry.IsPending() || GLContext.InDListDef()
         || !GLContext.UsesNormalFramePacket()
-        || !RendererManager.CanSelectCloudRenderer()) return false;
-    CClipCloudX2KRenderer* renderer = RendererManager.GetCloudRenderer();
-    // Context <=24q, two batches <=8q, GS texture/draw settings <=256q.
+        || GetUserPrimRequirements(primitive) != prop
+        || GetUserPrimReqMask(primitive) != ~(uint64_t)0xffffffff
+        || !renderer->IsCodeValid()
+        || GLContext.GetImmLighting().GetLightingEnabled()
+        || !GLContext.GetTexManager().GetTexEnabled()
+        || draw.GetFogEnabled() || draw.GetDoCullFace() || draw.GetEdgeAAEnabled()
+        || (clippingOff && draw.GetDoClipping())
+        || draw.GetPolygonMode() != GL_FILL) return false;
+    // Exactly the owned context slots, in order, no gap: a REF that writes any
+    // other VU qword would corrupt state another renderer retains.
+    unsigned int next = renderer->GetContextFirstQuad() + 1u;
+    for (int i = 0; i < spanCount; ++i) {
+        if (!spans[i].data || ((uintptr_t)spans[i].data & 15u)
+            || spans[i].vuQword != next || spans[i].qwords == 0u) return false;
+        next += spans[i].qwords;
+    }
+    if (next != 57u) return false;
+#if PGL_REF_VALIDATE
+    if (!RefValidate(GLContext, spans, spanCount, (const float*)quads,
+            count * (int)(quadBytes / 4u))) return false;
+#endif
+    // Texture/CLUT upload and draw settings <=256q (as the owned APIs), the
+    // context head/tail <=24q plus one tag per span, <=8q per batch.
+    const unsigned int batches = ((unsigned int)count + batchLimit - 1u) / batchLimit;
     CVifSCDmaPacket& packet = GLContext.GetVif1Packet();
-    if (!renderer->IsCodeValid() || !packet.GetTTE() || packet.HasOpenTag()
-        || !packet.CanReserveWords(320u * 4u)) return false;
-    PrimChanged(PGL_CLIP_CLOUD_QUADS_X2K);
+    if (!packet.GetTTE() || packet.HasOpenTag()
+        || !packet.CanReserveWords((300u + (unsigned int)spanCount + batches * 8u) * 4u))
+        return false;
+
+    // Admission is complete; nothing below can fail or publish partially.
+    PrimChanged(primitive);
     DrawingLinearArray();
     SyncColorMaterial(false);
     SyncRenderer();
-    renderer->InitRefContext(planes, dynamic);
+    renderer->InitRefContext(spans, spanCount);
     // The complete context was just sent: record it as SyncRendererContext
     // would, including the primitive the next draw compares against.
     GLContext.SetRendererContextChanged(false);
     UserRenderContextChanged = false;
-    Prim = PGL_CLIP_CLOUD_QUADS_X2K;
+    Prim = primitive;
     SyncGsContext();
-    renderer->DrawRefQuads((const float*)quads, count, 16, 24);
+    renderer->DrawRefQuads((const float*)quads, count, (int)(quadBytes / 4u),
+        (int)batchLimit);
     return true;
 }
 
-GLboolean pglDrawCloudQuadsRef(const GLfloat* planes, const GLfloat* dynamic,
-    const PGLCloudQuad* quads, GLsizei count)
+GLboolean pglDrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spans,
+    GLsizei spanCount, const void* quads, GLsizei count)
 {
     if (!pGLContext) return GL_FALSE;
-    return pGLContext->GetImmGeomManager().DrawCloudQuadsRef(planes, dynamic, quads, count)
-        ? GL_TRUE : GL_FALSE;
+    return pGLContext->GetImmGeomManager().DrawSourceQuadsRef(primitive, spans,
+        spanCount, quads, count) ? GL_TRUE : GL_FALSE;
 }
 
 bool CImmGeomManager::DrawBillboardQuads(const PGLBillboardContext* context,

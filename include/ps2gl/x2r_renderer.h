@@ -33,9 +33,12 @@ public:
     void DrawCompactGroundQuads(const float* quads, int count,
         int floatsPerQuad, int quadsPerBuffer);
     void DrawRoadQuads(const PGLRoadQuad* quads, int count);
-    /* Retained callers: q1..48 and q49..56 are DMA REFs to caller storage
-       that stays unchanged until frame DMA completion; quads likewise. */
-    void InitRefContext(const float* planes, const float* dynamic);
+    /* Retained callers (pglDrawSourceQuadsRef): the context spans and the
+       quads are DMA REFs to caller storage, unchanged until frame DMA
+       completion. The spans are already proven to cover exactly the owned
+       context slots. */
+    unsigned int GetContextFirstQuad() const { return ContextFirstQuad; }
+    void InitRefContext(const PGLRefSpan* spans, int spanCount);
     void DrawRefQuads(const float* quads, int count, int floatsPerQuad,
         int quadsPerBuffer);
     virtual void Load();

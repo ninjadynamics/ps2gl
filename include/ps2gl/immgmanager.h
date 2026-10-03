@@ -92,8 +92,8 @@ public:
         const float* colors, int descriptorCount);
     bool DrawRoadQuads(const PGLRoadContext* context,
         const PGLRoadQuad* quads, int count);
-    bool DrawCloudQuadsRef(const float* planes, const float* dynamic,
-        const PGLCloudQuad* quads, int count);
+    bool DrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spans,
+        int spanCount, const void* quads, int count);
     bool DrawPoolQuads(const PGLPoolContext* context,
         const PGLPoolQuad* quads, int count);
     bool DrawBillboardQuads(const PGLBillboardContext* context,
