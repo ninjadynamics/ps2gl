@@ -180,4 +180,9 @@ public:
     virtual void DrawLinearArrays(CGeometryBlock& block);
 };
 
+/* Upload one independently assembled VU1 image at an instruction address
+   (decoders that follow a complete program). */
+void pglUploadVu1Decoder(CVifSCDmaPacket& packet, const void* image, int imageBytes,
+    unsigned int addr64);
+
 #endif // clip_renderer_h

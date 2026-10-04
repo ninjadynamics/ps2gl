@@ -5,6 +5,8 @@
 #include "ps2gl/immgmanager.h"
 #include <string.h>
 
+bool pglClipX2TRegistered(void);
+
 extern "C" {
 void vsmGeneralClipQuadX2F_CodeStart();
 void vsmGeneralClipQuadX2F_CodeEnd();
@@ -14,6 +16,15 @@ CClipQuadX2FRenderer::CClipQuadX2FRenderer()
     : CClipTriX2Renderer((void*)vsmGeneralClipQuadX2F_CodeStart,
         (u8*)vsmGeneralClipQuadX2F_CodeEnd - (u8*)vsmGeneralClipQuadX2F_CodeStart,
         "clip x2f, four authored source corners", PGL_CLIP_QUAD_X2F_PROP)
+{
+    ContextDeltaEligible = true;
+    InputQuadsPerVert = 3;
+}
+
+CClipQuadX2FRenderer::CClipQuadX2FRenderer(const char* name, uint64_t prop)
+    : CClipTriX2Renderer((void*)vsmGeneralClipQuadX2F_CodeStart,
+        (u8*)vsmGeneralClipQuadX2F_CodeEnd - (u8*)vsmGeneralClipQuadX2F_CodeStart,
+        name, prop)
 {
     ContextDeltaEligible = true;
     InputQuadsPerVert = 3;
@@ -85,14 +96,14 @@ void CClipQuadX2FRenderer::DrawLinearArrays(CGeometryBlock& block)
             first += count;
             if (buffered == cornersPerBuffer) {
                 XferPrefixes(packet);
-                FinishBuffer(packet, 0, buffered, InputQuadsPerVert, 0, NULL);
+                FinishRawBuffer(packet, 0, buffered, InputQuadsPerVert, 0, NULL);
                 buffered = 0;
             }
         }
     }
     if (buffered) {
         XferPrefixes(packet);
-        FinishBuffer(packet, 0, buffered, InputQuadsPerVert, 0, NULL);
+        FinishRawBuffer(packet, 0, buffered, InputQuadsPerVert, 0, NULL);
     }
     RememberContextEnd();
 }
@@ -106,5 +117,5 @@ unsigned int pglGetSourceQuadSubmissionOptions(void)
 {
     if (!pGLContext || !pGLContext->GetImmGeomManager().GetRendererManager()
         .GetSourceQuadRenderer()) return 0u;
-    return 15u;
+    return 15u | (pglClipX2TRegistered() ? 16u : 0u);
 }

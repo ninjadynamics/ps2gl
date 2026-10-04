@@ -708,6 +708,17 @@ void pglClipX2VSetHaze(const GLfloat haze[8]);
 void pglRegisterClipTriX2SRenderer(void);
 void pglClipX2SSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 void pglClipX2SSetHaze(const GLfloat haze[8]);
+/* X2T: PGL_CLIP_QUADS_X2F input (same arrays, counts and lifetime) with the
+   haze law evaluated per corner on VU1: color.w = keep * (s + m*color.w).
+   pglClipX2TSetHaze supplies [cx s cz m] [1/R^2 alpha t0 -1/H] in the
+   submitted (eye-relative) source frame; (s, m) = (1, 0) replaces alpha with
+   the keep, (0, 1) scales the source alpha by it. Changing the law first
+   submits any pending block. pglGetSourceQuadSubmissionOptions bit4 reports
+   the registration. */
+#define PGL_CLIP_QUADS_X2T ((GLenum)0x80000000 | 18)
+#define PGL_CLIP_QUAD_X2T_PROP ((pglU64_t)1 << 49)
+void pglRegisterClipQuadX2TRenderer(void);
+void pglClipX2TSetHaze(const GLfloat haze[8]);
 /* bit0 registered X2C colors, bit1 direct float X2Q/C packet specialization,
    bit2 fixed context-2 texture-prefix preparation, bit3 ordered window reuse,
    bit4 pure CPU prefix/tail reuse, bit5 borrowed wall-descriptor arrays,

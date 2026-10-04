@@ -1210,6 +1210,12 @@ CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
 
 void CClipTriX2DRenderer::SetBufferParams(const float* params)
 {
+    if (HasBufferParams) {
+        if (memcmp(BufferParams, params, sizeof(BufferParams)) == 0) return;
+        // A pending block reads the parameters when it is finally drawn:
+        // submit it under the law it was prepared with (SetWindowTexture's rule).
+        pGLContext->GetGeomManager().Flush();
+    }
     memcpy(BufferParams, params, sizeof(BufferParams));
     HasBufferParams = true;
 }
@@ -1267,6 +1273,12 @@ static void UploadVu1Range(CVifSCDmaPacket& packet, const void* image,
         size64 -= sendSize64;
         addr64 += sendSize64;
     }
+}
+
+void pglUploadVu1Decoder(CVifSCDmaPacket& packet, const void* image, int imageBytes,
+    unsigned int addr64)
+{
+    UploadVu1Range(packet, image, imageBytes, addr64);
 }
 
 static void LoadX2Base(CVifSCDmaPacket& packet, const void* image, int imageBytes)

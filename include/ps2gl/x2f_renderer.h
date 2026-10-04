@@ -6,6 +6,10 @@ class CClipQuadX2FRenderer : public CClipTriX2Renderer {
     // X2F owns only one material; its prefix reuses unused window color lanes.
     using CClipTriX2Renderer::SetWindowTexture;
 
+protected:
+    // The same program and input contract under another primitive (X2T).
+    CClipQuadX2FRenderer(const char* name, uint64_t prop);
+
 public:
     CClipQuadX2FRenderer();
     static void Register();
