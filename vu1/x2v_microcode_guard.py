@@ -97,6 +97,31 @@ def model(pairs, labels, top, count, rng):
             fog[dst + 3] = keep[corner]
     original = [v[:] for v in mem]
     saved_vf = [v[:] for v in vf]
+    writes = execute(pairs, labels, top, mem, vf, vi)
+    if writes != set(exact):
+        legacy.fail("X2V: output write set differs from the exact expanded layout")
+    worst = 0.0
+    for a, value in exact.items():
+        if mem[a][:len(value)] != value:
+            legacy.fail("X2V: scheduled decoder changes attributes at qword " + str(a))
+        if a in fog:
+            got = to_float(mem[a][3])
+            if not abs(got - fog[a]) <= FOG_TOLERANCE:
+                legacy.fail(f"X2V: fog {got!r} differs from the law {fog[a]!r}")
+            worst = max(worst, abs(got - fog[a]))
+    for a in range(1024):
+        if a not in writes and mem[a] != original[a]:
+            legacy.fail("X2V: descriptor/header/context/earlier output was overwritten")
+    if vf[:26] != saved_vf[:26]:
+        legacy.fail("X2V: escaped the reserved VF26..VF31 partition")
+    return worst
+
+
+def execute(pairs, labels, top, mem, vf, vi):
+    """Run a scheduled decoder to its JR; returns the qwords it stored.
+
+    Shared by the haze decoders: copies are bit exact, arithmetic is float32,
+    and every MULQ must read its own completed SQRT."""
     writes = set()
     pc, pending, cycle = 0, None, 0
     q_bits, q_start, q_waited, q_consumed = None, None, False, True
@@ -206,23 +231,7 @@ def model(pairs, labels, top, count, rng):
         legacy.fail("X2V: decoder did not terminate")
     if not q_consumed:
         legacy.fail("X2V: a SQRT result is never consumed")
-    if writes != set(exact):
-        legacy.fail("X2V: output write set differs from the exact expanded layout")
-    worst = 0.0
-    for a, value in exact.items():
-        if mem[a][:len(value)] != value:
-            legacy.fail("X2V: scheduled decoder changes attributes at qword " + str(a))
-        if a in fog:
-            got = to_float(mem[a][3])
-            if not abs(got - fog[a]) <= FOG_TOLERANCE:
-                legacy.fail(f"X2V: fog {got!r} differs from the law {fog[a]!r}")
-            worst = max(worst, abs(got - fog[a]))
-    for a in range(1024):
-        if a not in writes and mem[a] != original[a]:
-            legacy.fail("X2V: descriptor/header/context/earlier output was overwritten")
-    if vf[:26] != saved_vf[:26]:
-        legacy.fail("X2V: escaped the reserved VF26..VF31 partition")
-    return worst
+    return writes
 
 
 def verify(base, old, decoder, generated=False):

@@ -100,6 +100,14 @@ protected:
     void InitRetainedContext();
     void RememberContextEnd();
 
+    // The primitive the independent-span path admits, and the end of each raw
+    // buffer: header + MSCNT into X2 here; a decoder variant activates its
+    // decoder instead.
+    unsigned int RawPrim;
+    virtual void FinishRawBuffer(CVifSCDmaPacket& packet, int numVertsToBreakStrip,
+        int numVertsInBuffer, int vu1QuadsPerVert, int numStripsInBuffer,
+        unsigned short* stripOffsets);
+
     void BuildWindowContext2Settings();
     bool TryReuseWindowContext(CVifSCDmaPacket& packet);
     void RememberWindowContext(const CVifSCDmaPacket& packet);
@@ -158,6 +166,10 @@ protected:
         const char* name, uint64_t prop, int elements, int colorWords,
         int colorDivisor = 1, int colorQwords = 0);
     void SetBufferParams(const float* params);
+    // A raw X2 buffer whose activation enters this renderer's decoder.
+    void FinishDecodedRawBuffer(CVifSCDmaPacket& packet, int numVertsToBreakStrip,
+        int numVertsInBuffer, int vu1QuadsPerVert, int numStripsInBuffer,
+        unsigned short* stripOffsets);
 
 public:
     CClipTriX2DRenderer();

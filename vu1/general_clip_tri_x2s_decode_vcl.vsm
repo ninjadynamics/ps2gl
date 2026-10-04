@@ -1,0 +1,58 @@
+; =================================================
+; flowMon::Emit() vcl 1.4beta7 produced this code:
+		.vu
+		.align 4
+		.global	vsmGeneralClipTriX2SDecode_CodeStart
+		.global	vsmGeneralClipTriX2SDecode_CodeEnd
+vsmGeneralClipTriX2SDecode_CodeStart:
+__v_vu1_general_clip_tri_x2s_decode_pp4_vcl_4:
+; _LNOPT_w=[ normal2 ] 6 [8 0] 8   [__v_vu1_general_clip_tri_x2s_decode_pp4_vcl_4]
+         NOP                                                        xtop          VI10                                
+         NOP                                                        ilw.x         VI12,0(VI10)                        
+         NOP                                                        iaddiu        VI11,VI10,0x00000005                
+         NOP                                                        iadd          VI12,VI12,VI12                             ;	STALL_LATENCY ?2
+         NOP                                                        iadd          VI12,VI12,VI12                      
+         NOP                                                        iadd          VI12,VI11,VI12                      
+xs_decode_loop_lid:
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [xs_decode_loop_lid]
+         NOP                                                        isub          VI13,VI12,VI11                      
+         NOP                                                        NOP                                               
+         NOP                                                        iblez         VI13,xs_decode_done_lid             
+         NOP                                                        NOP                                               
+; _LNOPT_w=[ normal2 ] 25 [57 0] 59   [__v_vu1_general_clip_tri_x2s_decode_pp4_vcl_6]
+         NOP                                                        lq.xyz        VF27,0(VI11)                        
+         NOP                                                        lq.xz         VF28,1(VI10)                        
+         NOP                                                        lq            VF26,2(VI10)                        
+         sub.xz        VF27,VF27,VF28                               iaddiu        VI11,VI11,0x00000004                       ;	STALL_LATENCY ?2
+         mulw.y        VF27,VF27,VF26w                              NOP                                               
+         mul.xz        VF27,VF27,VF27                               NOP                                                      ;	STALL_LATENCY ?2
+         addz.y        VF27,VF27,VF26z                              NOP                                               
+         addz.x        VF27,VF27,VF27z                              NOP                                                      ;	STALL_LATENCY ?2
+         maxx.y        VF27,VF27,VF00x                              NOP                                               
+         mulx.x        VF26,VF27,VF26x                              NOP                                                      ;	STALL_LATENCY ?2
+         miniw.y       VF27,VF27,VF00w                              NOP                                               
+         miniw.x       VF26,VF26,VF00w                              NOP                                                      ;	STALL_LATENCY ?2
+         NOP                                                        sqrt          Q,VF27y                             
+         mul.x         VF27,VF26,VF26                               NOP                                                      ;	STALL_LATENCY ?2
+         addw.x        VF26,VF00,VF00w                              NOP                                               
+         muly.x        VF27,VF27,VF26y                              NOP                                                      ;	STALL_LATENCY ?2
+         mulq.y        VF26,VF27,Q                                  waitq                                             
+         sub.x         VF29,VF26,VF27                               mr32.x        VF28,VF26                                  ;	STALL_LATENCY ?3
+         mul.x         VF28,VF28,VF29                               NOP                                                      ;	STALL_LATENCY ?3
+         add.x         VF28,VF28,VF27                               NOP                                                      ;	STALL_LATENCY ?3
+         mul.x         VF27,VF28,VF27                               NOP                                                      ;	STALL_LATENCY ?3
+         sub.x         VF26,VF26,VF27                               lq.xyz        VF27,-1(VI11)                              ;	STALL_LATENCY ?3
+         mulx.w        VF27,VF00,VF26x                              NOP                                                      ;	STALL_LATENCY ?3
+         NOP                                                        b             xs_decode_loop_lid                  
+         NOP                                                        sq            VF27,-1(VI11)                              ;	STALL_LATENCY ?2
+xs_decode_done_lid:
+; _LNOPT_w=[ normal2 ] 2 [1 0] 2   [xs_decode_done_lid]
+         NOP                                                     iaddiu        VI15,VI00,0x00000006
+         NOP                                                        jr            VI15
+         NOP                                                        NOP
+		.align 4
+vsmGeneralClipTriX2SDecode_CodeEnd:
+;	iCount=38
+; register stats:
+;   6 VU User integer
+;   5 VU User floating point

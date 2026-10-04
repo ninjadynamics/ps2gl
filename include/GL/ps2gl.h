@@ -698,6 +698,16 @@ void pglClipX2HSetWindowTexture(GLuint texId, float r, float g, float b, float a
 void pglRegisterClipTriX2VRenderer(void);
 void pglClipX2VSetWindowTexture(GLuint texId, float r, float g, float b, float a);
 void pglClipX2VSetHaze(const GLfloat haze[8]);
+/* X2S: raw PGL_CLIP_TRIANGLES_X2 input (same arrays, counts and lifetime)
+   with X2V's haze law evaluated per vertex on VU1: the color array's alpha is
+   ignored and replaced by the fog keep. pglClipX2SSetHaze supplies
+   [cx 0 cz 0] [1/R^2 alpha t0 -1/H]; set it and the window pair before the
+   first draw of a run and flush the run before changing either. */
+#define PGL_CLIP_TRIANGLES_X2S ((GLenum)0x80000000 | 17)
+#define PGL_CLIP_TRI_X2S_PROP ((pglU64_t)1 << 48)
+void pglRegisterClipTriX2SRenderer(void);
+void pglClipX2SSetWindowTexture(GLuint texId, float r, float g, float b, float a);
+void pglClipX2SSetHaze(const GLfloat haze[8]);
 /* bit0 registered X2C colors, bit1 direct float X2Q/C packet specialization,
    bit2 fixed context-2 texture-prefix preparation, bit3 ordered window reuse,
    bit4 pure CPU prefix/tail reuse, bit5 borrowed wall-descriptor arrays,

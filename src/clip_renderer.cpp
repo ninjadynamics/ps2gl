@@ -306,6 +306,7 @@ CClipTriX2Renderer::CClipTriX2Renderer(void* mcode, int mcodeSize, const char* n
     , ContextPacketBase(NULL)
     , ContextPacketEnd(NULL)
     , ContextFrame(0)
+    , RawPrim(PGL_CLIP_TRIANGLES_X2)
 {
     WinColor[0] = WinColor[1] = WinColor[2] = WinColor[3] = 1.0f;
 
@@ -340,6 +341,7 @@ CClipTriX2Renderer::CClipTriX2Renderer()
     , ContextPacketBase(NULL)
     , ContextPacketEnd(NULL)
     , ContextFrame(0)
+    , RawPrim(PGL_CLIP_TRIANGLES_X2)
 {
     // 120 quads = 30 verts of 4q input (pos, [normal unused], stq, color);
     // the microcode owns the rest of its buffer layout (planes + 3q-vert
@@ -366,10 +368,12 @@ CClipTriX2Renderer::CClipTriX2Renderer()
 }
 
 static CClipTriX2Renderer* pX2Renderer = NULL;
+bool pglClipX2SRegistered(void);
 
 extern "C" unsigned int pglGetRawX2SubmissionOptions(void)
 {
-    return pX2Renderer ? 1u : 0u;
+    // bit0 raw X2 independent spans, bit1 registered X2S (haze on VU1)
+    return (pX2Renderer ? 1u : 0u) | (pglClipX2SRegistered() ? 2u : 0u);
 }
 
 void CClipTriX2Renderer::Register()
@@ -991,7 +995,7 @@ bool CClipTriX2Renderer::TryDrawIndependentSpans(CVifSCDmaPacket& packet,
         || InputQuadsPerVert != 4 || OutputQuadsPerVert != 3
         || kDoubleBufBase != 79 || kDoubleBufSize != 472
         || !VifDoubleBuffered || block.GetArrayType() != ArrayType::kLinear
-        || block.GetPrimType() != PGL_CLIP_TRIANGLES_X2
+        || block.GetPrimType() != RawPrim
         || block.GetWordsPerVertex() != 3 || block.GetWordsPerTexCoord() != 2
         || block.GetWordsPerColor() != 4 || !block.GetVerticesAreValid()
         || !block.GetTexCoordsAreValid() || !block.GetColorsAreValid()
@@ -1025,7 +1029,7 @@ bool CClipTriX2Renderer::TryDrawIndependentSpans(CVifSCDmaPacket& packet,
         // saves one prefix/header/MSCNT and never adds an XferBlock call.
         if (used && (!remainder || used + remainder > 30)) {
             XferPrefixes(packet);
-            FinishBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
+            FinishRawBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
             used = 0;
         }
         for (int first = 0; first < count;) {
@@ -1037,16 +1041,24 @@ bool CClipTriX2Renderer::TryDrawIndependentSpans(CVifSCDmaPacket& packet,
             first += added;
             if (used == 30) {
                 XferPrefixes(packet);
-                FinishBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
+                FinishRawBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
                 used = 0;
             }
         }
     }
     if (used) {
         XferPrefixes(packet);
-        FinishBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
+        FinishRawBuffer(packet, 0, used, InputQuadsPerVert, 1, &independentOffset);
     }
     return true;
+}
+
+void CClipTriX2Renderer::FinishRawBuffer(CVifSCDmaPacket& packet, int numVertsToBreakStrip,
+    int numVertsInBuffer, int vu1QuadsPerVert, int numStripsInBuffer,
+    unsigned short* stripOffsets)
+{
+    FinishBuffer(packet, numVertsToBreakStrip, numVertsInBuffer, vu1QuadsPerVert,
+        numStripsInBuffer, stripOffsets);
 }
 
 // Copy of CLinearRenderer::DrawBlock with ONE change: the 2q staging block
@@ -1125,7 +1137,7 @@ void CClipTriX2Renderer::DrawBlockX2(CVifSCDmaPacket& packet,
 
             if (curBuffer < numBuffers - 1) {
                 XferPrefixes(packet);
-                FinishBuffer(packet, numVertsToRestart, numVertsXferred, vu1QuadsPerVert,
+                FinishRawBuffer(packet, numVertsToRestart, numVertsXferred, vu1QuadsPerVert,
                     numStripsInBuffer, stripOffsets);
                 numStripsInBuffer = 0;
                 numVertsXferred   = 0;
@@ -1146,7 +1158,7 @@ void CClipTriX2Renderer::DrawBlockX2(CVifSCDmaPacket& packet,
             }
 
             XferPrefixes(packet);
-            FinishBuffer(packet, numVertsToRestart, numVertsXferred, vu1QuadsPerVert,
+            FinishRawBuffer(packet, numVertsToRestart, numVertsXferred, vu1QuadsPerVert,
                 numStripsInBuffer, stripOffsets);
             numStripsInBuffer = 0;
             numVertsXferred   = 0;
@@ -1200,6 +1212,33 @@ void CClipTriX2DRenderer::SetBufferParams(const float* params)
 {
     memcpy(BufferParams, params, sizeof(BufferParams));
     HasBufferParams = true;
+}
+
+void CClipTriX2DRenderer::FinishDecodedRawBuffer(CVifSCDmaPacket& packet,
+    int numVertsToBreakStrip, int numVertsInBuffer, int vu1QuadsPerVert,
+    int numStripsInBuffer, unsigned short* stripOffsets)
+{
+    // CLinearRenderer::FinishBuffer with the decoder's MSCAL in place of
+    // MSCNT (one activation per buffer; the decoder tail-jumps to X2 PC 6)
+    // and the buffer parameters over the unread strip ADC qwords 1..2.
+    pglCountSubmission(PGL_SUBMIT_BUFFERS);
+    packet.Cnt();
+    {
+        XferBufferHeader(packet, numVertsToBreakStrip, numVertsInBuffer,
+            numStripsInBuffer, stripOffsets);
+        if (HasBufferParams) {
+            packet.Stcycl(1, 1);
+            packet.OpenUnpack(Vifs::UnpackModes::v4_32, 1, Packet::kDoubleBuff);
+            for (int i = 0; i < 8; ++i)
+                packet += BufferParams[i];
+            packet.CloseUnpack(2);
+            // the next buffer's XferBlock expects the vertex write cycle
+            packet.Stcycl(1, vu1QuadsPerVert);
+        }
+        packet.Mscal(DecoderAddr64);
+        packet.Pad128();
+    }
+    packet.CloseTag();
 }
 
 /* Upload one independently assembled VU1 image at an instruction address.
