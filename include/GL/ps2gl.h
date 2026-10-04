@@ -543,6 +543,14 @@ GLboolean pglCanDrawClipTriXYZ2(void);
 void pglRegisterClipTriRenderer(void);
 void pglSetClipNear(float near_z);
 
+/* The GS blend equation set directly: Cv = (A - B)*C + D, with A, B and D each
+   0 = source color, 1 = framebuffer color, 2 = zero, and C 0 = source alpha,
+   1 = framebuffer alpha, 2 = fix/128. glBlendFunc maps only three GL pairs
+   onto it; this reaches all of them. It replaces the current blend function
+   exactly as glBlendFunc does (blending itself is still glEnable(GL_BLEND)). */
+void pglBlendFuncGS(unsigned int a, unsigned int b, unsigned int c, unsigned int d,
+    unsigned int fix);
+
 /* HyperSolar VU1 paired city renderer (tri lists): transforms + clips
    each vertex once, then emits TWO prims in one compound kick — the opaque wall
    (PER-VERTEX color from the color array, current bound texture, ABE=0)

@@ -471,6 +471,14 @@ void CImmDrawContext::SetBlendMode(GLenum source, GLenum dest)
 
 #undef mCombineBlendFactors
 
+void CImmDrawContext::SetBlendModeGS(unsigned int a, unsigned int b, unsigned int c,
+    unsigned int d, unsigned int fix)
+{
+    DrawEnv->SetAlphaBlendFunc((GS::tAlphaBlendVal)a, (GS::tAlphaBlendVal)b,
+        (GS::tAlphaBlendVal)c, (GS::tAlphaBlendVal)d, fix);
+    GLContext.BlendModeChanged();
+}
+
 void CImmDrawContext::SetAlphaFunc(GLenum func, GLclampf ref)
 {
     GS::tAlphaTestPassMode ePassMode;
@@ -1034,6 +1042,14 @@ void glBlendFunc(GLenum sfactor, GLenum dfactor)
     GL_FUNC_DEBUG("%s(0x%x,0x%x)\n", __FUNCTION__, sfactor, dfactor);
 
     pGLContext->GetDrawContext().SetBlendMode(sfactor, dfactor);
+}
+
+void pglBlendFuncGS(unsigned int a, unsigned int b, unsigned int c, unsigned int d,
+    unsigned int fix)
+{
+    mErrorIf(a > 2u || b > 2u || c > 2u || d > 2u || fix > 255u,
+        "pglBlendFuncGS: field out of range");
+    pGLContext->GetImmDrawContext().SetBlendModeGS(a, b, c, d, fix);
 }
 
 // alpha test

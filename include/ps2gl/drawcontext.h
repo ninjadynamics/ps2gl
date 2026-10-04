@@ -188,6 +188,9 @@ public:
     // virtuals
 
     void SetBlendMode(GLenum source, GLenum dest);
+    // The raw GS ALPHA fields (see pglBlendFuncGS).
+    void SetBlendModeGS(unsigned int a, unsigned int b, unsigned int c, unsigned int d,
+        unsigned int fix);
     void SetAlphaFunc(GLenum func, GLclampf ref);
     void SetDepthFunc(GLenum func);
 
