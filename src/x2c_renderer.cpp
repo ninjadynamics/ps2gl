@@ -2,6 +2,7 @@
 #include "GL/ps2gl.h"
 #include "ps2gl/x2c_renderer.h"
 #include "ps2gl/x2h_renderer.h"
+#include "ps2gl/x2v_renderer.h"
 #include "ps2gl/glcontext.h"
 #include "ps2gl/immgmanager.h"
 
@@ -40,6 +41,7 @@ unsigned int pglGetWallSubmissionOptions(void)
     unsigned int options = 126u;
     if (pX2CRenderer) options |= 1u;
     if (pglClipX2HRegistered()) options |= 128u;
+    if (pglClipX2VRegistered()) options |= 256u;
     return options;
 }
 

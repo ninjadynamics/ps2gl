@@ -1,0 +1,124 @@
+; =================================================
+; flowMon::Emit() vcl 1.4beta7 produced this code:
+		.vu
+		.align 4
+		.global	vsmGeneralClipTriX2VDecode_CodeStart
+		.global	vsmGeneralClipTriX2VDecode_CodeEnd
+vsmGeneralClipTriX2VDecode_CodeStart:
+__v_vu1_general_clip_tri_x2v_decode_pp4_vcl_4:
+; _LNOPT_w=[ normal2 ] 8 [8 0] 8   [__v_vu1_general_clip_tri_x2v_decode_pp4_vcl_4]
+         NOP                                                        xtop          VI10                                
+         NOP                                                        ilw.x         VI12,0(VI10)                        
+         NOP                                                        iaddiu        VI11,VI10,0x00000005                
+         NOP                                                        iaddiu        VI13,VI10,0x00000065                
+         NOP                                                        iaddiu        VI14,VI10,0x00000075                
+         NOP                                                        iadd          VI12,VI12,VI12                      
+         NOP                                                        iadd          VI12,VI12,VI12                      
+         NOP                                                        iadd          VI12,VI11,VI12                      
+xv_decode_loop_lid:
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [xv_decode_loop_lid]
+         NOP                                                        isub          VI15,VI12,VI11                      
+         NOP                                                        NOP                                               
+         NOP                                                        iblez         VI15,xv_decode_done_lid             
+         NOP                                                        NOP                                               
+; _LNOPT_w=[ ldumb ] 89 [113 0] 178   [__v_vu1_general_clip_tri_x2v_decode_pp4_vcl_6]
+         NOP                                                        lq            VF26,0(VI13)                        
+         NOP                                                        lq            VF27,1(VI13)                        
+         NOP                                                        mr32.x        VF28,VF26                                  ;	STALL_LATENCY ?2
+         NOP                                                        mr32.w        VF29,VF27                           
+         NOP                                                        mr32.w        VF28,VF28                                  ;	STALL_LATENCY ?2
+         max.x         VF28,VF26,VF26                               mr32.z        VF29,VF29                           
+         NOP                                                        mr32.z        VF28,VF28                                  ;	STALL_LATENCY ?2
+         NOP                                                        mr32.y        VF28,VF29                           
+         max.w         VF28,VF00,VF00                               mr32.y        VF29,VF26                           
+         max.z         VF28,VF28,VF28                               mr32.z        VF26,VF26                                  ;	STALL_LATENCY ?1
+         max.y         VF28,VF28,VF28                               mr32.x        VF27,VF26                           
+         NOP                                                        mr32.x        VF29,VF29                           
+         NOP                                                        sq            VF28,0(VI11)                               ;	STALL_LATENCY ?2
+         max.z         VF28,VF26,VF26                               sq            VF28,12(VI11)                       
+         max.x         VF28,VF29,VF29                               mr32.y        VF26,VF27                           
+         NOP                                                        move.y        VF28,VF27                           
+         NOP                                                        mr32.w        VF26,VF27                           
+         NOP                                                        mr32.z        VF27,VF27                           
+         max.y         VF28,VF26,VF26                               sq            VF28,4(VI11)                               ;	STALL_LATENCY ?1
+         NOP                                                        mr32.z        VF26,VF26                           
+         NOP                                                        mr32.y        VF26,VF27                           
+         NOP                                                        sq            VF28,8(VI11)                               ;	STALL_LATENCY ?1
+         max.z         VF28,VF26,VF26                               sq            VF28,16(VI11)                       
+         max.x         VF28,VF26,VF26                               mr32.z        VF26,VF00                           
+         max.y         VF28,VF26,VF26                               NOP                                               
+         NOP                                                        sq            VF28,20(VI11)                              ;	STALL_LATENCY ?3
+         NOP                                                        lq            VF28,2(VI13)                        
+         sub.w         VF26,VF00,VF00                               lq            VF27,3(VI13)                        
+         max.xy        VF26,VF28,VF28                               mr32.yz       VF29,VF28                                  ;	STALL_LATENCY ?2
+         NOP                                                        mr32.yz       VF28,VF27                           
+         NOP                                                        sq            VF26,2(VI11)                               ;	STALL_LATENCY ?2
+         max.xy        VF26,VF27,VF27                               sq            VF26,14(VI11)                       
+         NOP                                                        mr32.xy       VF29,VF29                           
+         NOP                                                        mr32.xy       VF27,VF28                           
+         NOP                                                        sq            VF26,10(VI11)                              ;	STALL_LATENCY ?1
+         max.xy        VF26,VF29,VF29                               sq            VF26,18(VI11)                       
+         max.xy        VF26,VF27,VF27                               sq            VF26,6(VI11)                               ;	STALL_LATENCY ?3
+         NOP                                                        lq            VF29,1(VI13)                        
+         NOP                                                        sq            VF26,22(VI11)                              ;	STALL_LATENCY ?2
+         NOP                                                        lq            VF26,2(VI10)                        
+         NOP                                                        lq            VF28,1(VI10)                        
+         NOP                                                        lq            VF27,0(VI13)                        
+         mulw          VF29,VF29,VF26w                              NOP                                                      ;	STALL_LATENCY ?1
+         sub           VF28,VF27,VF28                               NOP                                                      ;	STALL_LATENCY ?1
+         addz          VF27,VF29,VF26z                              NOP                                                      ;	STALL_LATENCY ?1
+         mul           VF28,VF28,VF28                               NOP                                                      ;	STALL_LATENCY ?1
+         maxx          VF27,VF27,VF00x                              NOP                                                      ;	STALL_LATENCY ?1
+         NOP                                                        mr32.xz       VF29,VF28                                  ;	STALL_LATENCY ?1
+         miniw         VF27,VF27,VF00w                              NOP                                                      ;	STALL_LATENCY ?1
+         add.xz        VF28,VF28,VF29                               NOP                                                      ;	STALL_LATENCY ?1
+         NOP                                                        sqrt          Q,VF27x                                    ;	STALL_LATENCY ?1
+         mulq.x        VF27,VF27,Q                                  waitq                                                    ;	STALL_LATENCY ?6
+         mulx.xz       VF26,VF28,VF26x                              mr32          VF28,VF27                                  ;	STALL_LATENCY ?3
+         miniw.xz      VF26,VF26,VF00w                              sqrt          Q,VF28x                                    ;	STALL_LATENCY ?3
+         mul.xz        VF26,VF26,VF26                               NOP                                                      ;	STALL_LATENCY ?3
+         mulq.x        VF28,VF28,Q                                  waitq                                                    ;	STALL_LATENCY ?2
+         muly.xz       VF26,VF26,VF26y                              NOP                                               
+         maxw          VF27,VF00,VF00w                              mr32          VF29,VF28                                  ;	STALL_LATENCY ?2
+         NOP                                                        mr32.yw       VF26,VF26                           
+         NOP                                                        sqrt          Q,VF29x                                    ;	STALL_LATENCY ?2
+         mulq.x        VF29,VF29,Q                                  waitq                                                    ;	STALL_LATENCY ?6
+         NOP                                                        mr32          VF29,VF29                                  ;	STALL_LATENCY ?3
+         NOP                                                        sqrt          Q,VF29x                                    ;	STALL_LATENCY ?3
+         NOP                                                        NOP                                               
+         NOP                                                        NOP                                               
+         NOP                                                        NOP                                               
+         NOP                                                        NOP                                               
+         NOP                                                        NOP                                               
+         NOP                                                        NOP                                               
+         mulq.x        VF29,VF29,Q                                  move.yw       VF26,VF26                           
+         sub           VF28,VF27,VF26                               mr32          VF29,VF29                                  ;	STALL_LATENCY ?3
+         mul           VF28,VF29,VF28                               NOP                                                      ;	STALL_LATENCY ?3
+         add           VF28,VF28,VF26                               NOP                                                      ;	STALL_LATENCY ?3
+         mul           VF26,VF28,VF26                               NOP                                                      ;	STALL_LATENCY ?3
+         sub           VF26,VF27,VF26                               lq.xyz        VF27,1(VI14)                               ;	STALL_LATENCY ?3
+         max.w         VF28,VF26,VF26                               mr32.xyw      VF29,VF26                                  ;	STALL_LATENCY ?3
+         NOP                                                        mr32.xw       VF30,VF29                                  ;	STALL_LATENCY ?3
+         max.xyz       VF28,VF27,VF27                               lq.xyz        VF26,0(VI14)                        
+         NOP                                                        mr32.w        VF27,VF30                                  ;	STALL_LATENCY ?2
+         max.w         VF26,VF29,VF29                               iaddiu        VI11,VI11,0x00000018                
+         max.xyz       VF28,VF26,VF26                               sq            VF28,-1(VI11)                       
+         max.w         VF28,VF30,VF30                               iaddiu        VI13,VI13,0x00000004                
+         max.w         VF27,VF27,VF27                               iaddiu        VI14,VI14,0x00000002                
+         NOP                                                        sq            VF26,-21(VI11)                      
+         NOP                                                        sq            VF26,-9(VI11)                       
+         NOP                                                        sq            VF28,-17(VI11)                      
+         NOP                                                        sq            VF27,-13(VI11)                      
+         NOP                                                        b             xv_decode_loop_lid                  
+         NOP                                                        sq            VF27,-5(VI11)                       
+xv_decode_done_lid:
+; _LNOPT_w=[ normal2 ] 2 [1 0] 2   [xv_decode_done_lid]
+         NOP                                                     iaddiu        VI15,VI00,0x00000006
+         NOP                                                        jr            VI15
+         NOP                                                        NOP
+		.align 4
+vsmGeneralClipTriX2VDecode_CodeEnd:
+;	iCount=104
+; register stats:
+;   7 VU User integer
+;   6 VU User floating point

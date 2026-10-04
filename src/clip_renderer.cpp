@@ -1175,6 +1175,7 @@ CClipTriX2DRenderer::CClipTriX2DRenderer()
     , DescriptorColorOffset(kX2dColOff)
     , DescriptorColorDivisor(1)
     , DescriptorColorQwords(0)
+    , HasBufferParams(false)
 {
     ContextDeltaEligible = true;
 }
@@ -1191,7 +1192,14 @@ CClipTriX2DRenderer::CClipTriX2DRenderer(const void* decoder, int decoderSize,
     , DescriptorColorOffset(kX2dGeoOff + 4 * elements)
     , DescriptorColorDivisor(colorDivisor)
     , DescriptorColorQwords(colorQwords)
+    , HasBufferParams(false)
 {
+}
+
+void CClipTriX2DRenderer::SetBufferParams(const float* params)
+{
+    memcpy(BufferParams, params, sizeof(BufferParams));
+    HasBufferParams = true;
 }
 
 /* Upload one independently assembled VU1 image at an instruction address.
@@ -1333,6 +1341,12 @@ void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems,
         packet += 0;
         packet += 0;
         packet += 0;
+        if (HasBufferParams) {
+            // Word-aligned like the header scalars: q1..2 of this buffer.
+            for (int i = 0; i < 8; ++i)
+                packet += BufferParams[i];
+            packet.CloseUnpack(3);
+        } else
         packet.CloseUnpack(1);
         packet.Mscal(DecoderAddr64);
         packet.Pad128();
@@ -1348,6 +1362,12 @@ void CClipTriX2DRenderer::FinishBufferX2D(CVifSCDmaPacket& packet, int numElems,
         // XferBufferHeader restores stcycl(1, InputQuadsPerVert) for the
         // vert-array renderers; the descriptor streams unpack contiguously
         packet.Stcycl(1, 1);
+        if (HasBufferParams) {
+            packet.OpenUnpack(Vifs::UnpackModes::v4_32, 1, Packet::kDoubleBuff);
+            for (int i = 0; i < 8; ++i)
+                packet += BufferParams[i];
+            packet.CloseUnpack(2);
+        }
         // One activation per buffer is essential: MSCAL and MSCNT each copy
         // TOPS->TOP and toggle DBF. The decoder tail-jumps to X2 PC 6, so a
         // second MSCAL/MSCNT would toggle to the wrong buffer half.

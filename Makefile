@@ -25,6 +25,7 @@ EE_OBJS = \
 	src/x2q_renderer.o \
 	src/x2c_renderer.o \
 	src/x2h_renderer.o \
+	src/x2v_renderer.o \
 	src/x2f_renderer.o \
 	src/x2g_renderer.o \
 	src/x2r_renderer.o \
@@ -62,6 +63,7 @@ RENDERERS = \
 	general_clip_tri_x2q_decode \
 	general_clip_tri_x2c_decode \
 	general_clip_tri_x2h_decode \
+	general_clip_tri_x2v_decode \
 	general_clip_quad_x2f \
 	general_clip_glow_x2g_decode \
 	general_clip_road_x2r \
@@ -95,6 +97,8 @@ X2C_DECODER_VSM = vu1/general_clip_tri_x2c_decode_vcl.vsm
 X2C_GUARD = vu1/x2c_microcode_guard.py
 X2H_DECODER_VSM = vu1/general_clip_tri_x2h_decode_vcl.vsm
 X2H_GUARD = vu1/x2h_microcode_guard.py
+X2V_DECODER_VSM = vu1/general_clip_tri_x2v_decode_vcl.vsm
+X2V_GUARD = vu1/x2v_microcode_guard.py
 X2G_DECODER_VSM = vu1/general_clip_glow_x2g_decode_vcl.vsm
 X2G_GUARD = vu1/x2g_microcode_guard.py
 X2R_VSM = vu1/general_clip_road_x2r_vcl.vsm
@@ -120,7 +124,7 @@ $(EE_LIB): x2g-microcode-guard
 $(EE_LIB): x2r-microcode-guard
 $(EE_LIB): x2e-microcode-guard
 $(EE_LIB): x2c-microcode-guard x2p-microcode-guard x2k-microcode-guard
-$(EE_LIB): x2h-microcode-guard
+$(EE_LIB): x2h-microcode-guard x2v-microcode-guard
 $(EE_LIB): x2b-microcode-guard
 $(EE_LIB): x2a-microcode-guard x2f-microcode-guard
 
@@ -150,6 +154,10 @@ x2k-microcode-guard: $(X2K_VSM) $(X2K_GUARD) $(X2R_GUARD)
 .PHONY: x2h-microcode-guard
 x2h-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2H_DECODER_VSM) $(X2H_GUARD) $(X2Q_GUARD) $(X2D_GUARD)
 	python3 $(X2H_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2H_DECODER_VSM)
+
+.PHONY: x2v-microcode-guard
+x2v-microcode-guard: $(X2_VSM) $(X2D_DECODER_VSM) $(X2V_DECODER_VSM) $(X2V_GUARD) $(X2Q_GUARD) $(X2D_GUARD)
+	python3 $(X2V_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2V_DECODER_VSM)
 
 .PHONY: x2e-microcode-guard
 x2e-microcode-guard: $(X2E_VSM) $(X2E_GUARD)
@@ -246,6 +254,10 @@ vu1/general_clip_tri_x2h_decode.vo: $(X2H_DECODER_VSM) $(X2H_GUARD) $(X2Q_GUARD)
 	python3 $(X2H_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2H_DECODER_VSM)
 	dvp-as -o $@ $(X2H_DECODER_VSM)
 
+vu1/general_clip_tri_x2v_decode.vo: $(X2V_DECODER_VSM) $(X2V_GUARD) $(X2Q_GUARD) $(X2D_GUARD)
+	python3 $(X2V_GUARD) $(X2_VSM) $(X2D_DECODER_VSM) $(X2V_DECODER_VSM)
+	dvp-as -o $@ $(X2V_DECODER_VSM)
+
 ifeq ($(REBUILD_VU1),1)
 $(X2C_DECODER_VSM): vu1/general_clip_tri_x2c_decode_pp4.vcl $(X2C_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
 	vcl -o$@ $<
@@ -255,6 +267,11 @@ $(X2C_DECODER_VSM): vu1/general_clip_tri_x2c_decode_pp4.vcl $(X2C_GUARD) $(X2Q_G
 $(X2H_DECODER_VSM): vu1/general_clip_tri_x2h_decode_pp4.vcl $(X2H_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
 	vcl -o$@ $<
 	python3 $(X2H_GUARD) --fix-decoder $(X2_VSM) $(X2D_DECODER_VSM) $@
+	rm -f $<
+
+$(X2V_DECODER_VSM): vu1/general_clip_tri_x2v_decode_pp4.vcl $(X2V_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)
+	vcl -o$@ $<
+	python3 $(X2V_GUARD) --fix-decoder $(X2_VSM) $(X2D_DECODER_VSM) $@
 	rm -f $<
 
 $(X2G_DECODER_VSM): vu1/general_clip_glow_x2g_decode_pp4.vcl $(X2G_GUARD) $(X2Q_GUARD) $(X2D_GUARD) $(X2_VSM) $(X2D_DECODER_VSM)

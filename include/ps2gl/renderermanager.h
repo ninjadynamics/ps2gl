@@ -65,6 +65,7 @@ class CRendererManager {
     bool WallQuadRendererRegistered;
     bool WallColorRendererRegistered;
     bool WallFogRendererRegistered;
+    bool WallHazeRendererRegistered;
     CClipRoadX2RRenderer* RoadRenderer;
     CClipPoolX2PRenderer* PoolRenderer;
     CClipCloudX2KRenderer* CloudRenderer;
@@ -90,6 +91,7 @@ public:
         const bool registered = requirements == PGL_CLIP_TRI_X2C_PROP
             ? WallColorRendererRegistered
             : requirements == PGL_CLIP_TRI_X2H_PROP ? WallFogRendererRegistered
+            : requirements == PGL_CLIP_TRI_X2V_PROP ? WallHazeRendererRegistered
                                                     : WallQuadRendererRegistered;
         return registered
             && (((uint64_t)RendererRequirements & ~CurUserPrimReqs)

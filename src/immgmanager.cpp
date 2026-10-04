@@ -518,9 +518,11 @@ static unsigned int wallDescriptorArraysAccepted, wallDescriptorArraysRejected;
 bool CImmGeomManager::DrawWallDescriptorArrays(GLenum primitive,
     const float* geometry, const float* colors, int descriptorCount)
 {
-    const bool pairedColors = primitive == PGL_CLIP_TRIANGLES_X2C;
+    const bool hazeColors = primitive == PGL_CLIP_TRIANGLES_X2V;
+    const bool pairedColors = primitive == PGL_CLIP_TRIANGLES_X2C || hazeColors;
     const bool cornerFog = primitive == PGL_CLIP_TRIANGLES_X2H;
-    const uint64_t requirements = pairedColors ? PGL_CLIP_TRI_X2C_PROP
+    const uint64_t requirements = hazeColors ? PGL_CLIP_TRI_X2V_PROP
+        : pairedColors ? PGL_CLIP_TRI_X2C_PROP
         : cornerFog ? PGL_CLIP_TRI_X2H_PROP : PGL_CLIP_TRI_X2Q_PROP;
     if ((primitive != PGL_CLIP_TRIANGLES_X2Q && !pairedColors && !cornerFog) || InsideBeginEnd ||
         !geometry || !colors || descriptorCount <= 0 || descriptorCount > INT_MAX / 64 ||
@@ -1489,7 +1491,8 @@ void CImmGeomManager::DrawArrays(GLenum mode, int first, int count)
     Geometry.AddTexCoords(count);
     Geometry.AddColors(count);
 
-    Geometry.AdjustNewGeomPtrs(first, mode == PGL_CLIP_TRIANGLES_X2C);
+    Geometry.AdjustNewGeomPtrs(first, mode == PGL_CLIP_TRIANGLES_X2C
+        || mode == PGL_CLIP_TRIANGLES_X2V);
 
     // do this before sync'ing the vu1 renderer in CommitNewGeom
     SyncColorMaterial(VertArray->GetColors() != NULL);

@@ -47,6 +47,7 @@ CRendererManager::CRendererManager(CGLContext& context)
     , WallQuadRendererRegistered(false)
     , WallColorRendererRegistered(false)
     , WallFogRendererRegistered(false)
+    , WallHazeRendererRegistered(false)
     , RoadRenderer(NULL)
     , PoolRenderer(NULL)
     , CloudRenderer(NULL)
@@ -396,7 +397,7 @@ void CRendererManager::RegisterX2Renderer(CClipTriX2Renderer* renderer)
     UserRenderers[NumUserRenderers - 1].preservesX2Base = true;
     const uint64_t reqs = renderer->GetRequirements();
     if (reqs != PGL_CLIP_TRI_X2Q_PROP && reqs != PGL_CLIP_TRI_X2C_PROP &&
-        reqs != PGL_CLIP_TRI_X2H_PROP) return;
+        reqs != PGL_CLIP_TRI_X2H_PROP && reqs != PGL_CLIP_TRI_X2V_PROP) return;
     // Exact first-match proof, as for the colored HUD builtin. An earlier
     // custom renderer must not acquire a descriptor format by coincidence.
     bool selected = false;
@@ -410,6 +411,7 @@ void CRendererManager::RegisterX2Renderer(CClipTriX2Renderer* renderer)
     }
     if (reqs == PGL_CLIP_TRI_X2Q_PROP) WallQuadRendererRegistered = selected;
     else if (reqs == PGL_CLIP_TRI_X2C_PROP) WallColorRendererRegistered = selected;
+    else if (reqs == PGL_CLIP_TRI_X2V_PROP) WallHazeRendererRegistered = selected;
     else WallFogRendererRegistered = selected;
 }
 

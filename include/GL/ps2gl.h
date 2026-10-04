@@ -683,14 +683,30 @@ void pglClipX2CSetWindowTexture(GLuint texId, float r, float g, float b, float a
 #define PGL_CLIP_TRI_X2H_PROP ((pglU64_t)1 << 45)
 void pglRegisterClipTriX2HRenderer(void);
 void pglClipX2HSetWindowTexture(GLuint texId, float r, float g, float b, float a);
+/* X2V: X2C's wire format with the building haze evaluated on VU1. COL is two
+   float qwords per wall, [bottomRGB,-] [topRGB,-]; both w lanes are ignored.
+   The decoder computes each corner's fog keep from its own source position:
+     at = min(((x-cx)^2 + (z-cz)^2)/R^2, 1)   q = alpha*at^2
+     t = clamp(t0 - y/H, 0, 1)                 v = t*sqrt(t)
+     keep = 1 - q*(q + v*(1 - q))
+   pglClipX2VSetHaze supplies [cx cz cx cz] [1/R^2 alpha t0 -1/H], with
+   t0 = 1 + ground/H; (t0, -1/H) = (1, 0) disables the height term. The law
+   rides in every buffer header, so set it before the draw it applies to.
+   GEO, draw counts, window pair and array lifetime follow X2C exactly. */
+#define PGL_CLIP_TRIANGLES_X2V ((GLenum)0x80000000 | 16)
+#define PGL_CLIP_TRI_X2V_PROP ((pglU64_t)1 << 47)
+void pglRegisterClipTriX2VRenderer(void);
+void pglClipX2VSetWindowTexture(GLuint texId, float r, float g, float b, float a);
+void pglClipX2VSetHaze(const GLfloat haze[8]);
 /* bit0 registered X2C colors, bit1 direct float X2Q/C packet specialization,
    bit2 fixed context-2 texture-prefix preparation, bit3 ordered window reuse,
    bit4 pure CPU prefix/tail reuse, bit5 borrowed wall-descriptor arrays,
-   bit6 exact retained X2 VU context deltas, bit7 registered X2H colors. */
+   bit6 exact retained X2 VU context deltas, bit7 registered X2H colors,
+   bit8 registered X2V (haze on VU1). */
 unsigned int pglGetWallSubmissionOptions(void);
 /* Borrow exact X2Q/C descriptors without changing client-array descriptors or
    current attributes. descriptorCount counts walls (4 GEO qwords each; colors
-   are 4 qwords for X2Q, 2 for X2C and 3 for X2H). Caller owns immutable source storage through
+   are 4 qwords for X2Q, 2 for X2C/X2V and 3 for X2H). Caller owns immutable source storage through
    frame DMA completion, sets the window pair/base texture first and glFlushes
    construction before changing their state. Rejection submits nothing. */
 GLboolean pglDrawWallDescriptorArrays(GLenum primitive, const GLfloat* geometry,
