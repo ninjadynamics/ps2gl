@@ -8,6 +8,8 @@
 typedef char CloudQuadSize[sizeof(PGLCloudQuad) == 64u ? 1 : -1];
 typedef char CloudQuadAlpha[offsetof(PGLCloudQuad, alpha) == 32u ? 1 : -1];
 typedef char CloudQuadColor[offsetof(PGLCloudQuad, color) == 48u ? 1 : -1];
+typedef char CloudSlopeQuadSize[sizeof(PGLCloudSlopeQuad) == 80u ? 1 : -1];
+typedef char CloudSlopeQuadY[offsetof(PGLCloudSlopeQuad, y) == 64u ? 1 : -1];
 
 extern "C" {
 void vsmGeneralClipCloudX2K_CodeStart();
@@ -27,6 +29,8 @@ void CClipCloudX2KRenderer::Register()
     if (manager.GetCloudRenderer()) return;
     manager.RegisterCloudRenderer(new CClipCloudX2KRenderer);
     pglRegisterCustomPrimType(PGL_CLIP_CLOUD_QUADS_X2K, PGL_CLIP_CLOUD_X2K_PROP,
+        ~(pglU64_t)0xffffffff, PGL_DONT_MERGE_CONTIGUOUS);
+    pglRegisterCustomPrimType(PGL_CLIP_CLOUD_SLOPE_QUADS_X2K, PGL_CLIP_CLOUD_X2K_PROP,
         ~(pglU64_t)0xffffffff, PGL_DONT_MERGE_CONTIGUOUS);
 }
 

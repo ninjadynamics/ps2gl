@@ -871,6 +871,16 @@ typedef struct PGLCloudQuad {
     GLfloat color[4]; /* r, g, b, 0 */
 } PGLCloudQuad;
 #define PGL_CLIP_CLOUD_QUADS_X2K ((GLenum)0x80000000 | 15)
+/* The same program and context on a sloped layer: a height per corner in
+   place of the common sourceY (which the program then ignores). Same UV,
+   alpha and clipping. */
+typedef struct PGLCloudSlopeQuad {
+    GLfloat xz[2][4]; /* Ax,Az,Bx,Bz; Cx,Cz,Dx,Dz */
+    GLfloat alpha[4]; /* A, B, C, D */
+    GLfloat color[4]; /* r, g, b, 0 */
+    GLfloat y[4];     /* A, B, C, D */
+} PGLCloudSlopeQuad;
+#define PGL_CLIP_CLOUD_SLOPE_QUADS_X2K ((GLenum)0x80000000 | 19)
 #define PGL_CLIP_CLOUD_X2K_PROP ((pglU64_t)1 << 46)
 void pglRegisterCloudRenderer(void);
 

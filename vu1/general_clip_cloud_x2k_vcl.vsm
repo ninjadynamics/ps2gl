@@ -64,73 +64,79 @@ r_header_count_ok_lid:
          NOP                                                        sq            VF09,104(VI02)                      
          NOP                                                        sq            VF08,105(VI02)                      
 r_decode_lid:
-; _LNOPT_w=[ normal2 ] 25 [41 0] 41   [r_decode_lid]
+; _LNOPT_w=[ another ] 9 [9 0] 9   [r_decode_lid]
          NOP                                                        ilw.x         VI01,316(VI02)                      
+         NOP                                                        ilw.y         VI05,0(VI02)                        
          NOP                                                        lq.x          VF06,56(VI00)                       
-         NOP                                                        lq            VF07,0(VI01)                               ;	STALL_LATENCY ?2
-         NOP                                                        mr32.w        VF11,VF06                           
-         max.x         VF12,VF07,VF07                               mr32.x        VF06,VF07                                  ;	STALL_LATENCY ?2
-         NOP                                                        mr32.z        VF11,VF11                           
-         NOP                                                        mr32.w        VF11,VF06                                  ;	STALL_LATENCY ?2
-         NOP                                                        mr32.y        VF10,VF11                           
-         NOP                                                        mr32.z        VF11,VF11                                  ;	STALL_LATENCY ?2
-         max.y         VF12,VF10,VF10                               NOP                                               
-         max.z         VF12,VF11,VF11                               NOP                                                      ;	STALL_LATENCY ?2
-         max.x         VF07,VF12,VF12                               lq.xyz        VF11,55(VI00)                       
-         NOP                                                        mr32.y        VF07,VF12                                  ;	STALL_LATENCY ?2
-         sub.w         VF05,VF00,VF00                               lq.xyz        VF08,3(VI01)                        
-         mulz.xy       VF07,VF07,VF11z                              NOP                                                      ;	STALL_LATENCY ?2
-         max.w         VF12,VF00,VF00                               lq            VF09,2(VI01)                        
-         max.xyz       VF13,VF08,VF08                               NOP                                               
-         add.xy        VF07,VF07,VF11                               lq            VF08,1(VI01)                               ;	STALL_LATENCY ?1
-         addx.w        VF13,VF05,VF09x                              ilw.z         VI01,316(VI02)                      
-         sub.w         VF12,VF00,VF00                               sq            VF12,106(VI02)                      
-         NOP                                                        mr32.z        VF12,VF00                           
-         max.xy        VF12,VF07,VF07                               NOP                                               
-         NOP                                                        sq            VF13,108(VI02)                      
-         NOP                                                        ibne          VI01,VI00,r_decode_ac_lid           
-         NOP                                                        sq            VF12,107(VI02)                             ;	STALL_LATENCY ?1
-; _LNOPT_w=[ normal2 ] 11 [25 0] 25   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_19]
-         max.w         VF14,VF00,VF00                               mr32.yz       VF07,VF07                           
-         NOP                                                        mr32.x        VF14,VF07                                  ;	STALL_LATENCY ?3
-         max.z         VF14,VF07,VF07                               NOP                                               
-         max.x         VF14,VF14,VF14                               NOP                                                      ;	STALL_LATENCY ?2
-         addy.w        VF13,VF05,VF09y                              mr32.y        VF09,VF14                           
-         max.x         VF09,VF14,VF14                               NOP                                                      ;	STALL_LATENCY ?2
-         mulz.xy       VF09,VF09,VF11z                              NOP                                                      ;	STALL_LATENCY ?3
-         add.xy        VF09,VF09,VF11                               NOP                                                      ;	STALL_LATENCY ?3
-         max.y         VF14,VF10,VF10                               NOP                                               
+         NOP                                                        ilw.z         VI04,316(VI02)                      
+         sub           VF10,VF00,VF00                               lq            VF09,2(VI01)                        
+         NOP                                                        isubiu        VI05,VI05,0x00000005                
+         NOP                                                        lq            VF08,1(VI01)                        
+         NOP                                                        ibne          VI05,VI00,r_decode_heights_lid      
+         addx          VF11,VF10,VF06x                              lq            VF07,0(VI01)                        
+; _LNOPT_w=[ normal2 ] 1 [4 0] 1   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_19]
+         NOP                                                        lq            VF11,4(VI01)                        
+r_decode_heights_lid:
+; _LNOPT_w=[ normal2 ] 19 [33 0] 36   [r_decode_heights_lid]
+         NOP                                                        NOP                                               
+         NOP                                                        NOP                                               
+         NOP                                                        NOP                                               
+         addx.w        VF14,VF10,VF09x                              mr32.x        VF09,VF07                           
+         max.x         VF13,VF07,VF07                               mr32.w        VF05,VF09                                  ;	STALL_LATENCY ?3
+         addx.y        VF13,VF10,VF11x                              mr32.z        VF10,VF05                                  ;	STALL_LATENCY ?3
+         max.z         VF13,VF10,VF10                               NOP                                                      ;	STALL_LATENCY ?3
+         max.x         VF07,VF13,VF13                               lq.xyz        VF12,55(VI00)                       
+         NOP                                                        mr32.y        VF07,VF13                                  ;	STALL_LATENCY ?2
+         mulz.xy       VF07,VF07,VF12z                              NOP                                                      ;	STALL_LATENCY ?3
+         max.w         VF13,VF00,VF00                               lq.xyz        VF14,3(VI01)                        
+         add.xy        VF07,VF07,VF12                               NOP                                                      ;	STALL_LATENCY ?2
+         NOP                                                        move.xyz      VF14,VF14                           
+         sub.w         VF13,VF00,VF00                               sq            VF13,106(VI02)                      
+         NOP                                                        mr32.z        VF13,VF00                           
+         max.xy        VF13,VF07,VF07                               NOP                                               
+         NOP                                                        sq            VF14,108(VI02)                      
+         NOP                                                        ibne          VI04,VI00,r_decode_ac_lid           
+         NOP                                                        sq            VF13,107(VI02)                             ;	STALL_LATENCY ?1
+; _LNOPT_w=[ normal2 ] 11 [25 0] 25   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_21]
+         max.w         VF15,VF00,VF00                               mr32.yz       VF07,VF07                           
+         NOP                                                        mr32.x        VF15,VF07                                  ;	STALL_LATENCY ?3
+         max.z         VF15,VF07,VF07                               NOP                                               
+         max.x         VF15,VF15,VF15                               NOP                                                      ;	STALL_LATENCY ?2
+         addy.w        VF14,VF10,VF09y                              mr32.y        VF09,VF15                           
+         max.x         VF09,VF15,VF15                               NOP                                                      ;	STALL_LATENCY ?2
+         mulz.xy       VF09,VF09,VF12z                              NOP                                                      ;	STALL_LATENCY ?3
+         add.xy        VF09,VF09,VF12                               NOP                                                      ;	STALL_LATENCY ?3
+         addy.y        VF15,VF10,VF11y                              NOP                                               
          NOP                                                        b             r_decode_second_lid                 
-         max.xy        VF12,VF09,VF09                               NOP                                                      ;	STALL_LATENCY ?1
+         max.xy        VF13,VF09,VF09                               NOP                                                      ;	STALL_LATENCY ?1
 r_decode_ac_lid:
 ; _LNOPT_w=[ normal2 ] 9 [29 0] 29   [r_decode_ac_lid]
-         addz.w        VF13,VF05,VF09z                              mr32.x        VF14,VF08                           
-         max.x         VF14,VF08,VF08                               mr32.w        VF11,VF14                                  ;	STALL_LATENCY ?3
-         max.x         VF12,VF14,VF14                               mr32.z        VF14,VF11                                  ;	STALL_LATENCY ?3
-         max.z         VF14,VF14,VF14                               NOP                                                      ;	STALL_LATENCY ?3
-         max.w         VF14,VF00,VF00                               mr32.y        VF12,VF14                                  ;	STALL_LATENCY ?3
-         mulz.xy       VF12,VF12,VF11z                              NOP                                                      ;	STALL_LATENCY ?3
-         add.xy        VF12,VF12,VF11                               NOP                                                      ;	STALL_LATENCY ?3
-         max.y         VF14,VF10,VF10                               NOP                                               
-         max.xy        VF12,VF12,VF12                               NOP                                                      ;	STALL_LATENCY ?2
+         addz.w        VF14,VF10,VF09z                              mr32.x        VF15,VF08                           
+         max.x         VF15,VF08,VF08                               mr32.w        VF05,VF15                                  ;	STALL_LATENCY ?3
+         max.x         VF13,VF15,VF15                               mr32.z        VF15,VF05                                  ;	STALL_LATENCY ?3
+         max.z         VF15,VF15,VF15                               NOP                                                      ;	STALL_LATENCY ?3
+         max.w         VF15,VF00,VF00                               mr32.y        VF13,VF15                                  ;	STALL_LATENCY ?3
+         mulz.xy       VF13,VF13,VF12z                              NOP                                                      ;	STALL_LATENCY ?3
+         add.xy        VF13,VF13,VF12                               NOP                                                      ;	STALL_LATENCY ?3
+         addz.y        VF15,VF10,VF11z                              NOP                                               
+         max.xy        VF13,VF13,VF13                               NOP                                                      ;	STALL_LATENCY ?2
 r_decode_second_lid:
 ; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [r_decode_second_lid]
-         NOP                                                        sq            VF14,109(VI02)                      
-         NOP                                                        sq            VF13,111(VI02)                      
-         NOP                                                        ibne          VI01,VI00,r_decode_d_lid            
-         NOP                                                        sq            VF12,110(VI02)                      
-; _LNOPT_w=[ normal2 ] 6 [13 0] 13   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_23]
+         NOP                                                        sq            VF15,109(VI02)                      
+         NOP                                                        sq            VF14,111(VI02)                      
+         NOP                                                        ibne          VI04,VI00,r_decode_d_lid            
+         NOP                                                        sq            VF13,110(VI02)                      
+; _LNOPT_w=[ normal2 ] 5 [13 0] 13   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_25]
          max.w         VF07,VF00,VF00                               mr32.x        VF06,VF08                           
-         addz.w        VF13,VF05,VF09z                              mr32.w        VF05,VF06                                  ;	STALL_LATENCY ?3
-         NOP                                                        mr32.z        VF07,VF05                                  ;	STALL_LATENCY ?3
-         max.y         VF07,VF10,VF10                               NOP                                               
-         max.x         VF07,VF08,VF08                               b             r_decode_third_lid                  
-         max.z         VF07,VF07,VF07                               NOP                                                      ;	STALL_LATENCY ?1
+         max.x         VF07,VF08,VF08                               mr32.w        VF05,VF06                                  ;	STALL_LATENCY ?3
+         addz.w        VF14,VF10,VF09z                              mr32.z        VF07,VF05                                  ;	STALL_LATENCY ?3
+         addz.y        VF07,VF10,VF11z                              b             r_decode_third_lid                  
+         max.z         VF07,VF07,VF07                               NOP                                                      ;	STALL_LATENCY ?2
 r_decode_d_lid:
 ; _LNOPT_w=[ normal2 ] 5 [9 0] 9   [r_decode_d_lid]
-         max.y         VF07,VF10,VF10                               mr32.yz       VF09,VF08                           
+         addw.y        VF07,VF10,VF11w                              mr32.yz       VF09,VF08                           
          max.w         VF07,VF00,VF00                               mr32.x        VF06,VF09                                  ;	STALL_LATENCY ?3
-         addw.w        VF13,VF05,VF09w                              NOP                                               
+         addw.w        VF14,VF10,VF09w                              NOP                                               
          max.z         VF07,VF09,VF09                               NOP                                               
          max.x         VF07,VF06,VF06                               NOP                                                      ;	STALL_LATENCY ?1
 r_decode_third_lid:
@@ -138,21 +144,21 @@ r_decode_third_lid:
          NOP                                                        NOP                                               
          NOP                                                        NOP                                               
          NOP                                                        NOP                                               
-         NOP                                                        mr32.y        VF12,VF07                           
-         max.x         VF12,VF07,VF07                               iaddiu        VI04,VI00,0x00000fff                
+         NOP                                                        mr32.y        VF13,VF07                           
+         max.x         VF13,VF07,VF07                               iaddiu        VI04,VI00,0x00000fff                
          NOP                                                        isw.z         VI04,318(VI02)                      
-         mulz.xy       VF12,VF12,VF11z                              sq            VF13,114(VI02)                             ;	STALL_LATENCY ?2
+         mulz.xy       VF13,VF13,VF12z                              sq            VF14,114(VI02)                             ;	STALL_LATENCY ?2
          NOP                                                        iaddiu        VI05,VI00,0x0000001f                
          NOP                                                        sq            VF07,112(VI02)                      
          NOP                                                        isw.x         VI00,318(VI02)                      
-         add.xy        VF12,VF12,VF11                               isw.y         VI00,318(VI02)                      
+         add.xy        VF13,VF13,VF12                               isw.y         VI00,318(VI02)                      
          NOP                                                        isw.w         VI04,318(VI02)                      
          NOP                                                        isw.x         VI05,320(VI02)                      
-         max.xy        VF12,VF12,VF12                               isw.w         VI00,316(VI02)                             ;	STALL_LATENCY ?1
+         max.xy        VF13,VF13,VF13                               isw.w         VI00,316(VI02)                             ;	STALL_LATENCY ?1
          NOP                                                        isw.w         VI00,322(VI02)                      
          NOP                                                        iaddiu        VI04,VI02,0x0000006a                
          NOP                                                        iaddiu        VI05,VI00,0x00000003                
-         NOP                                                        sq            VF12,113(VI02)                      
+         NOP                                                        sq            VF13,113(VI02)                      
 r_classify_lid:
 ; _LNOPT_w=[ normal2 ] 19 [41 0] 41   [r_classify_lid]
          sub.yzw       VF12,VF00,VF00                               lq.xyz        VF07,0(VI04)                        
@@ -174,7 +180,7 @@ r_classify_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI01,VI00,r_masks_done_lid          
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_29]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_31]
          NOP                                                        iaddiu        VI08,VI00,0x00000019                
          NOP                                                        iaddiu        VI09,VI00,0x00000001                
 r_source_plane_lid:
@@ -194,7 +200,7 @@ r_source_plane_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI01,VI00,r_source_next_lid         
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_32]
+; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_34]
          NOP                                                        ior           VI07,VI07,VI09                      
 r_source_next_lid:
 ; _LNOPT_w=[ normal2 ] 5 [5 0] 5   [r_source_next_lid]
@@ -203,7 +209,7 @@ r_source_next_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibne          VI01,VI00,r_source_not_half_lid     
          NOP                                                        iadd          VI09,VI09,VI09                      
-; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_34]
+; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_36]
          NOP                                                        iaddiu        VI06,VI07,0                         
          NOP                                                        iaddiu        VI07,VI00,0                         
          NOP                                                        iaddiu        VI09,VI00,0x00000001                
@@ -245,7 +251,7 @@ r_masks_done_lid:
          NOP                                                        iaddiu        VI08,VI00,0x00000001                
          NOP                                                        ibne          VI07,VI00,r_source_view_done_lid    
          NOP                                                        sq            VF11,0(VI04)                        
-; _LNOPT_w=[ normal2 ] 11 [15 0] 15   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_38]
+; _LNOPT_w=[ normal2 ] 11 [15 0] 15   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_40]
          mulz.w        VF05,VF06,VF11z                              iaddiu        VI08,VI00,0x0000000f                
          mulw.y        VF09,VF11,VF09w                              NOP                                               
          mulz.x        VF09,VF11,VF09z                              NOP                                               
@@ -268,18 +274,18 @@ r_source_view_done_lid:
          NOP                                                        isw.w         VI06,316(VI02)                      
          NOP                                                        ibgtz         VI05,r_classify_lid                 
          NOP                                                        isw.x         VI08,320(VI02)                      
-; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_40]
+; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_42]
          NOP                                                        ilw.x         VI01,320(VI02)                      
          NOP                                                        ibne          VI01,VI00,r_next_triangle_lid              ;	STALL_LATENCY ?3
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 6 [8 0] 9   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_43]
+; _LNOPT_w=[ normal2 ] 6 [8 0] 9   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_45]
          NOP                                                        ilw.z         VI01,318(VI02)                      
          NOP                                                        ilw.w         VI04,318(VI02)                      
          NOP                                                        ior           VI01,VI01,VI04                             ;	STALL_LATENCY ?3
          NOP                                                        NOP                                               
          NOP                                                        ibne          VI01,VI00,r_next_triangle_lid       
          NOP                                                        NOP                                               
-; _LNOPT_w=[ vuta1 ] 13 [13 0] 13   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_44]
+; _LNOPT_w=[ vuta1 ] 13 [13 0] 13   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_46]
          NOP                                                        iaddiu        VI01,VI00,0x00000003                
          NOP                                                        isw.z         VI01,317(VI02)                      
          NOP                                                        ilw.x         VI01,318(VI02)                      
@@ -293,27 +299,27 @@ r_source_view_done_lid:
          NOP                                                        isw.y         VI04,319(VI02)                      
          NOP                                                        ibeq          VI01,VI00,r_sky_fan_begin_lid       
          NOP                                                        isw.x         VI00,319(VI02)                      
-; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_45]
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_47]
 r_sky_plane_lid:
 ; _LNOPT_w=[ normal2 ] 4 [6 0] 6   [r_sky_plane_lid]
          NOP                                                        ilw.w         VI04,322(VI02)                      
          NOP                                                        ilw.x         VI01,319(VI02)                      
          NOP                                                        ibne          VI04,VI00,pool_source_view_plane_lid       ;	STALL_LATENCY ?2
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_48]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_50]
          NOP                                                        isubiu        VI04,VI01,0x00000018                
          NOP                                                        NOP                                               
          NOP                                                        ibgez         VI04,r_sky_fan_begin_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_49]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_51]
          NOP                                                        isubiu        VI06,VI01,0x0000000c                
          NOP                                                        ilw.y         VI04,319(VI02)                      
          NOP                                                        ibltz         VI06,r_sky_mask_lid                 
          NOP                                                        ilw.x         VI05,318(VI02)                      
-; _LNOPT_w=[ normal2 ] 2 [4 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_50]
+; _LNOPT_w=[ normal2 ] 2 [4 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_52]
          NOP                                                        ibne          VI06,VI00,r_sky_mask_lid            
          NOP                                                        ilw.y         VI05,318(VI02)                      
-; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_51]
+; _LNOPT_w=[ normal2 ] 1 [1 0] 1   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_53]
          NOP                                                        iaddiu        VI04,VI00,0x00000001                
 r_sky_mask_lid:
 ; _LNOPT_w=[ normal2 ] 7 [6 0] 7   [r_sky_mask_lid]
@@ -324,7 +330,7 @@ r_sky_mask_lid:
          NOP                                                        isw.y         VI01,319(VI02)                      
          NOP                                                        ibeq          VI04,VI00,r_sky_plane_lid           
          NOP                                                        isw.x         VI06,319(VI02)                      
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_53]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_55]
          NOP                                                        b             pool_clip_plane_selected_lid        
          NOP                                                        NOP                                               
 pool_source_view_plane_lid:
@@ -333,7 +339,7 @@ pool_source_view_plane_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibgez         VI04,r_sky_fan_begin_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_56]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_58]
          NOP                                                        iaddiu        VI04,VI01,0x00000001                
          NOP                                                        iaddiu        VI06,VI02,0x00000065                
          NOP                                                        isw.x         VI04,319(VI02)                      
@@ -377,7 +383,7 @@ r_sky_edge_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI07,VI06,r_sky_inside_lid          
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 15 [25 0] 26   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_60]
+; _LNOPT_w=[ normal2 ] 15 [25 0] 26   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_62]
          sub.x         VF15,VF06,VF14                               lq.z          VF14,54(VI00)                       
          abs.x         VF17,VF15                                    move.x        VF16,VF00                                  ;	STALL_LATENCY ?3
          addz.x        VF18,VF00,VF14z                              NOP                                               
@@ -393,7 +399,7 @@ r_sky_edge_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI01,VI00,r_sky_lerp_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [8 0] 8   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_61]
+; _LNOPT_w=[ normal2 ] 2 [8 0] 8   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_63]
          NOP                                                        div           Q,VF06x,VF15x                       
          addq.x        VF16,VF00,Q                                  waitq                                                    ;	STALL_LATENCY ?6
 r_sky_lerp_lid:
@@ -408,7 +414,7 @@ r_sky_lerp_lid:
          add           VF15,VF08,VF15                               NOP                                               
          add.xyz       VF17,VF09,VF17                               ibltz         VI01,sc_sky_store_ok24              
          add           VF18,VF10,VF16                               NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_64]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_66]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid25:
@@ -426,12 +432,12 @@ r_sky_inside_lid:
 ; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [r_sky_inside_lid]
          NOP                                                        ibne          VI06,VI00,r_sky_edge_next_lid       
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_70]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_72]
          NOP                                                        isubiu        VI01,VI09,0x00000020                
          NOP                                                        NOP                                               
          NOP                                                        ibltz         VI01,sc_sky_store_ok26              
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_71]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_73]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.x         VI01,323(VI02)                      
 r_contract_stop_lid27:
@@ -452,12 +458,12 @@ r_sky_edge_next_lid:
          max           VF08,VF11,VF11                               iaddiu        VI07,VI06,0                         
          max           VF10,VF13,VF13                               ibgtz         VI08,r_sky_edge_lid                 
          max.x         VF06,VF14,VF14                               iaddiu        VI04,VI04,0x00000003                
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_77]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_79]
          NOP                                                        isubiu        VI01,VI09,0x00000003                
          NOP                                                        NOP                                               
          NOP                                                        ibltz         VI01,r_next_triangle_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 6 [6 0] 7   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_78]
+; _LNOPT_w=[ normal2 ] 6 [6 0] 7   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_80]
          NOP                                                        ilw.w         VI04,317(VI02)                      
          NOP                                                        ilw.z         VI01,319(VI02)                      
          NOP                                                        isw.z         VI09,317(VI02)                      
@@ -469,11 +475,11 @@ r_sky_fan_begin_lid:
          NOP                                                        ilw.w         VI01,322(VI02)                      
          NOP                                                        ibne          VI01,VI00,pool_fan_ready_lid               ;	STALL_LATENCY ?3
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_81]
+; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_83]
          NOP                                                        ilw.w         VI01,316(VI02)                      
          NOP                                                        ibeq          VI01,VI00,pool_fan_ready_lid               ;	STALL_LATENCY ?3
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_82]
+; _LNOPT_w=[ normal2 ] 4 [4 0] 4   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_84]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        isw.w         VI01,322(VI02)                      
          NOP                                                        b             r_sky_plane_lid                     
@@ -499,7 +505,7 @@ r_sky_fan_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibeq          VI06,VI05,pool_fan_cap_a_lid        
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_87]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_89]
          NOP                                                        b             pool_fan_cap_lid                    
          NOP                                                        iaddiu        VI05,VI00,0x00000012                
 pool_fan_cap_a_lid:
@@ -512,7 +518,7 @@ pool_fan_cap_lid:
          NOP                                                        NOP                                               
          NOP                                                        ibgez         VI05,pool_emit_fence_lid            
          NOP                                                        NOP                                               
-; _LNOPT_w=[ vuta1 ] 9 [11 0] 11   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_91]
+; _LNOPT_w=[ vuta1 ] 9 [11 0] 11   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_93]
          NOP                                                        lq            VF07,75(VI00)                       
          NOP                                                        iadd          VI05,VI04,VI04                      
          NOP                                                        iadd          VI05,VI05,VI04                      
@@ -527,10 +533,10 @@ pool_fan_cap_lid:
          NOP                                                        iaddiu        VI01,VI02,0x00000145                
          NOP                                                        iaddiu        VI04,VI00,0x00000000                
          NOP                                                        xgkick        VI05                                
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_96]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_98]
          NOP                                                        ibeq          VI05,VI06,r_use_b_lid28             
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_99]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_101]
          NOP                                                        b             r_arena_ready_lid28                 
          NOP                                                        NOP                                               
 r_use_b_lid28:
@@ -611,27 +617,28 @@ pool_emit_fence_lid:
          NOP                                                        isw.z         VI04,320(VI02)                      
          NOP                                                        ibgtz         VI01,r_sky_fan_lid                  
          NOP                                                        isw.w         VI01,320(VI02)                      
-; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_107]
+; _LNOPT_w=[ normal2 ] 0 [0 0] 0   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_109]
 r_next_triangle_lid:
 ; _LNOPT_w=[ normal2 ] 3 [6 0] 6   [r_next_triangle_lid]
          NOP                                                        ilw.z         VI01,316(VI02)                      
          NOP                                                        ibne          VI01,VI00,r_next_descriptor_lid            ;	STALL_LATENCY ?3
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_110]
+; _LNOPT_w=[ normal2 ] 3 [3 0] 3   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_112]
          NOP                                                        iaddiu        VI01,VI00,0x00000001                
          NOP                                                        b             r_decode_lid                        
          NOP                                                        isw.z         VI01,316(VI02)                      
 r_next_descriptor_lid:
-; _LNOPT_w=[ normal2 ] 8 [8 0] 9   [r_next_descriptor_lid]
-         NOP                                                        ilw.x         VI04,316(VI02)                      
-         NOP                                                        ilw.y         VI01,316(VI02)                      
+; _LNOPT_w=[ vuta1 ] 9 [9 0] 9   [r_next_descriptor_lid]
+         NOP                                                        ilw.y         VI05,316(VI02)                      
+         NOP                                                        ilw.x         VI01,316(VI02)                      
+         NOP                                                        ilw.y         VI04,0(VI02)                        
          NOP                                                        isw.z         VI00,316(VI02)                      
-         NOP                                                        iaddiu        VI04,VI04,0x00000004                       ;	STALL_LATENCY ?1
-         NOP                                                        isubiu        VI01,VI01,0x00000001                
-         NOP                                                        isw.x         VI04,316(VI02)                      
-         NOP                                                        ibgtz         VI01,r_decode_lid                   
-         NOP                                                        isw.y         VI01,316(VI02)                      
-; _LNOPT_w=[ vuta1 ] 11 [11 0] 13   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_113]
+         NOP                                                        isubiu        VI05,VI05,0x00000001                
+         NOP                                                        isw.y         VI05,316(VI02)                      
+         NOP                                                        iadd          VI01,VI01,VI04                      
+         NOP                                                        ibgtz         VI05,r_decode_lid                   
+         NOP                                                        isw.x         VI01,316(VI02)                      
+; _LNOPT_w=[ vuta1 ] 11 [11 0] 13   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_115]
          NOP                                                        ilw.y         VI01,317(VI02)                      
          NOP                                                        lq            VF05,75(VI00)                       
          NOP                                                        ilw.x         VI03,317(VI02)                      
@@ -648,10 +655,10 @@ r_next_descriptor_lid:
          NOP                                                        iaddiu        VI02,VI02,0x00000000                
          NOP                                                        iaddiu        VI02,VI00,0x00000000                
          NOP                                                        xgkick        VI01                                
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_118]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_120]
          NOP                                                        ibeq          VI01,VI03,r_use_b_lid44             
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_121]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_123]
          NOP                                                        b             r_arena_ready_lid44                 
          NOP                                                        NOP                                               
 r_use_b_lid44:
@@ -660,12 +667,12 @@ r_arena_ready_lid44:
 ; _LNOPT_w=[ normal2 ] 2 [0 0] 2   [r_arena_ready_lid44]
          NOP[E]                                                     NOP                                               
          NOP                                                        NOP                                               
-; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_125]
+; _LNOPT_w=[ normal2 ] 2 [2 0] 2   [__v_vu1_general_clip_cloud_x2k_pp4_vcl_127]
          NOP                                                        b             r_main_lid                          
          NOP                                                        NOP                                               
 		.align 4
 vsmGeneralClipCloudX2K_CodeEnd:
-;	iCount=537
+;	iCount=541
 ; register stats:
 ;  11 VU User integer
 ;  19 VU User floating point

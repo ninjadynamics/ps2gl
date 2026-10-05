@@ -39,8 +39,10 @@ public:
        context slots. */
     unsigned int GetContextFirstQuad() const { return ContextFirstQuad; }
     void InitRefContext(const PGLRefSpan* spans, int spanCount);
+    /* headerWord: the second word of each buffer's header (X2K reads its
+       quad size there; zero for the programs that read only the count). */
     void DrawRefQuads(const float* quads, int count, int floatsPerQuad,
-        int quadsPerBuffer);
+        int quadsPerBuffer, unsigned int headerWord = 0u);
     virtual void Load();
     virtual void InitContext(GLenum primType, uint32_t rcChanges, bool userRcChanged);
     virtual void DrawLinearArrays(CGeometryBlock& block);

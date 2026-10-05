@@ -366,7 +366,7 @@ void CClipRoadX2RRenderer::InitRefContext(const PGLRefSpan* spans, int spanCount
 }
 
 void CClipRoadX2RRenderer::DrawRefQuads(const float* quads, int count,
-    int floatsPerQuad, int quadsPerBuffer)
+    int floatsPerQuad, int quadsPerBuffer, unsigned int headerWord)
 {
     CVifSCDmaPacket& packet = pGLContext->GetVif1Packet();
     pglCountSubmission(PGL_SUBMIT_BLOCKS);
@@ -381,7 +381,7 @@ void CClipRoadX2RRenderer::DrawRefQuads(const float* quads, int count,
         packet.Pad96();
         packet.OpenUnpack(Vifs::UnpackModes::v4_32, 0, Packet::kDoubleBuff);
         packet += batch;
-        packet += 0;
+        packet += (int)headerWord;
         packet += (uint64_t)0;
         pglCloseOwnedV4Unpack(packet, 1u);
         packet.Mscnt();

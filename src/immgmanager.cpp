@@ -913,6 +913,7 @@ bool CImmGeomManager::DrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spa
 {
     CClipRoadX2RRenderer* renderer;
     unsigned int quadBytes, batchLimit;
+    unsigned int quadQwords = 0u; // the buffer header's second word: X2K only
     uint64_t prop;
     bool selectable, clippingOff;
     switch (primitive) {
@@ -936,7 +937,17 @@ bool CImmGeomManager::DrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spa
         renderer = RendererManager.GetCloudRenderer();
         selectable = RendererManager.CanSelectCloudRenderer();
         quadBytes = sizeof(PGLCloudQuad);
+        quadQwords = 4u;
         batchLimit = 24;
+        prop = PGL_CLIP_CLOUD_X2K_PROP;
+        clippingOff = false;
+        break;
+    case PGL_CLIP_CLOUD_SLOPE_QUADS_X2K:
+        renderer = RendererManager.GetCloudRenderer();
+        selectable = RendererManager.CanSelectCloudRenderer();
+        quadBytes = sizeof(PGLCloudSlopeQuad);
+        quadQwords = 5u;
+        batchLimit = 19; // 95 of the 96 input qwords
         prop = PGL_CLIP_CLOUD_X2K_PROP;
         clippingOff = false;
         break;
@@ -1006,7 +1017,7 @@ bool CImmGeomManager::DrawSourceQuadsRef(GLenum primitive, const PGLRefSpan* spa
     Prim = primitive;
     SyncGsContext();
     renderer->DrawRefQuads((const float*)quads, count, (int)(quadBytes / 4u),
-        (int)batchLimit);
+        (int)batchLimit, quadQwords);
     return true;
 }
 

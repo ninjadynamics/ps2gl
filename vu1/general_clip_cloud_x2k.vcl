@@ -2,15 +2,20 @@
  * source SH view clipping BEFORE polygon triangulation, shared output
  * ownership) with two decode changes: UV is planar in the source plane,
  * (u,v) = (x,z) * k + (u0,v0) from context q55 = [u0,v0,k,0], and alpha is
- * per corner. Admission: finite coplanar ABC/ACD quads at the common sourceY.
+ * per corner. Admission: finite ABC/ACD quads, flat at the common sourceY or
+ * with a height per corner (a sloped layer; the clip stages are 3D and the
+ * sky planes vertical, so neither depends on the height).
  *
  * Context is PGLRoadContext-compatible: q1..24 eye sky planes; q25..48
  * source sky planes; q49..51 eye basis; q52 eye.xyz/incircle2;
  * q53 center.x/center.z/px/py; q54 sourceNear/NDC/epsilon/0;
  * q55 u0/v0/k/0; q56 sourceY/0/0/0. Standard q0/57/62..65/75..78 retained.
  *
- * Buffer layout as X2P, descriptor count1..24 at q0.x, input q5..100:
+ * Buffer layout as X2P, descriptor count at q0.x and qwords per quad at
+ * q0.y, input q5..100. Four qwords, count 1..24, at the common sourceY:
  * [Ax,Az,Bx,Bz],[Cx,Cz,Dx,Dz],[aA,aB,aC,aD],[r,g,b,0].
+ * Five qwords, count 1..19 (the caller's limit: 95 input qwords), the fifth
+ * [yA,yB,yC,yD] in place of sourceY.
  */
 
      #include "vu1_mem_linear.h"
@@ -123,17 +128,23 @@ r_decode_lid:
      lq desc_ab, 0(desc_ptr)
      lq desc_cd, 1(desc_ptr)
      lq desc_alpha, 2(desc_ptr)
+     sub.xyzw cloud_zero, vf00, vf00
+     ; Corner heights A,B,C,D: the common sourceY in every lane, or the
+     ; five-qword record's own.
      lq material_height, 56(vi00)
-     mr32 material_height, material_height
-     mr32 material_height, material_height
-     mr32 material_height, material_height
+     addx.xyzw material_height, cloud_zero, material_height
+     ilw.y desc_stride, 0(buffer_top)
+     isubiu desc_flat, desc_stride, 5
+     ibne desc_flat, vi00, r_decode_heights_lid
+     lq material_height, 4(desc_ptr)
+r_decode_heights_lid:
      lq material_color, 3(desc_ptr)
      lq cloud_uv, 55(vi00)
-     sub.xyzw cloud_zero, vf00, vf00
      sub.xyzw decode_s, vf00, vf00
      mr32.z decode_s, vf00
      ; corner A (both phases)
      r_corner_xy decode_p, desc_ab
+     addx.y decode_p, cloud_zero, material_height
      cloud_planar decode_s, decode_p
      move.xyz decode_c, material_color
      addx.w decode_c, cloud_zero, desc_alpha
@@ -143,12 +154,14 @@ r_decode_lid:
      ibne desc_phase, vi00, r_decode_ac_lid
      ; ABC: corner B
      r_corner_zw decode_p, desc_ab
+     addy.y decode_p, cloud_zero, material_height
      cloud_planar decode_s, decode_p
      addy.w decode_c, cloud_zero, desc_alpha
      b r_decode_second_lid
 r_decode_ac_lid:
      ; ACD: corner C
      r_corner_xy decode_p, desc_cd
+     addz.y decode_p, cloud_zero, material_height
      cloud_planar decode_s, decode_p
      addz.w decode_c, cloud_zero, desc_alpha
 r_decode_second_lid:
@@ -158,11 +171,13 @@ r_decode_second_lid:
      ibne desc_phase, vi00, r_decode_d_lid
      ; ABC: corner C
      r_corner_xy decode_p, desc_cd
+     addz.y decode_p, cloud_zero, material_height
      addz.w decode_c, cloud_zero, desc_alpha
      b r_decode_third_lid
 r_decode_d_lid:
      ; ACD: corner D
      r_corner_zw decode_p, desc_cd
+     addw.y decode_p, cloud_zero, material_height
      addw.w decode_c, cloud_zero, desc_alpha
 r_decode_third_lid:
      cloud_planar decode_s, decode_p
@@ -308,7 +323,8 @@ r_next_triangle_lid:
 r_next_descriptor_lid:
      isw.z vi00, kRDesc(buffer_top)
      ilw.x desc_ptr, kRDesc(buffer_top)
-     iaddiu desc_ptr, desc_ptr, 4
+     ilw.y desc_stride, 0(buffer_top)
+     iadd desc_ptr, desc_ptr, desc_stride
      isw.x desc_ptr, kRDesc(buffer_top)
      ilw.y desc_left, kRDesc(buffer_top)
      isubiu desc_left, desc_left, 1

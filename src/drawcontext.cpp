@@ -1210,4 +1210,40 @@ extern "C" void pgl_enable_dither(int enable)
     pGLContext->DrawEnvChanged();    /* re-send drawenv settings on next draw */
 }
 
+/* HyperSolar: the dither matrix for a faint blended pass over an already
+   dithered RGB16 framebuffer. The standard matrix (-4..3, ps2stuff's
+   constructor) rounds a fresh 8-bit color without bias, but a stored RGB5
+   value is read back as k*8: wherever its entry is negative an unchanged or
+   barely changed destination loses a whole 5-bit step, so the pass darkens
+   its own footprint and the footprint's edge shows. With the non-negative
+   matrix (0..3) an unchanged destination is stored unchanged and a faint
+   blend comes in from nothing. Every entry still rounds the pass down, by two
+   levels of 255 on average; a flat matrix of 3 rounds to nearest instead (no
+   dither: for a pass whose change follows the scene's own detail, such as a
+   darkening mask). mode 0: standard, 1: 0..3, 2: flat 3. Flushes pending
+   geometry under the previous matrix; the caller restores the standard one
+   (mode 0) after the pass. */
+extern "C" void pgl_dither_requantize(int mode)
+{
+    pGLContext->GetImmGeomManager().Flush();
+    GS::CDrawEnv& env = pGLContext->GetImmDrawContext().GetDrawEnv();
+    using namespace GS::Dither;
+    if (mode == 2)
+        env.SetDitherMatrix(kThree, kThree, kThree, kThree,
+            kThree, kThree, kThree, kThree,
+            kThree, kThree, kThree, kThree,
+            kThree, kThree, kThree, kThree);
+    else if (mode)
+        env.SetDitherMatrix(kZero, kTwo, kOne, kThree,
+            kThree, kOne, kTwo, kZero,
+            kOne, kThree, kZero, kTwo,
+            kTwo, kZero, kThree, kOne);
+    else
+        env.SetDitherMatrix(kMinusFour, kTwo, kMinusThree, kThree,
+            kZero, kMinusTwo, kOne, kMinusOne,
+            kMinusThree, kThree, kMinusFour, kTwo,
+            kOne, kMinusOne, kZero, kMinusTwo);
+    pGLContext->DrawEnvChanged();
+}
+
 /** @} */ // pgl_api
